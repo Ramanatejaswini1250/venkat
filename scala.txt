@@ -1,5 +1,7 @@
 import org.apache.spark.sql.SparkSession
+import java.io.File
 import scala.io.Source
+import java.util.Properties
 
 // Create a Spark session
 val spark = SparkSession.builder()
@@ -17,46 +19,84 @@ val data = Seq(
 
 val df = spark.createDataFrame(data).toDF("alert_code", "date_to_load", "dt_count", "bteq_location", "source_table_name", "frequency", "filter_column")
 
+// JDBC Connection details
+val jdbcUrl = "jdbc:teradata://your_teradata_host/database=your_database"
+val jdbcUser = "your_username"
+val jdbcPassword = "your_password"
+val jdbcDriver = "com.teradata.jdbc.TeraDriver"
+
+// Function to send email notifications via a shell script
+def sendEmailNotification(alertCode: String): Unit = {
+  val shellScriptPath = "/path/to/email_notification.sh"
+  val process = new ProcessBuilder("bash", shellScriptPath).start()
+  process.waitFor()
+  println(s"Email notification sent for alertCode: $alertCode")
+}
+
+// Function to run the SQL file
+def runSqlScript(scriptPath: String): Unit = {
+  try {
+    // Check if the script file exists
+    val file = new File(scriptPath)
+    if (file.exists() && file.isFile) {
+      val process = new ProcessBuilder("bteq", "<", scriptPath).start()
+      val exitCode = process.waitFor()
+      if (exitCode == 0) {
+        println(s"SQL script executed successfully: $scriptPath")
+      } else {
+        println(s"Error executing SQL script: $scriptPath")
+      }
+    } else {
+      println(s"SQL file does not exist: $scriptPath")
+    }
+  } catch {
+    case ex: Exception =>
+      println(s"Error running SQL script: $scriptPath - ${ex.getMessage}")
+      ex.printStackTrace()
+  }
+}
+
 // Iterate through each record
-df.collect().foreach(row => {
+df.collect().foreach { row =>
   val alertCode = row.getAs[String]("alert_code")
   val dtCount = row.getAs[Int]("dt_count")
   val dateToLoad = row.getAs[String]("date_to_load")
   val bteqLocation = row.getAs[String]("bteq_location")
-  val sourceTableName = row.getAs[String]("source_table_name")
-  val frequency = row.getAs[String]("frequency")
-  val filterColumn = row.getAs[String]("filter_column")
+  val sourceTableName = Option(row.getAs[String]("source_table_name"))
+  val frequency = Option(row.getAs[String]("frequency"))
+  val filterColumn = Option(row.getAs[String]("filter_column"))
 
   try {
+    // Validation checks for required fields
     if (dtCount > 0) {
-      // Check for nulls in required columns
-      if (sourceTableName == null || frequency == null || filterColumn == null) {
+      if (sourceTableName.isEmpty || frequency.isEmpty || filterColumn.isEmpty) {
         throw new Exception(s"One or more required columns are null for alertCode: $alertCode")
       }
 
       // Run the query to count rows in the source table with the filter
-      // Read data from Teradata using JDBC
-      val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+      val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM ${sourceTableName.get} WHERE ${filterColumn.get} = '$dateToLoad') AS subquery"
       val sourceTableCountDF = spark.read
         .format("jdbc")
         .option("url", jdbcUrl)
         .option("dbtable", jdbcQuery)
         .option("user", jdbcUser)
         .option("password", jdbcPassword)
-        .option("driver", "com.teradata.jdbc.TeraDriver")
+        .option("driver", jdbcDriver)
         .load()
 
       // Extract the count
       val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-      
 
       // Compare counts
       if (sourceTableCount == dtCount) {
+        // Construct the path to the .sql file
+        val sqlFilePath = s"${fteqLocation}/${alertCode}.sql"
+        
+        // Execute the SQL file
+        runSqlScript(sqlFilePath)
+
         // Execute shell script for email notification
-        val shellScriptPath = "/path/to/email_notification.sh"
-        val process = new ProcessBuilder("bash", shellScriptPath).start()
-        process.waitFor()
-        println(s"Email notification sent for alertCode: $alertCode")
+        sendEmailNotification(alertCode)
       } else {
         println(s"Source table count ($sourceTableCount) does not match DT_COUNT ($dtCount) for alertCode: $alertCode")
       }
@@ -66,8 +106,9 @@ df.collect().foreach(row => {
   } catch {
     case ex: Exception =>
       println(s"Error processing alertCode: $alertCode - ${ex.getMessage}")
+      ex.printStackTrace()
   }
-})
+}
 
 // Stop Spark session
 spark.stop()
