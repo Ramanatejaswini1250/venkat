@@ -46,18 +46,48 @@ object EmailNotificationApp {
   }
 
   // Function to run SQL script
-  def runSqlScript(scriptPath: String): Unit = {
-    Try {
-      // Implement running the SQL script here, e.g., using `spark.sql()` or executing via command line
-      println(s"Running SQL script at: $scriptPath")
-      // Example:
-      // val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
-      // spark.sql(sqlContent)  // This is just a placeholder
-    } match {
-      case Success(_) => println(s"SQL script executed successfully: $scriptPath")
-      case Failure(ex) => println(s"Error running SQL script: ${ex.getMessage}")
+ import scala.io.Source
+import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+
+def runSqlScript(scriptPath: String): Unit = {
+  Try {
+    // Check if the SQL file exists
+    if (!Files.exists(Paths.get(scriptPath))) {
+      throw new Exception(s"SQL file not found: $scriptPath")
     }
+
+    // Read the content of the SQL file and drop the first 4 lines
+    val sqlLines = Source.fromFile(scriptPath).getLines().drop(4).mkString("\n")
+
+    if (sqlLines.isEmpty) {
+      throw new Exception(s"SQL file at $scriptPath is empty after removing the first 4 lines.")
+    }
+
+    // Optionally, log the first few lines of the SQL script
+    println(s"Executing SQL script after removing first 4 lines from: $scriptPath")
+    println(s"SQL Content: \n$sqlLines")
+
+    // Example: Execute the SQL content using Spark SQL (assuming Spark is being used)
+    spark.sql(sqlLines)  // Executes the modified SQL content in Spark
+
+    // Alternatively, you can execute via JDBC or other methods depending on your setup
+    // Example for JDBC:
+    // val conn = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    // val stmt = conn.createStatement()
+    // stmt.execute(sqlLines)
+    // conn.close()
+
+    // Log the successful execution of the SQL script
+    println(s"SQL script executed successfully for: $scriptPath")
+
+  } match {
+    case Success(_) => println(s"SQL script executed successfully: $scriptPath")
+    case Failure(ex) =>
+      println(s"Error running SQL script at $scriptPath: ${ex.getMessage}")
   }
+}
+
 
   // Function to get the folder path based on the frequency and day
   def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
