@@ -19,9 +19,20 @@ df.collect().foreach { row =>
   try {
     // Validation checks for required fields
     if (dtCount > 0) {
-      if (!sourceTableName.isEmpty || !frequency.isEmpty || !filterColumn.isEmpty) {
-        val message = s"One or more required columns are null for alertCode: $alertCode"
+      // Check if any of the required fields are empty (None)
+      if (sourceTableName.isEmpty || frequency.isEmpty || filterColumn.isEmpty) {
+        // Create a message listing which columns are null
+        var nullColumnsMessage = ""
+        
+        if (sourceTableName.isEmpty) nullColumnsMessage += "source_table_name is null. "
+        if (frequency.isEmpty) nullColumnsMessage += "frequency is null. "
+        if (filterColumn.isEmpty) nullColumnsMessage += "filter_column is null. "
+
+        // Send the email with the missing columns message
+        val message = s"One or more required columns are null for alertCode: $alertCode. $nullColumnsMessage"
         sendEmailNotification(alertCode, message)
+
+        // Throw an exception to stop further processing
         throw new Exception(message)
       }
 
@@ -41,13 +52,8 @@ df.collect().foreach { row =>
 
       // Compare counts
       if (sourceTableCount == dtCount) {
-        // Construct the path to the .sql file
         val sqlFilePath = s"${bteqLocation}/${alertCode}.sql"
-        
-        // Execute the SQL file
         runSqlScript(sqlFilePath)
-
-        // Execute shell script for email notification
         sendEmailNotification(alertCode, "SQL script executed successfully")
       } else {
         val message = s"Source table count ($sourceTableCount) does not match DT_COUNT ($dtCount) for alertCode: $alertCode"
