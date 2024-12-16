@@ -1,67 +1,9 @@
-import org.apache.spark.sql.SparkSession
-import java.io.FileInputStream
-import java.util.Properties
-import java.io.File
-import scala.io.Source
-
-// Create a Spark session
-val spark = SparkSession.builder()
-  .appName("Spark SQL Execution with Validation")
-  .getOrCreate()
-
-// Load JDBC configuration from properties file
-val properties = new Properties()
-val configFilePath = "src/main/resources/jdbc_config.properties"  // Adjust path as needed
-
-// Load the properties file into the properties object
-properties.load(new FileInputStream(configFilePath))
-
-// Get JDBC details from the properties file
-val jdbcUrl = properties.getProperty("jdbc.url")
-val jdbcUser = properties.getProperty("jdbc.user")
-val jdbcPassword = properties.getProperty("jdbc.password")
-val jdbcDriver = properties.getProperty("jdbc.driver")
-
-// Sample DataFrame (Replace with actual DataFrame)
-val data = Seq(
-  ("IRAQ387", "11-12-2024", 11, "DuplicateCustomerCreation.sql", "U_D_DSV_001_RIS_1.Dup_CIF_pilot", "D", "REPORTING_DATE"),
-  ("IRAQ388", "11-12-2024", 0, "DuplicateCustomerCreation.sql", null, "D", "REPORTING_DATE"),
-  ("IRAQ389", "11-12-2024", 1, "DuplicateCustomerCreation.sql", "U_D_DSV_001_RIS_1.Dup_CIF_pilot", "D", null),
-  ("IRAQ390", "11-12-2024", 13, "DuplicateCustomerCreation.sql", "U_D_DSV_001_RIS_1.Dup_CIF_pilot", "D", "REPORTING_DATE"),
-  ("IRAQ391", "22-12-2024", 11, "DuplicateCustomerCreation.sql", "U_D_DSV_001_RIS_1.Dup_CIF_pilot", "D", "REPORTING_DATE")
-)
-
-val df = spark.createDataFrame(data).toDF("alert_code", "date_to_load", "dt_count", "bteq_location", "source_table_name", "frequency", "filter_column")
-
-// Function to send email notifications via a shell script
-def sendEmailNotification(alertCode: String): Unit = {
+// Function to send email notifications via a shell script with a custom message
+def sendEmailNotification(alertCode: String, message: String): Unit = {
   val shellScriptPath = "/path/to/email_notification.sh"
-  val process = new ProcessBuilder("bash", shellScriptPath).start()
+  val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message).start()
   process.waitFor()
-  println(s"Email notification sent for alertCode: $alertCode")
-}
-
-// Function to run the SQL file
-def runSqlScript(scriptPath: String): Unit = {
-  try {
-    // Check if the script file exists
-    val file = new File(scriptPath)
-    if (file.exists() && file.isFile) {
-      val process = new ProcessBuilder("bteq", "<", scriptPath).start()
-      val exitCode = process.waitFor()
-      if (exitCode == 0) {
-        println(s"SQL script executed successfully: $scriptPath")
-      } else {
-        println(s"Error executing SQL script: $scriptPath")
-      }
-    } else {
-      println(s"SQL file does not exist: $scriptPath")
-    }
-  } catch {
-    case ex: Exception =>
-      println(s"Error running SQL script: $scriptPath - ${ex.getMessage}")
-      ex.printStackTrace()
-  }
+  println(s"Email notification sent for alertCode: $alertCode with message: $message")
 }
 
 // Iterate through each record
@@ -78,7 +20,9 @@ df.collect().foreach { row =>
     // Validation checks for required fields
     if (dtCount > 0) {
       if (sourceTableName.isEmpty || frequency.isEmpty || filterColumn.isEmpty) {
-        throw new Exception(s"One or more required columns are null for alertCode: $alertCode")
+        val message = s"One or more required columns are null for alertCode: $alertCode"
+        sendEmailNotification(alertCode, message)
+        throw new Exception(message)
       }
 
       // Run the query to count rows in the source table with the filter
@@ -98,25 +42,28 @@ df.collect().foreach { row =>
       // Compare counts
       if (sourceTableCount == dtCount) {
         // Construct the path to the .sql file
-        val sqlFilePath = s"${fteqLocation}/${alertCode}.sql"
+        val sqlFilePath = s"${bteqLocation}/${alertCode}.sql"
         
         // Execute the SQL file
         runSqlScript(sqlFilePath)
 
         // Execute shell script for email notification
-        sendEmailNotification(alertCode)
+        sendEmailNotification(alertCode, "SQL script executed successfully")
       } else {
-        println(s"Source table count ($sourceTableCount) does not match DT_COUNT ($dtCount) for alertCode: $alertCode")
+        val message = s"Source table count ($sourceTableCount) does not match DT_COUNT ($dtCount) for alertCode: $alertCode"
+        sendEmailNotification(alertCode, message)
+        println(message)
       }
     } else {
-      throw new Exception(s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode")
+      val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
+      sendEmailNotification(alertCode, message)
+      throw new Exception(message)
     }
   } catch {
     case ex: Exception =>
-      println(s"Error processing alertCode: $alertCode - ${ex.getMessage}")
+      val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
+      sendEmailNotification(alertCode, message)
+      println(message)
       ex.printStackTrace()
   }
 }
-
-// Stop Spark session
-spark.stop()
