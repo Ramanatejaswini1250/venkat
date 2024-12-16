@@ -19,7 +19,7 @@ df.collect().foreach { row =>
   try {
     // Validation checks for required fields
     if (dtCount > 0) {
-      if (sourceTableName != null || frequency != null || filterColumn != null) {
+      if (!sourceTableName.isEmpty || !frequency.isEmpty || !filterColumn.isEmpty) {
         val message = s"One or more required columns are null for alertCode: $alertCode"
         sendEmailNotification(alertCode, message)
         throw new Exception(message)
