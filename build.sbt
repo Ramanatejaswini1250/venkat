@@ -1,16 +1,56 @@
+// Project information
 name := "EmailNotificationApp"
 
-version := "0.1"
+version := "1.0"
 
-scalaVersion := "2.12.17"  // Adjust based on your Scala version
+scalaVersion := "2.12.18" // Ensure compatibility with Spark
 
-// Spark dependencies
-libraryDependencies += "org.apache.spark" %% "spark-core" % "3.4.0",  // Change to the version you're using
-                        "org.apache.spark" %% "spark-sql" % "3.4.0"
+// Spark and Hadoop dependencies
+val sparkVersion = "3.5.0" // Adjust based on your Spark version
+val hadoopVersion = "3.3.5" // Adjust based on your Hadoop version
 
-// JDBC driver (example for PostgreSQL, change as needed for your DB)
-libraryDependencies += "org.postgresql" % "postgresql" % "42.2.24" 
+libraryDependencies ++= Seq(
+  // Spark core and SQL dependencies
+  "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
+  "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+  
+  // Logging (SLF4J and Log4j for better log management)
+  "org.slf4j" % "slf4j-api" % "2.0.9",
+  "org.slf4j" % "slf4j-log4j12" % "2.0.9",
+  
+  // Database (Teradata JDBC driver for database connection)
+  "com.teradata.jdbc" % "terajdbc4" % "17.20.00.08", // Replace with your Teradata JDBC driver version
+  "com.teradata.jdbc" % "tdgssconfig" % "17.20.00.08", // Teradata security configuration library
 
-// Logging library (Optional, if you want better logging)
-libraryDependencies += "org.slf4j" % "slf4j-api" % "2.0.0-alpha1"
-libraryDependencies += "org.slf4j" % "slf4j-simple" % "2.0.0-alpha1"
+  // Configuration library for managing environment variables
+  "com.typesafe" % "config" % "1.4.2"
+)
+
+// Compile options
+scalacOptions ++= Seq(
+  "-deprecation", // Warn about deprecated APIs
+  "-feature",     // Warn about features
+  "-unchecked",   // Enable additional warnings where generated code depends on assumptions
+  "-Xfatal-warnings", // Fail the compilation on any warnings
+  "-encoding", "utf8" // Specify UTF-8 character encoding
+)
+
+// Spark Assembly configuration (for running locally)
+assembly / mainClass := Some("EmailNotificationApp")
+
+assembly / assemblyMergeStrategy := {
+  case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+  case x => MergeStrategy.first
+}
+
+// Resolving dependency conflicts
+dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2"
+dependencyOverrides += "com.fasterxml.jackson.core" % "jackson-core" % "2.15.2"
+dependencyOverrides += "com.fasterxml.jackson.module" % "jackson-module-scala_2.12" % "2.15.2"
+
+// Repository for dependencies
+resolvers ++= Seq(
+  "Apache Spark" at "https://repo1.maven.org/maven2/",
+  "Typesafe Repository" at "https://repo.typesafe.com/typesafe/releases/",
+  "Teradata Maven Repository" at "https://artifactory.teradata.com/artifactory/maven-public/" // Teradata repository
+)
