@@ -1,4 +1,4 @@
-// Project information
+// build.sbt
 name := "EmailNotificationApp"
 
 version := "1.0"
@@ -35,9 +35,13 @@ scalacOptions ++= Seq(
   "-encoding", "utf8" // Specify UTF-8 character encoding
 )
 
-// Spark Assembly configuration (for running locally)
-assembly / mainClass := Some("EmailNotificationApp")
+// SBT Assembly settings
+enablePlugins(AssemblyPlugin)
 
+// Specify the main class for running the project
+mainClass in assembly := Some("EmailNotificationApp")
+
+// Merge strategy for handling duplicate files during assembly
 assembly / assemblyMergeStrategy := {
   case PathList("META-INF", xs @ _*) => MergeStrategy.discard
   case x => MergeStrategy.first
