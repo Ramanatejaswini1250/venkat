@@ -51,35 +51,45 @@ import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 
 def runSqlScript(scriptPath: String): Unit = {
-  Try {
-    // Check if the SQL file exists
-    if (!Files.exists(Paths.get(scriptPath))) {
-      throw new Exception(s"SQL file not found: $scriptPath")
-    }
+    Try {
+      // Check if the SQL file exists
+      if (!Files.exists(Paths.get(scriptPath))) {
+        throw new Exception(s"SQL file not found: $scriptPath")
+      }
 
-    // Read the content of the SQL file and drop the first 4 lines
-    val sqlLines = Source.fromFile(scriptPath).getLines().drop(4).mkString("\n")
+      // Read the content of the SQL file and drop the first 4 lines
+      val sqlLines = Source.fromFile(scriptPath).getLines().drop(4).mkString("\n")
 
-    if (sqlLines.isEmpty) {
-      throw new Exception(s"SQL file at $scriptPath is empty after removing the first 4 lines.")
-    }
+      if (sqlLines.isEmpty) {
+        throw new Exception(s"SQL file at $scriptPath is empty after removing the first 4 lines.")
+      }
 
-    // Optionally, log the first few lines of the SQL script
-    println(s"Executing SQL script after removing first 4 lines from: $scriptPath")
-    println(s"SQL Content: \n$sqlLines")
+      // Optionally, log the first few lines of the SQL script
+      println(s"Executing SQL script after removing first 4 lines from: $scriptPath")
+      println(s"SQL Content: \n$sqlLines")
 
-    // Example: Execute the SQL content using Spark SQL (assuming Spark is being used)
-    spark.sql(sqlLines)  // Executes the modified SQL content in Spark
+      // JDBC Execution
+      var conn: Connection = null
+      var stmt: java.sql.Statement = null
+      try {
+        // Establish the JDBC connection using values from properties
+        conn = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+        stmt = conn.createStatement()
 
-    // Alternatively, you can execute via JDBC or other methods depending on your setup
-    // Example for JDBC:
-    // val conn = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    // val stmt = conn.createStatement()
-    // stmt.execute(sqlLines)
-    // conn.close()
+        // Execute the SQL script
+        stmt.execute(sqlLines)
 
-    // Log the successful execution of the SQL script
-    println(s"SQL script executed successfully for: $scriptPath")
+        // Log success
+        println(s"SQL script executed successfully for: $scriptPath")
+      } catch {
+        case e: SQLException =>
+          println(s"Error executing SQL script via JDBC: ${e.getMessage}")
+          throw new Exception(s"Error executing SQL script: ${e.getMessage}")
+      } finally {
+        // Close the resources
+        if (stmt != null) stmt.close()
+        if (conn != null) conn.close()
+      }
 
   } match {
     case Success(_) => println(s"SQL script executed successfully: $scriptPath")
