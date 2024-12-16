@@ -1,12 +1,26 @@
 import org.apache.spark.sql.SparkSession
+import java.io.FileInputStream
+import java.util.Properties
 import java.io.File
 import scala.io.Source
-import java.util.Properties
 
 // Create a Spark session
 val spark = SparkSession.builder()
   .appName("Spark SQL Execution with Validation")
   .getOrCreate()
+
+// Load JDBC configuration from properties file
+val properties = new Properties()
+val configFilePath = "src/main/resources/jdbc_config.properties"  // Adjust path as needed
+
+// Load the properties file into the properties object
+properties.load(new FileInputStream(configFilePath))
+
+// Get JDBC details from the properties file
+val jdbcUrl = properties.getProperty("jdbc.url")
+val jdbcUser = properties.getProperty("jdbc.user")
+val jdbcPassword = properties.getProperty("jdbc.password")
+val jdbcDriver = properties.getProperty("jdbc.driver")
 
 // Sample DataFrame (Replace with actual DataFrame)
 val data = Seq(
@@ -18,12 +32,6 @@ val data = Seq(
 )
 
 val df = spark.createDataFrame(data).toDF("alert_code", "date_to_load", "dt_count", "bteq_location", "source_table_name", "frequency", "filter_column")
-
-// JDBC Connection details
-val jdbcUrl = "jdbc:teradata://your_teradata_host/database=your_database"
-val jdbcUser = "your_username"
-val jdbcPassword = "your_password"
-val jdbcDriver = "com.teradata.jdbc.TeraDriver"
 
 // Function to send email notifications via a shell script
 def sendEmailNotification(alertCode: String): Unit = {
