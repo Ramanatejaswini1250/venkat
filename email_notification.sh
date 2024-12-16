@@ -1,26 +1,31 @@
 #!/bin/bash
 
-# Exit immediately if any command exits with a non-zero status
-set -e
-
-# Check if at least one argument (alert code) is passed
-if [ "$#" -lt 1 ]; then
-  echo "Usage: $0 <alertCode> [<message>]"
-  exit 1
+# Ensure proper usage of the script
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <alertCode> <message>"
+    exit 1
 fi
 
-# Get the arguments
-ALERT_CODE=$1
-MESSAGE=${2:-"No additional details provided."}  # Default message if not provided
+ALERT_CODE="$1"
+MESSAGE="$2"
 
-# Email details
-EMAIL_SUBJECT="Alert Notification: ${ALERT_CODE}"
-EMAIL_BODY="An alert has been triggered.\n\nAlert Code: ${ALERT_CODE}\nDetails: ${MESSAGE}\n\nPlease take necessary action."
-EMAIL_TO="recipient@example.com"  # Replace with actual recipient email address
-EMAIL_FROM="noreply@example.com"  # Replace with actual sender email address
+# SMTP Configuration (update with actual details)
+SMTP_SERVER="smtp.yourmailserver.com"        # Replace with your SMTP server
+SMTP_PORT=587                                # Port for TLS
+SMTP_USER="your_email@example.com"           # Replace with your SMTP username
+SMTP_PASSWORD="your_password"               # Replace with your SMTP password
 
-# Send the email
-echo -e "$EMAIL_BODY" | mail -s "$EMAIL_SUBJECT" -r "$EMAIL_FROM" "$EMAIL_TO"
+# Email Information
+FROM="your_email@example.com"                # Replace with the sender email address
+TO="venkat@cba.com.au"                       # The recipient email (Venkat)
+SUBJECT="Alert: $ALERT_CODE"
 
-# Log success
-echo "Email notification sent for Alert Code: $ALERT_CODE"
+# Send email using msmtp (Make sure msmtp is installed on the system)
+echo -e "Subject: $SUBJECT\n\n$MESSAGE" | msmtp --from="$FROM" --to="$TO" --host="$SMTP_SERVER" --port="$SMTP_PORT" --user="$SMTP_USER" --passwordeval="echo $SMTP_PASSWORD"
+
+# Check if email was sent successfully
+if [ $? -eq 0 ]; then
+    echo "Email notification sent to venkat@cba.com.au successfully."
+else
+    echo "Failed to send email notification to venkat@cba.com.au."
+fi
