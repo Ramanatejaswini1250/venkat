@@ -61,20 +61,30 @@ object EmailNotificationApp {
 
   // Function to get the folder path based on the frequency and day
   def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
-    val currentDay = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
     frequency.toLowerCase match {
-      case "daily" => s"$bteqLocation/DAILY" // For daily files
+      case "daily" => 
+        s"$bteqLocation/DAILY RUN" // Files arriving daily go to "DAILY RUN" folder
+
       case "weekly" =>
-        // For weekly, check which day of the week it is and run the corresponding folder (Monday-Sunday)
-        val dayOfWeek = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime).toLowerCase
-        s"$bteqLocation/weekly/$dayOfWeek" // Monday, Tuesday, etc.
-      case "biweekly" =>
-        // For biweekly, it can be treated as part of the "weekly" or monthly folder
-        // Assuming it's biweekly in a "biweekly" folder
-        s"$bteqLocation/biweekly"
-      case "monthly" => s"$bteqLocation/monthly" // For monthly files
-      case "quarterly" => s"$bteqLocation/quarterly" // For quarterly files
-      case _ => throw new Exception(s"Unknown frequency: $frequency")
+        // For weekly files, check which day of the week it is and route accordingly
+        val dayOfWeek = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime).toUpperCase
+        dayOfWeek match {
+          case "MONDAY" => s"$bteqLocation/MON"
+          case "TUESDAY" => s"$bteqLocation/TUE"
+          case "WEDNESDAY" => s"$bteqLocation/WED"
+          case "THURSDAY" => s"$bteqLocation/THU"
+          case "FRIDAY" => s"$bteqLocation/FRI"
+          case "SATURDAY" => s"$bteqLocation/SAT"
+          case "SUNDAY" => s"$bteqLocation/SUN"
+          case _ => throw new Exception(s"Unknown weekday: $dayOfWeek")
+        }
+
+      case "biweekly" | "monthly" =>
+        // Files arriving monthly or biweekly go to the "MONTHLY" folder
+        s"$bteqLocation/MONTHLY"
+
+      case _ => 
+        throw new Exception(s"Unknown frequency: $frequency")
     }
   }
 
