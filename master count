@@ -1,0 +1,132 @@
+import java.io.{BufferedWriter, File, FileWriter}
+import java.nio.file.{Files, Paths}
+import java.sql.{Connection, DriverManager, ResultSet}
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+
+object MasterFileAutomation {
+
+  // JDBC Connection Configuration
+  val jdbcUrl = "jdbc:teradata://database_url"
+  val jdbcUser = "your_username"
+  val jdbcPassword = "your_password"
+
+  // SQL Queries
+  val masterTarget1CountQuery =
+    """SELECT COUNT(*) AS count FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1 WHERE alert_code = ?"""
+  val masterTarget2BlankCountQuery =
+    """SELECT COUNT(*) AS blank_count FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 WHERE variable = ''"""
+  val updateMasterTarget2Query =
+    """UPDATE U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 SET variable = NULL WHERE variable = ''"""
+  val selectMasterTarget1Query =
+    """SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1 ORDER BY 1"""
+  val selectMasterTarget2Query =
+    """SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 ORDER BY 1, 2"""
+
+  def main(args: Array[String]): Unit = {
+    // Initialize connection
+    val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    println("Database connection established!")
+
+    try {
+      val alertCode = "your_alert_code"
+
+      // 1. Count Validation
+      val masterCount = getCount(connection, masterTarget1CountQuery, alertCode)
+      val dtCount = 100 // Replace with actual DT_COUNT logic
+      if (masterCount == dtCount) {
+        println(s"Count Validation Passed! Master Count: $masterCount matches DT_COUNT: $dtCount")
+
+        // 2. Blank Validation in Master Table 2
+        val blankCount = getCount(connection, masterTarget2BlankCountQuery)
+        if (blankCount > 0) {
+          println(s"Blank Validation: Found $blankCount blank values. Updating to NULL...")
+          executeUpdate(connection, updateMasterTarget2Query)
+          println("Blank values updated to NULL successfully!")
+        } else {
+          println("No blank values found in Master Table 2.")
+        }
+
+        // 3. Generate Master Files and Export to CSV
+        val now = LocalDateTime.now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+        val master1FileName = s"${now}_Master_Table1.csv"
+        val master2FileName = s"${now}_Master_Table2.csv"
+
+        exportToCSV(connection, selectMasterTarget1Query, master1FileName)
+        exportToCSV(connection, selectMasterTarget2Query, master2FileName)
+
+        println(s"Master files generated: $master1FileName, $master2FileName")
+
+        // 4. Save Files to Specified Folder
+        val folderPath = s"\\\\naunsw001\\rbscusr_crel_data_sy$\\Level4\\15 Controls Analytics and Automation\\6 RAMP\\${now}_RBSCC_${getDayOfWeek()}"
+        saveFilesToFolder(folderPath, master1FileName, master2FileName)
+      } else {
+        println(s"Count Validation Failed! Master Count: $masterCount does not match DT_COUNT: $dtCount")
+      }
+    } finally {
+      connection.close()
+      println("Database connection closed!")
+    }
+  }
+
+  // Function to Get Count from Query
+  def getCount(connection: Connection, query: String, alertCode: String = ""): Int = {
+    val statement = connection.prepareStatement(query)
+    if (alertCode.nonEmpty) statement.setString(1, alertCode)
+    val resultSet = statement.executeQuery()
+    resultSet.next()
+    val count = resultSet.getInt(1)
+    statement.close()
+    count
+  }
+
+  // Function to Execute Update
+  def executeUpdate(connection: Connection, query: String): Unit = {
+    val statement = connection.createStatement()
+    statement.executeUpdate(query)
+    statement.close()
+  }
+
+  // Function to Export Query Result to CSV
+  def exportToCSV(connection: Connection, query: String, fileName: String): Unit = {
+    val statement = connection.createStatement()
+    val resultSet = statement.executeQuery(query)
+
+    val file = new File(fileName)
+    val bw = new BufferedWriter(new FileWriter(file))
+
+    // Write Header
+    val metaData = resultSet.getMetaData
+    val columnCount = metaData.getColumnCount
+    val header = (1 to columnCount).map(metaData.getColumnName).mkString(",")
+    bw.write(header + "\n")
+
+    // Write Data
+    while (resultSet.next()) {
+      val row = (1 to columnCount).map(resultSet.getString).mkString(",")
+      bw.write(row + "\n")
+    }
+
+    bw.close()
+    statement.close()
+    println(s"Data exported successfully to $fileName")
+  }
+
+  // Function to Save Files to Folder
+  def saveFilesToFolder(folderPath: String, files: String*): Unit = {
+    val folder = new File(folderPath)
+    if (!folder.exists()) folder.mkdirs()
+
+    files.foreach { fileName =>
+      val source = new File(fileName)
+      val destination = new File(folder, fileName)
+      Files.move(source.toPath, destination.toPath)
+      println(s"Moved $fileName to $folderPath")
+    }
+  }
+
+  // Function to Get Day of the Week
+  def getDayOfWeek(): String = {
+    LocalDateTime.now.format(DateTimeFormatter.ofPattern("EEEE")).toUpperCase.take(3)
+  }
+}
