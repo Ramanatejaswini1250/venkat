@@ -23,10 +23,10 @@ object EmailNotificationApp {
   val jdbcDriver: String = sys.env.getOrElse("JDBC_DRIVER", "com.jdbc.Driver") // Specify the correct JDBC driver class
 
   // Function to send email notifications via a shell script
-  def sendEmailNotification(alertCode: String, message: String): Unit = {
+  def sendEmailNotification(alertCode: String, message: String,emailAddress: String,business: String): Unit = {
     val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
     Try {
-      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message).start()
+      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message,emailAddress,business).start()
 
       // Capture the output of the shell script
       val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
@@ -116,6 +116,9 @@ object EmailNotificationApp {
         val dtCount = row.getAs[Int]("dt_count")
         val dateToLoad = row.getAs[String]("date_to_load")
         val bteqLocation = row.getAs[String]("bteq_location")
+val emailAddress = row.getAs[String]("emailAddress")
+val business = row.getAs[String]("business")
+
 
         val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
           sendEmailNotification(alertCode, "Missing source_table_name")
@@ -135,8 +138,7 @@ object EmailNotificationApp {
        try {
   if (dtCount > 0) {
     // Extract email_address and business from the row
-    val emailAddress = row.getAs[String]("email_address")
-    val business = row.getAs[String]("business")
+  
     
     // Construct the query to count rows in the source table based on the filter
     val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
@@ -213,7 +215,7 @@ object EmailNotificationApp {
     )
 
     import spark.implicits._
-    val df = data.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "source_table_name", "frequency", "filter_column")
+    val df = data.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "source_table_name", "frequency", "filter_column","Business","email_address")
 
     // Process the records and send notifications
     processRecords(df)
