@@ -1,0 +1,89 @@
+def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String): Unit = {
+  val shellScriptPath = "/path/to/email_notification.sh"
+  Try {
+    val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, emailAddress, business).start()
+    val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+    var line: String = null
+    while ({ line = reader.readLine(); line != null }) {
+      println(line)
+    }
+    val exitCode = process.waitFor()
+    if (exitCode != 0) {
+      throw new Exception(s"Shell script failed with exit code: $exitCode")
+    }
+  } match {
+    case Success(_) => println(s"Email sent successfully for alertCode: $alertCode to $emailAddress")
+    case Failure(ex) => println(s"Failed to send email for alertCode: $alertCode to $emailAddress: ${ex.getMessage}")
+  }
+}
+
+def processRecords(df: DataFrame): Unit = {
+  df.foreachPartition { partition =>
+    partition.foreach { row =>
+      val alertCode = row.getAs[String]("alert_code")
+      val dtCount = row.getAs[Int]("dt_count")
+      val dateToLoad = row.getAs[String]("date_to_load")
+      val bteqLocation = row.getAs[String]("bteq_location")
+      val emailAddresses = row.getAs[String]("email_address") // Comma-separated emails
+      val business = row.getAs[String]("business")
+      val sourceTableName = row.getAs[String]("source_table_name")
+      val frequency = row.getAs[String]("frequency")
+      val filterColumn = row.getAs[String]("filter_column")
+
+      try {
+        if (dtCount > 0) {
+          val query = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+          val sourceCount = spark.read.format("jdbc")
+            .option("url", jdbcUrl)
+            .option("dbtable", query)
+            .option("user", jdbcUser)
+            .option("password", jdbcPassword)
+            .option("driver", jdbcDriver)
+            .load().collect()(0).getAs[Long]("cnt")
+
+          if (sourceCount == dtCount) {
+            val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+            val sqlFilePath = s"$sqlFolderPath/$alertCode.sql"
+            if (Files.exists(Paths.get(sqlFilePath))) {
+              runSqlScript(sqlFilePath)
+
+              // Send success email to all email addresses
+              emailAddresses.split(",").foreach { email =>
+                sendEmailNotification(alertCode, "SQL executed successfully", email.trim, business)
+              }
+            } else {
+              emailAddresses.split(",").foreach { email =>
+                sendEmailNotification(alertCode, s"SQL file not found: $sqlFilePath", email.trim, business)
+              }
+            }
+          } else {
+            emailAddresses.split(",").foreach { email =>
+              sendEmailNotification(alertCode, s"Counts do not match: Source=$sourceCount, DT_COUNT=$dtCount", email.trim, business)
+            }
+          }
+        } else {
+          emailAddresses.split(",").foreach { email =>
+            sendEmailNotification(alertCode, s"DT_COUNT <= 0 for alertCode: $alertCode", email.trim, business)
+          }
+        }
+      } catch {
+        case ex: Exception =>
+          emailAddresses.split(",").foreach { email =>
+            sendEmailNotification(alertCode, s"Error: ${ex.getMessage}", email.trim, business)
+          }
+          ex.printStackTrace()
+      }
+    }
+  }
+}
+
+def main(args: Array[String]): Unit = {
+  val data = Seq(
+    ("A001", 10, "2024-12-16", "/path/to/sql", "source_table", "daily", "filter_column", "Business_A", "email1@example.com,email2@example.com"),
+    ("A002", 5, "2024-12-17", "/path/to/sql", "source_table", "weekly", "filter_column", "Business_B", "email3@example.com,email4@example.com")
+  )
+  import spark.implicits._
+  val df = data.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "source_table_name", "frequency", "filter_column", "business", "email_address")
+  processRecords(df)
+  spark.stop()
+}
