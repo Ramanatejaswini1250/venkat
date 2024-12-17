@@ -1,3 +1,6 @@
+import java.io.FileWriter
+import java.sql.{Connection, DriverManager, ResultSet}
+
 // Function to send email notifications via a shell script with first email in To and others in CC
 def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
   val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
@@ -95,6 +98,77 @@ def processRecords(df: DataFrame): Unit = {
             sendEmailNotification(alertCode, message, emailAddress, business)
             println(message)
           }
+import java.io.FileWriter
+import java.sql.{Connection, DriverManager, ResultSet}
+
+// JDBC connection properties
+val connectionProperties = new java.util.Properties()
+connectionProperties.put("user", jdbcUser)
+connectionProperties.put("password", jdbcPassword)
+
+// Function to export ResultSet to a CSV file
+def writeResultSetToCSV(resultSet: ResultSet, outputPath: String): Unit = {
+  val metaData = resultSet.getMetaData
+  val columnCount = metaData.getColumnCount
+
+  val fileWriter = new FileWriter(outputPath)
+  try {
+    // Write header
+    val header = (1 to columnCount).map(metaData.getColumnName).mkString(",")
+    fileWriter.write(header + "\n")
+
+    // Write rows
+    while (resultSet.next()) {
+      val row = (1 to columnCount).map(resultSet.getString).mkString(",")
+      fileWriter.write(row + "\n")
+    }
+    println(s"File successfully written to: $outputPath")
+  } finally {
+    fileWriter.close()
+  }
+}
+
+// Get JDBC connection
+val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+
+try {
+  // Blank validation query
+  val blankValidationQuery = 
+    s"SELECT COUNT(*) AS cnt FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 WHERE variable = ''"
+  val blankResult = connection.createStatement().executeQuery(blankValidationQuery)
+  
+  if (blankResult.next() && blankResult.getInt("cnt") > 0) {
+    println("Blank values found. Updating blank values to NULL.")
+    
+    // Update query to set blank variables to NULL
+    val updateQuery = 
+      "UPDATE U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 SET variable = NULL WHERE variable = ''"
+    connection.createStatement().executeUpdate(updateQuery)
+    println("Blank values updated to NULL.")
+  }
+
+  // Generate Master File 1
+  val masterFile1Query = "SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1 ORDER BY 1"
+  val masterFile1Result = connection.createStatement().executeQuery(masterFile1Query)
+  val masterFile1Path = "/path/to/output/YYYYMMDDHHMMSS_Master_Table1.csv"
+  writeResultSetToCSV(masterFile1Result, masterFile1Path)
+
+  // Generate Master File 2
+  val masterFile2Query = "SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 ORDER BY 1,2"
+  val masterFile2Result = connection.createStatement().executeQuery(masterFile2Query)
+  val masterFile2Path = "/path/to/output/YYYYMMDDHHMMSS_Master_Table2.csv"
+  writeResultSetToCSV(masterFile2Result, masterFile2Path)
+
+  println("Master files successfully generated and saved.")
+
+} catch {
+  case ex: Exception =>
+    println(s"Error during processing: ${ex.getMessage}")
+    ex.printStackTrace()
+} finally {
+  connection.close()
+}
+
         } else {
           val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
           sendEmailNotification(alertCode, message, emailAddress, business)
