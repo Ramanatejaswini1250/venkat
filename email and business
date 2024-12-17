@@ -1,0 +1,71 @@
+try {
+  if (dtCount > 0) {
+    // Extract email_address and business from the row
+    val emailAddress = row.getAs[String]("email_address")
+    val business = row.getAs[String]("business")
+    
+    // Construct the query to count rows in the source table based on the filter
+    val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+    
+    // Perform the query to get the row count
+    val sourceTableCountDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", jdbcQuery)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    // Extract the count value from the result DataFrame
+    val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+
+    // Compare the retrieved count with dtCount
+    if (sourceTableCount == dtCount) {
+      // Get the SQL folder path based on frequency
+      val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+      
+      // Check if the folder exists
+      if (Files.exists(Paths.get(sqlFolderPath))) {
+        // Define the path to the SQL file
+        val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+        
+        // Check if the SQL file exists
+        if (Files.exists(Paths.get(sqlFilePath))) {
+          // Run the SQL script if the file exists
+          runSqlScript(sqlFilePath)
+          
+          // Send a success notification via email to the business
+          sendEmailNotification(alertCode, business, emailAddress, s"SQL script executed successfully for alertCode: $alertCode")
+        } else {
+          // Handle the case where the SQL file does not exist
+          val message = s"SQL file not found for alertCode: $alertCode in $sqlFolderPath"
+          sendEmailNotification(alertCode, business, emailAddress, message)
+          println(message)
+        }
+      } else {
+        // Handle the case where the folder does not exist
+        val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+        sendEmailNotification(alertCode, business, emailAddress, message)
+        println(message)
+      }
+    } else {
+      // Handle the case where the row counts do not match
+      val message = s"Source table count ($sourceTableCount) does not match DT_COUNT ($dtCount) for alertCode: $alertCode"
+      sendEmailNotification(alertCode, business, emailAddress, message)
+      println(message)
+    }
+  } else {
+    // Handle the case where dtCount is less than or equal to 0
+    val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
+    sendEmailNotification(alertCode, business, emailAddress, message)
+    throw new Exception(message)
+  }
+} catch {
+  case ex: Exception =>
+    // Handle any exceptions that occur during processing
+    val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
+    sendEmailNotification(alertCode, business, emailAddress, message)
+    println(message)
+    ex.printStackTrace()
+}
