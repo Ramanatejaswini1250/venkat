@@ -1,0 +1,38 @@
+// Function to send email notifications via a shell script with first email in To and others in CC
+def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
+  val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
+  
+  // Split the comma-separated email addresses into an array
+  val emailList = emailAddresses.split(",").map(_.trim)
+
+  // If the list is not empty
+  if (emailList.nonEmpty) {
+    // The first email goes in the "To" field, the rest in the "CC" field
+    val toEmail = emailList(0)  // First email in "To"
+    val ccEmails = emailList.drop(1).take(3).mkString(",")  // Next up to 3 emails in "CC"
+
+    Try {
+      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
+
+      // Capture the output of the shell script
+      val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+      var line: String = null
+      while ({ line = reader.readLine(); line != null }) {
+        println(line)  // You can log this output if necessary
+      }
+
+      // Check for process exit code
+      val exitCode = process.waitFor()
+      if (exitCode != 0) {
+        throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
+      } else {
+        println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
+      }
+    } match {
+      case Success(_) => println(s"Notification sent for alertCode: $alertCode")
+      case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
+    }
+  } else {
+    println("No email addresses found to send the notification.")
+  }
+}
