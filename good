@@ -56,6 +56,11 @@ def sendEmailNotification(alertCode: String, message: String, emailAddresses: St
     // val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
     // spark.sql(sqlContent)  // This is just a placeholder
   }
+// Function to generate a timestamped file name
+def getCurrentTimestamp: String = {
+  val format = new SimpleDateFormat("yyyyMMddHHmmss")
+  format.format(Calendar.getInstance().getTime)
+}
 
   def processRecords(df: DataFrame): Unit = {
   df.foreachPartition { partition =>
