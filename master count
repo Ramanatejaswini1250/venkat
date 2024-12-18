@@ -1,114 +1,124 @@
-if (sourceTableCount == dtCount) {
-  val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
-  
-  if (Files.exists(Paths.get(sqlFolderPath))) {
-    val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
-    
-    if (Files.exists(Paths.get(sqlFilePath))) {
-      runSqlScript(sqlFilePath)
-      
-      // ---- Blank Validation Logic (Step 2 in Screenshot) ----
-      println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
+if (dtCount > 0) {
+  // Step 1: Count Validation - Compare RAMP_MASTER_TARGET1 count with dtCount
+  println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
 
-      val blankCountQuery =
-        """
-          |(SELECT COUNT(*) AS blank_count
-          | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-          | WHERE variable = '') AS subquery
-          |""".stripMargin
+  val countValidationQuery =
+    """
+      |(SELECT COUNT(*) AS master_count
+      | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
+      |""".stripMargin
 
-      val blankCountDF = spark.read
-        .format("jdbc")
-        .option("url", jdbcUrl)
-        .option("dbtable", blankCountQuery)
-        .option("user", jdbcUser)
-        .option("password", jdbcPassword)
-        .option("driver", jdbcDriver)
-        .load()
+  val masterCountDF = spark.read
+    .format("jdbc")
+    .option("url", jdbcUrl)
+    .option("dbtable", countValidationQuery)
+    .option("user", jdbcUser)
+    .option("password", jdbcPassword)
+    .option("driver", jdbcDriver)
+    .load()
 
-      val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
+  val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
 
-      if (blankCount > 0) {
-        println(s"Found $blankCount blank values. Updating them to NULL...")
-
-        val updateBlankValuesQuery =
-          """
-            |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-            |SET variable = NULL
-            |WHERE variable = ''
-            |""".stripMargin
-
-        // Execute the update query via JDBC
-        val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-        val statement = connection.createStatement()
-        statement.executeUpdate(updateBlankValuesQuery)
-        statement.close()
-        connection.close()
-
-        println("Blank values updated successfully.")
-      } else {
-        println("No blank values found in RAMP_MASTER_TARGET2.")
-      }
-
-      // ---- Export Data to Files (Step 3 in Screenshot) ----
-      println("Exporting data to CSV files...")
-
-      // Export Master File 1
-      val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
-      val masterFile1Path = s"/output/path/YYYMMDDHHMMSS_Master_Table1.csv"
-
-      val masterFile1DF = spark.read
-        .format("jdbc")
-        .option("url", jdbcUrl)
-        .option("dbtable", masterFile1Query)
-        .option("user", jdbcUser)
-        .option("password", jdbcPassword)
-        .option("driver", jdbcDriver)
-        .load()
-
-      masterFile1DF.coalesce(1)
-        .write
-        .option("header", "true")
-        .option("delimiter", ",")
-        .csv(masterFile1Path)
-
-      println(s"Master File 1 exported to: $masterFile1Path")
-
-      // Export Master File 2
-      val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
-      val masterFile2Path = s"/output/path/YYYMMDDHHMMSS_Master_Table2.csv"
-
-      val masterFile2DF = spark.read
-        .format("jdbc")
-        .option("url", jdbcUrl)
-        .option("dbtable", masterFile2Query)
-        .option("user", jdbcUser)
-        .option("password", jdbcPassword)
-        .option("driver", jdbcDriver)
-        .load()
-
-      masterFile2DF.coalesce(1)
-        .write
-        .option("header", "true")
-        .option("delimiter", ",")
-        .csv(masterFile2Path)
-
-      println(s"Master File 2 exported to: $masterFile2Path")
-
-      // Send success notification
-      sendEmailNotification(alertCode, "SQL script executed and files exported successfully", emailAddress, business)
-    } else {
-      val message = s"SQL file not found for alertCode: $alertCode"
-      sendEmailNotification(alertCode, message, emailAddress, business)
-      println(message)
-    }
-  } else {
-    val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+  if (masterTargetCount != dtCount) {
+    val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
     sendEmailNotification(alertCode, message, emailAddress, business)
     println(message)
+    throw new Exception(message)
+  } else {
+    println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
+
+    // ---- Blank Validation Logic (Step 2) ----
+    println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
+
+    val blankCountQuery =
+      """
+        |(SELECT COUNT(*) AS blank_count
+        | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+        | WHERE variable = '') AS subquery
+        |""".stripMargin
+
+    val blankCountDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", blankCountQuery)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
+
+    if (blankCount > 0) {
+      println(s"Found $blankCount blank values. Updating them to NULL...")
+
+      val updateBlankValuesQuery =
+        """
+          |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+          |SET variable = NULL
+          |WHERE variable = ''
+          |""".stripMargin
+
+      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
+      statement.executeUpdate(updateBlankValuesQuery)
+      statement.close()
+      connection.close()
+
+      println("Blank values updated successfully.")
+    } else {
+      println("No blank values found in RAMP_MASTER_TARGET2.")
+    }
+
+    // ---- Export Data to Files (Step 3) ----
+    println("Exporting data to CSV files...")
+
+    // Export Master File 1
+    val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
+    val masterFile1Path = s"/output/path/YYYMMDDHHMMSS_Master_Table1.csv"
+
+    val masterFile1DF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", masterFile1Query)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    masterFile1DF.coalesce(1)
+      .write
+      .option("header", "true")
+      .option("delimiter", ",")
+      .csv(masterFile1Path)
+
+    println(s"Master File 1 exported to: $masterFile1Path")
+
+    // Export Master File 2
+    val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
+    val masterFile2Path = s"/output/path/YYYMMDDHHMMSS_Master_Table2.csv"
+
+    val masterFile2DF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", masterFile2Query)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    masterFile2DF.coalesce(1)
+      .write
+      .option("header", "true")
+      .option("delimiter", ",")
+      .csv(masterFile2Path)
+
+    println(s"Master File 2 exported to: $masterFile2Path")
+
+    // Send success notification
+    sendEmailNotification(alertCode, "SQL script executed and files exported successfully", emailAddress, business)
   }
 } else {
-  val message = s"Source table count does not match DT_COUNT"
+  val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
   sendEmailNotification(alertCode, message, emailAddress, business)
-  println(message)
+  throw new Exception(message)
 }
