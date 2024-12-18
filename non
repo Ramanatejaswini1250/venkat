@@ -1,0 +1,87 @@
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import scala.util.{Try, Success, Failure}
+import java.io.{BufferedReader, InputStreamReader}
+
+object EmailNotificationApp {
+
+  // Define Spark session
+  val spark: SparkSession = SparkSession.builder()
+    .appName("EmailNotificationApp")
+    .master("local[*]") // Adjust as needed
+    .getOrCreate()
+
+  // JDBC connection parameters (update these values as needed)
+  val jdbcUrl: String = "jdbc:your_database_url"
+  val jdbcUser: String = "your_user"
+  val jdbcPassword: String = "your_password"
+  val jdbcDriver: String = "com.jdbc.Driver"
+
+  // Function to send email notifications
+  def sendEmailNotification(alertCode: String, message: String, ccEmails: String, business: String): Unit = {
+    val shellScriptPath = "/path/to/mail_notification.sh" // Update with actual path
+    val toEmail = "cdao_risk@example.com" // Hardcoded "to_mail" for CDAO Risk team
+
+    Try {
+      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
+
+      val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+      var line: String = null
+      while ({ line = reader.readLine(); line != null }) {
+        println(line)
+      }
+
+      val exitCode = process.waitFor()
+      if (exitCode != 0) {
+        throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
+      } else {
+        println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
+      }
+    } match {
+      case Success(_) => println(s"Notification sent for alertCode: $alertCode")
+      case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
+    }
+  }
+
+  def processRecords(df: DataFrame): Unit = {
+    df.foreachPartition { partition =>
+      partition.foreach { row =>
+        val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val emailAddress = row.getAs[String]("email_address") // CC emails
+        val business = row.getAs[String]("business")
+        val message = s"Processing alertCode: $alertCode"
+
+        try {
+          if (dtCount > 0) {
+            println(s"AlertCode: $alertCode passed the validation check.")
+            sendEmailNotification(alertCode, "Data validation successful.", emailAddress, business)
+          } else {
+            throw new Exception(s"Invalid dtCount: $dtCount for alertCode: $alertCode")
+          }
+        } catch {
+          case ex: Exception =>
+            val errorMessage = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
+            sendEmailNotification(alertCode, errorMessage, emailAddress, business)
+            println(errorMessage)
+        }
+      }
+    }
+  }
+
+  def main(args: Array[String]): Unit = {
+    // Simulate a DataFrame for testing
+    val data = Seq(
+      ("A001", 10, "test_email@example.com", "BusinessUnit1"),
+      ("A002", 0, "test_email@example.com", "BusinessUnit2")
+    )
+
+    import spark.implicits._
+    val df = data.toDF("alert_code", "dt_count", "email_address", "business")
+
+    // Process records and send email notifications
+    processRecords(df)
+
+    // Stop the Spark session
+    spark.stop()
+  }
+}
