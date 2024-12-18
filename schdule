@@ -98,76 +98,125 @@ def processRecords(df: DataFrame): Unit = {
             sendEmailNotification(alertCode, message, emailAddress, business)
             println(message)
           }
-import java.io.FileWriter
-import java.sql.{Connection, DriverManager, ResultSet}
+ // Step 1: Count Validation - Compare RAMP_MASTER_TARGET1 count with dtCount
+  println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
 
-// JDBC connection properties
-val connectionProperties = new java.util.Properties()
-connectionProperties.put("user", jdbcUser)
-connectionProperties.put("password", jdbcPassword)
+  val countValidationQuery =
+    """
+      |(SELECT COUNT(*) AS master_count
+      | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
+      |""".stripMargin
 
-// Function to export ResultSet to a CSV file
-def writeResultSetToCSV(resultSet: ResultSet, outputPath: String): Unit = {
-  val metaData = resultSet.getMetaData
-  val columnCount = metaData.getColumnCount
+  val masterCountDF = spark.read
+    .format("jdbc")
+    .option("url", jdbcUrl)
+    .option("dbtable", countValidationQuery)
+    .option("user", jdbcUser)
+    .option("password", jdbcPassword)
+    .option("driver", jdbcDriver)
+    .load()
 
-  val fileWriter = new FileWriter(outputPath)
-  try {
-    // Write header
-    val header = (1 to columnCount).map(metaData.getColumnName).mkString(",")
-    fileWriter.write(header + "\n")
+  val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
 
-    // Write rows
-    while (resultSet.next()) {
-      val row = (1 to columnCount).map(resultSet.getString).mkString(",")
-      fileWriter.write(row + "\n")
+  if (masterTargetCount != dtCount) {
+    val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
+    sendEmailNotification(alertCode, message, emailAddress, business)
+    println(message)
+    throw new Exception(message)
+  } else {
+    println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
+
+    // ---- Blank Validation Logic (Step 2) ----
+    println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
+
+    val blankCountQuery =
+      """
+        |(SELECT COUNT(*) AS blank_count
+        | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+        | WHERE variable = '') AS subquery
+        |""".stripMargin
+
+    val blankCountDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", blankCountQuery)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
+
+    if (blankCount > 0) {
+      println(s"Found $blankCount blank values. Updating them to NULL...")
+
+      val updateBlankValuesQuery =
+        """
+          |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+          |SET variable = NULL
+          |WHERE variable = ''
+          |""".stripMargin
+
+      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
+      statement.executeUpdate(updateBlankValuesQuery)
+      statement.close()
+      connection.close()
+
+      println("Blank values updated successfully.")
+    } else {
+      println("No blank values found in RAMP_MASTER_TARGET2.")
     }
-    println(s"File successfully written to: $outputPath")
-  } finally {
-    fileWriter.close()
+
+    // ---- Export Data to Files (Step 3) ----
+    println("Exporting data to CSV files...")
+
+    // Export Master File 1
+    val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
+    val masterFile1Path = s"/output/path/YYYMMDDHHMMSS_Master_Table1.csv"
+
+    val masterFile1DF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", masterFile1Query)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    masterFile1DF.coalesce(1)
+      .write
+      .option("header", "true")
+      .option("delimiter", ",")
+      .csv(masterFile1Path)
+
+    println(s"Master File 1 exported to: $masterFile1Path")
+
+    // Export Master File 2
+    val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
+    val masterFile2Path = s"/output/path/YYYMMDDHHMMSS_Master_Table2.csv"
+
+    val masterFile2DF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", masterFile2Query)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    masterFile2DF.coalesce(1)
+      .write
+      .option("header", "true")
+      .option("delimiter", ",")
+      .csv(masterFile2Path)
+
+    println(s"Master File 2 exported to: $masterFile2Path")
+
+    // Send success notification
+    sendEmailNotification(alertCode, "SQL script executed and files exported successfully", emailAddress, business)
   }
-}
-
-// Get JDBC connection
-val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-
-try {
-  // Blank validation query
-  val blankValidationQuery = 
-    s"SELECT COUNT(*) AS cnt FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 WHERE variable = ''"
-  val blankResult = connection.createStatement().executeQuery(blankValidationQuery)
-  
-  if (blankResult.next() && blankResult.getInt("cnt") > 0) {
-    println("Blank values found. Updating blank values to NULL.")
-    
-    // Update query to set blank variables to NULL
-    val updateQuery = 
-      "UPDATE U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 SET variable = NULL WHERE variable = ''"
-    connection.createStatement().executeUpdate(updateQuery)
-    println("Blank values updated to NULL.")
-  }
-
-  // Generate Master File 1
-  val masterFile1Query = "SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1 ORDER BY 1"
-  val masterFile1Result = connection.createStatement().executeQuery(masterFile1Query)
-  val masterFile1Path = "/path/to/output/YYYYMMDDHHMMSS_Master_Table1.csv"
-  writeResultSetToCSV(masterFile1Result, masterFile1Path)
-
-  // Generate Master File 2
-  val masterFile2Query = "SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 ORDER BY 1,2"
-  val masterFile2Result = connection.createStatement().executeQuery(masterFile2Query)
-  val masterFile2Path = "/path/to/output/YYYYMMDDHHMMSS_Master_Table2.csv"
-  writeResultSetToCSV(masterFile2Result, masterFile2Path)
-
-  println("Master files successfully generated and saved.")
-
-} catch {
-  case ex: Exception =>
-    println(s"Error during processing: ${ex.getMessage}")
-    ex.printStackTrace()
-} finally {
-  connection.close()
-}
+} 
 
         } else {
           val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
