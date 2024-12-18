@@ -1,0 +1,65 @@
+import java.io.File
+import java.nio.file.{Files, Paths}
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.DayOfWeek
+
+object CreateFolderStructure {
+
+  def main(args: Array[String]): Unit = {
+    // Define the base shared location (replace this with your actual path)
+    val basePath = "\\\\naunsw001\\rbscusr_crel_data_sy$\\Level 4\\15 Controls Analytics and Automation\\6 RAMP\\1 Run\\"
+
+    // Generate the folder name in the required format: YYYYMMDDHHMMSS_RBSCC_DAY
+    val folderName = getFormattedFolderName()
+
+    // Full path including the dynamically generated folder name
+    val finalFolderPath = s"${basePath}Files for Upload\\DOT Digital Operations-Daily\\$folderName"
+
+    // Create the folder
+    createFolderHierarchy(finalFolderPath)
+
+    println(s"Folder created successfully at: $finalFolderPath")
+  }
+
+  // Function to generate the formatted folder name
+  def getFormattedFolderName(): String = {
+    val currentDateTime = LocalDateTime.now
+    val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+    val formattedDate = currentDateTime.format(dateFormatter)
+
+    // Get the current day of the week (e.g., MON, TUE, etc.)
+    val currentDay = currentDateTime.getDayOfWeek match {
+      case DayOfWeek.MONDAY    => "MON"
+      case DayOfWeek.TUESDAY   => "TUE"
+      case DayOfWeek.WEDNESDAY => "WED"
+      case DayOfWeek.THURSDAY  => "THU"
+      case DayOfWeek.FRIDAY    => "FRI"
+      case DayOfWeek.SATURDAY  => "SAT"
+      case DayOfWeek.SUNDAY    => "SUN"
+    }
+
+    // Construct the folder name
+    s"${formattedDate}_RBSCC_$currentDay"
+  }
+
+  // Function to create the folder hierarchy
+  def createFolderHierarchy(folderPath: String): Unit = {
+    try {
+      val folder = new File(folderPath)
+
+      if (!folder.exists()) {
+        if (folder.mkdirs()) {
+          println(s"Successfully created folder: $folderPath")
+        } else {
+          throw new Exception(s"Failed to create folder: $folderPath")
+        }
+      } else {
+        println(s"Folder already exists: $folderPath")
+      }
+    } catch {
+      case ex: Exception =>
+        println(s"Error while creating folder: ${ex.getMessage}")
+    }
+  }
+}
