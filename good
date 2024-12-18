@@ -62,6 +62,18 @@ def getCurrentTimestamp: String = {
   format.format(Calendar.getInstance().getTime)
 }
 
+def validateData(masterDF: DataFrame, fileDF: DataFrame): Boolean = {
+  // Ensure both DataFrames are sorted
+  val sortedMasterDF = masterDF.orderBy(masterDF.columns.map(col): _*)
+  val sortedFileDF = fileDF.orderBy(fileDF.columns.map(col): _*)
+
+  // Compare the two DataFrames
+  val areEqual = sortedMasterDF.except(sortedFileDF).isEmpty &&
+                 sortedFileDF.except(sortedMasterDF).isEmpty
+
+  areEqual
+}
+
   def processRecords(df: DataFrame): Unit = {
   df.foreachPartition { partition =>
     partition.foreach { row =>
