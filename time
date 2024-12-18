@@ -1,0 +1,33 @@
+import java.text.SimpleDateFormat
+import java.util.Calendar
+
+// Function to generate a timestamped file name
+def getCurrentTimestamp: String = {
+  val format = new SimpleDateFormat("yyyyMMddHHmmss")
+  format.format(Calendar.getInstance().getTime)
+}
+
+// ---- Export Master File 1 with Dynamic Filename ----
+val currentTimestamp = getCurrentTimestamp
+val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
+val masterFile1Path = s"/output/path/${currentTimestamp}_Master_Table1.csv" // Add timestamp to filename
+
+println(s"Exporting Master File 1 to: $masterFile1Path")
+
+val masterFile1DF = spark.read
+  .format("jdbc")
+  .option("url", jdbcUrl)
+  .option("dbtable", masterFile1Query)
+  .option("user", jdbcUser)
+  .option("password", jdbcPassword)
+  .option("driver", jdbcDriver)
+  .load()
+
+// Write the file with a timestamped filename
+masterFile1DF.coalesce(1) // Optional: Reduce to 1 file if desired
+  .write
+  .option("header", "true")
+  .option("delimiter", ",")
+  .csv(masterFile1Path)
+
+println(s"Master File 1 exported successfully to: $masterFile1Path")
