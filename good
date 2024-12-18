@@ -231,6 +231,24 @@ def validateData(masterDF: DataFrame, fileDF: DataFrame): Boolean = {
       .csv(masterFile1Path)
 
     println(s"Master File 1 exported to: $masterFile1Path")
+// ---- Validate Data ----
+println("Starting data validation between Master Table 1 and exported Master File 1 CSV...")
+val isValid = validateData(masterTable1DF, masterFile1CSVDF)
+if (isValid) {
+  println(s"Data validation successful: Master Table 1 matches Master File 1 CSV.")
+} else {
+  println(s"Data validation failed: Master Table 1 does not match Master File 1 CSV.")
+  throw new Exception("Data mismatch between Master Table 1 and Master File 1 CSV.")
+}
+
+// ---- Log Validation Result ----
+val logPath = s"/output/path/validation_log_${currentTimestamp}.txt"
+val logMessage = if (isValid) "Validation Successful" else "Validation Failed"
+
+// Save the log message as a text file
+spark.sparkContext.parallelize(Seq(logMessage)).saveAsTextFile(logPath)
+
+println(s"Validation result logged at: $logPath")
 
     // Export Master File 2
     val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
