@@ -1,33 +1,123 @@
+import org.apache.spark.sql.{SparkSession, DataFrame}
+import org.apache.spark.sql.functions._
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.nio.file.{Files, Paths}
+import scala.util.{Try, Success, Failure}
 
-// Function to generate a timestamped file name
-def getCurrentTimestamp: String = {
-  val format = new SimpleDateFormat("yyyyMMddHHmmss")
-  format.format(Calendar.getInstance().getTime)
+object EmailNotificationApp {
+
+  // Define Spark session
+  val spark: SparkSession = SparkSession.builder()
+    .appName("EmailNotificationApp")
+    .master("local[*]") // Adjust as needed for your environment
+    .getOrCreate()
+
+  // JDBC connection parameters
+  val jdbcUrl: String = "jdbc:your_database_url"
+  val jdbcUser: String = "your_user"
+  val jdbcPassword: String = "your_password"
+  val jdbcDriver: String = "com.jdbc.Driver"
+
+  // Function to send email notifications
+  def sendEmailNotification(alertCode: String, message: String, toEmail: String, business: String): Unit = {
+    val shellScriptPath = "/path/to/email_notification.sh" // Update with actual path to script
+
+    Try {
+      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, "", business).start()
+
+      val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+      var line: String = null
+      while ({ line = reader.readLine(); line != null }) {
+        println(line)
+      }
+
+      val exitCode = process.waitFor()
+      if (exitCode != 0) {
+        throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
+      } else {
+        println(s"Email notification sent to: $toEmail for alertCode: $alertCode with message: $message")
+      }
+    } match {
+      case Success(_) => println(s"Notification sent for alertCode: $alertCode")
+      case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
+    }
+  }
+
+  // Function to generate a timestamped file name
+  def getCurrentTimestamp: String = {
+    val format = new SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(Calendar.getInstance().getTime)
+  }
+
+  // Main validation logic
+  def validateMasterCount(alertCode: String, dtCount: Int, emailAddress: String, business: String): Unit = {
+    println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
+
+    // Step 1: Fetch master count from the database
+    val countValidationQuery =
+      """
+        |(SELECT COUNT(*) AS master_count
+        | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
+        |""".stripMargin
+
+    val masterCountDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", countValidationQuery)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
+
+    // Step 2: Check if counts match
+    if (masterTargetCount != dtCount) {
+      val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
+
+      // Send hardcoded email notification to venkat
+      val toEmail = "venkat"
+      sendEmailNotification(alertCode, message, toEmail, business)
+
+      println(message)
+      throw new Exception(message)
+    } else {
+      println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
+    }
+  }
+
+  // Entry point for the Spark job
+  def main(args: Array[String]): Unit = {
+    // Simulate a DataFrame as an example (replace with actual DataFrame loading)
+    val data = Seq(
+      ("A001", 10, "2024-12-16", "source_table", "business1"),
+      ("A002", 5, "2024-12-17", "source_table", "business2")
+    )
+
+    import spark.implicits._
+    val df = data.toDF("alert_code", "dt_count", "date_to_load", "source_table_name", "business")
+
+    // Process the records
+    df.foreachPartition { partition =>
+      partition.foreach { row =>
+        val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val emailAddress = "venkat" // Hardcoded for testing
+        val business = row.getAs[String]("business")
+
+        try {
+          // Validate master count
+          validateMasterCount(alertCode, dtCount, emailAddress, business)
+        } catch {
+          case ex: Exception =>
+            println(s"Error processing alertCode: $alertCode - ${ex.getMessage}")
+            ex.printStackTrace()
+        }
+      }
+    }
+
+    // Stop the Spark session
+    spark.stop()
+  }
 }
-
-// ---- Export Master File 1 with Dynamic Filename ----
-val currentTimestamp = getCurrentTimestamp
-val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
-val masterFile1Path = s"/output/path/${currentTimestamp}_Master_Table1.csv" // Add timestamp to filename
-
-println(s"Exporting Master File 1 to: $masterFile1Path")
-
-val masterFile1DF = spark.read
-  .format("jdbc")
-  .option("url", jdbcUrl)
-  .option("dbtable", masterFile1Query)
-  .option("user", jdbcUser)
-  .option("password", jdbcPassword)
-  .option("driver", jdbcDriver)
-  .load()
-
-// Write the file with a timestamped filename
-masterFile1DF.coalesce(1) // Optional: Reduce to 1 file if desired
-  .write
-  .option("header", "true")
-  .option("delimiter", ",")
-  .csv(masterFile1Path)
-
-println(s"Master File 1 exported successfully to: $masterFile1Path")
