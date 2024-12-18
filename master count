@@ -1,132 +1,114 @@
-import java.io.{BufferedWriter, File, FileWriter}
-import java.nio.file.{Files, Paths}
-import java.sql.{Connection, DriverManager, ResultSet}
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
+if (sourceTableCount == dtCount) {
+  val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+  
+  if (Files.exists(Paths.get(sqlFolderPath))) {
+    val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+    
+    if (Files.exists(Paths.get(sqlFilePath))) {
+      runSqlScript(sqlFilePath)
+      
+      // ---- Blank Validation Logic (Step 2 in Screenshot) ----
+      println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
 
-object MasterFileAutomation {
+      val blankCountQuery =
+        """
+          |(SELECT COUNT(*) AS blank_count
+          | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+          | WHERE variable = '') AS subquery
+          |""".stripMargin
 
-  // JDBC Connection Configuration
-  val jdbcUrl = "jdbc:teradata://database_url"
-  val jdbcUser = "your_username"
-  val jdbcPassword = "your_password"
+      val blankCountDF = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", blankCountQuery)
+        .option("user", jdbcUser)
+        .option("password", jdbcPassword)
+        .option("driver", jdbcDriver)
+        .load()
 
-  // SQL Queries
-  val masterTarget1CountQuery =
-    """SELECT COUNT(*) AS count FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1 WHERE alert_code = ?"""
-  val masterTarget2BlankCountQuery =
-    """SELECT COUNT(*) AS blank_count FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 WHERE variable = ''"""
-  val updateMasterTarget2Query =
-    """UPDATE U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 SET variable = NULL WHERE variable = ''"""
-  val selectMasterTarget1Query =
-    """SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1 ORDER BY 1"""
-  val selectMasterTarget2Query =
-    """SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2 ORDER BY 1, 2"""
+      val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
 
-  def main(args: Array[String]): Unit = {
-    // Initialize connection
-    val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    println("Database connection established!")
+      if (blankCount > 0) {
+        println(s"Found $blankCount blank values. Updating them to NULL...")
 
-    try {
-      val alertCode = "your_alert_code"
+        val updateBlankValuesQuery =
+          """
+            |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+            |SET variable = NULL
+            |WHERE variable = ''
+            |""".stripMargin
 
-      // 1. Count Validation
-      val masterCount = getCount(connection, masterTarget1CountQuery, alertCode)
-      val dtCount = 100 // Replace with actual DT_COUNT logic
-      if (masterCount == dtCount) {
-        println(s"Count Validation Passed! Master Count: $masterCount matches DT_COUNT: $dtCount")
+        // Execute the update query via JDBC
+        val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+        val statement = connection.createStatement()
+        statement.executeUpdate(updateBlankValuesQuery)
+        statement.close()
+        connection.close()
 
-        // 2. Blank Validation in Master Table 2
-        val blankCount = getCount(connection, masterTarget2BlankCountQuery)
-        if (blankCount > 0) {
-          println(s"Blank Validation: Found $blankCount blank values. Updating to NULL...")
-          executeUpdate(connection, updateMasterTarget2Query)
-          println("Blank values updated to NULL successfully!")
-        } else {
-          println("No blank values found in Master Table 2.")
-        }
-
-        // 3. Generate Master Files and Export to CSV
-        val now = LocalDateTime.now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-        val master1FileName = s"${now}_Master_Table1.csv"
-        val master2FileName = s"${now}_Master_Table2.csv"
-
-        exportToCSV(connection, selectMasterTarget1Query, master1FileName)
-        exportToCSV(connection, selectMasterTarget2Query, master2FileName)
-
-        println(s"Master files generated: $master1FileName, $master2FileName")
-
-        // 4. Save Files to Specified Folder
-        val folderPath = s"\\\\naunsw001\\rbscusr_crel_data_sy$\\Level4\\15 Controls Analytics and Automation\\6 RAMP\\${now}_RBSCC_${getDayOfWeek()}"
-        saveFilesToFolder(folderPath, master1FileName, master2FileName)
+        println("Blank values updated successfully.")
       } else {
-        println(s"Count Validation Failed! Master Count: $masterCount does not match DT_COUNT: $dtCount")
+        println("No blank values found in RAMP_MASTER_TARGET2.")
       }
-    } finally {
-      connection.close()
-      println("Database connection closed!")
+
+      // ---- Export Data to Files (Step 3 in Screenshot) ----
+      println("Exporting data to CSV files...")
+
+      // Export Master File 1
+      val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
+      val masterFile1Path = s"/output/path/YYYMMDDHHMMSS_Master_Table1.csv"
+
+      val masterFile1DF = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", masterFile1Query)
+        .option("user", jdbcUser)
+        .option("password", jdbcPassword)
+        .option("driver", jdbcDriver)
+        .load()
+
+      masterFile1DF.coalesce(1)
+        .write
+        .option("header", "true")
+        .option("delimiter", ",")
+        .csv(masterFile1Path)
+
+      println(s"Master File 1 exported to: $masterFile1Path")
+
+      // Export Master File 2
+      val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
+      val masterFile2Path = s"/output/path/YYYMMDDHHMMSS_Master_Table2.csv"
+
+      val masterFile2DF = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", masterFile2Query)
+        .option("user", jdbcUser)
+        .option("password", jdbcPassword)
+        .option("driver", jdbcDriver)
+        .load()
+
+      masterFile2DF.coalesce(1)
+        .write
+        .option("header", "true")
+        .option("delimiter", ",")
+        .csv(masterFile2Path)
+
+      println(s"Master File 2 exported to: $masterFile2Path")
+
+      // Send success notification
+      sendEmailNotification(alertCode, "SQL script executed and files exported successfully", emailAddress, business)
+    } else {
+      val message = s"SQL file not found for alertCode: $alertCode"
+      sendEmailNotification(alertCode, message, emailAddress, business)
+      println(message)
     }
+  } else {
+    val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+    sendEmailNotification(alertCode, message, emailAddress, business)
+    println(message)
   }
-
-  // Function to Get Count from Query
-  def getCount(connection: Connection, query: String, alertCode: String = ""): Int = {
-    val statement = connection.prepareStatement(query)
-    if (alertCode.nonEmpty) statement.setString(1, alertCode)
-    val resultSet = statement.executeQuery()
-    resultSet.next()
-    val count = resultSet.getInt(1)
-    statement.close()
-    count
-  }
-
-  // Function to Execute Update
-  def executeUpdate(connection: Connection, query: String): Unit = {
-    val statement = connection.createStatement()
-    statement.executeUpdate(query)
-    statement.close()
-  }
-
-  // Function to Export Query Result to CSV
-  def exportToCSV(connection: Connection, query: String, fileName: String): Unit = {
-    val statement = connection.createStatement()
-    val resultSet = statement.executeQuery(query)
-
-    val file = new File(fileName)
-    val bw = new BufferedWriter(new FileWriter(file))
-
-    // Write Header
-    val metaData = resultSet.getMetaData
-    val columnCount = metaData.getColumnCount
-    val header = (1 to columnCount).map(metaData.getColumnName).mkString(",")
-    bw.write(header + "\n")
-
-    // Write Data
-    while (resultSet.next()) {
-      val row = (1 to columnCount).map(resultSet.getString).mkString(",")
-      bw.write(row + "\n")
-    }
-
-    bw.close()
-    statement.close()
-    println(s"Data exported successfully to $fileName")
-  }
-
-  // Function to Save Files to Folder
-  def saveFilesToFolder(folderPath: String, files: String*): Unit = {
-    val folder = new File(folderPath)
-    if (!folder.exists()) folder.mkdirs()
-
-    files.foreach { fileName =>
-      val source = new File(fileName)
-      val destination = new File(folder, fileName)
-      Files.move(source.toPath, destination.toPath)
-      println(s"Moved $fileName to $folderPath")
-    }
-  }
-
-  // Function to Get Day of the Week
-  def getDayOfWeek(): String = {
-    LocalDateTime.now.format(DateTimeFormatter.ofPattern("EEEE")).toUpperCase.take(3)
-  }
+} else {
+  val message = s"Source table count does not match DT_COUNT"
+  sendEmailNotification(alertCode, message, emailAddress, business)
+  println(message)
 }
