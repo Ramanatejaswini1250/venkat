@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Parameters
+ALERT_CODE=$1        # Alert code
+MESSAGE=$2           # Email message
+TO_EMAIL=$3          # Hardcoded to "cdao_risk@example.com"
+CC_EMAILS=$4         # Comma-separated CC email addresses
+BUSINESS=$5          # Business information
+
+# Email Subject and Body
+SUBJECT="Alert Notification: $ALERT_CODE"
+BODY="Business Unit: $BUSINESS\n\n$MESSAGE"
+
+# Send email using mailx or sendmail (update if necessary)
+if [ -z "$CC_EMAILS" ]; then
+  echo -e "$BODY" | mail -s "$SUBJECT" "$TO_EMAIL"
+else
+  echo -e "$BODY" | mail -s "$SUBJECT" -c "$CC_EMAILS" "$TO_EMAIL"
+fi
+
+# Logging
+if [ $? -eq 0 ]; then
+  echo "Email sent successfully to $TO_EMAIL with CC: $CC_EMAILS"
+else
+  echo "Failed to send email to $TO_EMAIL with CC: $CC_EMAILS"
+  exit 1
+fi
