@@ -224,7 +224,7 @@ def validateData(masterDF: DataFrame, fileDF: DataFrame): Boolean = {
       .option("driver", jdbcDriver)
       .load()
 
-    masterFile1DF.coalesce(1)
+    val masterFile1CSVDF=masterFile1DF.coalesce(1)
       .write
       .option("header", "true")
       .option("delimiter", ",")
