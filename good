@@ -224,11 +224,19 @@ def validateData(masterDF: DataFrame, fileDF: DataFrame): Boolean = {
       .option("driver", jdbcDriver)
       .load()
 
-   masterFile1DF.coalesce(1)
+  masterFile1DF.coalesce(1)
   .write
   .option("header", "true")
   .option("delimiter", ",")
   .csv(masterFile1Path)
+
+println(s"Data written to CSV file at: $masterFile1Path")
+
+// Now, read the CSV file back into a DataFrame
+val masterFile1CSVDF = spark.read
+  .option("header", "true")  // Ensures the first row is treated as the header
+  .option("delimiter", ",")  // Sets the delimiter to comma
+  .csv(masterFile1Path)  // Reads the CSV file as a DataFr
 
 println(s"Data written to CSV file at: $masterFile1Path")
 
