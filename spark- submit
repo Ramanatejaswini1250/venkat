@@ -1,9 +1,28 @@
 #!/bin/bash
 
-# Define the path to your Spark job's JAR file and main class
-SPARK_JAR_PATH="/path/to/your/jar/email-notification-app_2.12-0.1.jar"
-SPARK_MAIN_CLASS="EmailNotificationApp"
-SPARK_MASTER="spark://your-spark-master:7077"  # Adjust if you're using a different master
+# Define Spark home directory (change this to your Spark installation path)
+SPARK_HOME="/path/to/spark"
 
-# Submit the Spark job using spark-submit
-spark-submit --class $SPARK_MAIN_CLASS --master $SPARK_MASTER $SPARK_JAR_PATH
+# Define the path to your compiled Scala application JAR file (from sbt or maven build)
+JAR_PATH="/path/to/your/scala-application.jar"
+
+# Define the application arguments if any (e.g., input/output paths, parameters)
+#MASTER_URL="spark://your-spark-master-url:7077"  # Change to your Spark master URL, or use "local[*]" for local mode
+EXECUTOR_MEMORY="4g"  # Memory for each executor
+DRIVER_MEMORY="2g"  # Memory for the driver
+NUM_EXECUTORS="4"    # Number of executors
+EXECUTOR_CORES="2"   # Number of cores per executor
+
+# Additional Spark configurations (optional)
+SPARK_CONF="--conf spark.sql.shuffle.partitions=10"
+
+# Run the Spark job using spark-submit
+$SPARK_HOME/bin/spark-submit \
+  --class com.yourpackage.YourAppClass \  # Replace with your application's main class name
+  --master ${SPARK_MASTER} \
+  --executor-memory $EXECUTOR_MEMORY \
+  --driver-memory $DRIVER_MEMORY \
+  --num-executors $NUM_EXECUTORS \
+  --executor-cores $EXECUTOR_CORES \
+  $SPARK_CONF \
+  $JAR_PATH  # Path to your compiled JAR file
