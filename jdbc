@@ -1,0 +1,32 @@
+import java.util.Properties
+import scala.io.Source
+import org.apache.spark.sql.SQLContext
+
+// Initialize SQLContext
+val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+
+// Load properties file
+val properties = new Properties()
+val propertiesFile = "path/to/jdbc.properties" // Update with the actual path
+properties.load(Source.fromFile(propertiesFile).reader())
+
+// Extract JDBC properties
+val jdbcUrl = properties.getProperty("url")
+val jdbcUser = properties.getProperty("user")
+val jdbcPassword = properties.getProperty("password")
+val jdbcDriver = properties.getProperty("driver")
+
+// JDBC options map
+val jdbcOptions = Map(
+  "url" -> jdbcUrl,
+  "user" -> jdbcUser,
+  "password" -> jdbcPassword,
+  "driver" -> jdbcDriver,
+  "dbtable" -> "your_query_here" // Update with your query or table
+)
+
+// Load data
+val df = sqlContext.load("jdbc", jdbcOptions)
+
+// Show data or perform further processing
+df.show()
