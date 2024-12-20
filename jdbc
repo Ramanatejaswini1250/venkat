@@ -2,6 +2,15 @@ import java.util.Properties
 import scala.io.Source
 import org.apache.spark.sql.SQLContext
 
+// Create a SparkConf object to configure Spark
+val conf = new org.apache.spark.SparkConf().setAppName("MySparkApp").setMaster("local[*]")
+
+// Create the SparkContext
+val sc = new org.apache.spark.SparkContext(conf)
+
+// Create the SQLContext
+val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+
 // Initialize SQLContext
 val sqlContext = new org.apache.spark.sql.SQLContext(sc)
 
