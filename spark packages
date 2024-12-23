@@ -1,0 +1,5 @@
+spark-submit \
+  --class <MainClass> \
+  --master <cluster-master-url> \
+  --packages com.teradata.jdbc:terajdbc4:17.20.00.09,com.teradata.jdbc:tdgssconfig:17.20.00.09 \
+  your-spark-application.jar
