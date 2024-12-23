@@ -13,6 +13,9 @@ libraryDependencies ++= Seq(
   // Spark core and SQL dependencies
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+libraryDependencies += "com.teradata" % "terajdbc4" % "version"
+libraryDependencies += "com.teradata" % "tdgssconfig" % "version"
+
   
   // Logging (SLF4J and Log4j for better log management)
   "org.slf4j" % "slf4j-api" % "2.0.9",
