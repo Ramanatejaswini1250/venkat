@@ -1,0 +1,34 @@
+import org.apache.spark.sql.SparkSession
+
+// Step 1: Set up SparkSession
+val spark = SparkSession.builder()
+  .appName("JDBC Query Example")
+  .getOrCreate()
+
+// Step 2: JDBC connection details
+val jdbcUrl = "jdbc:teradata://<hostname>/DATABASE=<database>"
+val jdbcProperties = new java.util.Properties()
+jdbcProperties.setProperty("user", "<user>")
+jdbcProperties.setProperty("password", "<password>")
+jdbcProperties.setProperty("driver", "com.teradata.jdbc.TeraDriver")
+
+// Step 3: Define parameters for the query
+val sourceTableName = "your_table_name"  // Replace with your table name
+val filterColumn = "your_filter_column"  // Replace with your column name
+val dateToLoad = "2023-01-01"            // Replace with your filter value
+
+// Step 4: Construct the SQL query with correct interpolation
+val jdbcQuery = s"""
+  (
+    SELECT COUNT(*) AS cnt 
+    FROM $sourceTableName 
+    WHERE $filterColumn = '$dateToLoad'
+  ) AS subquery
+"""
+
+// Step 5: Execute the query using Spark's JDBC DataFrame API
+val resultDf = spark.read
+  .jdbc(jdbcUrl, jdbcQuery, jdbcProperties)
+
+// Step 6: Display the result
+resultDf.show()
