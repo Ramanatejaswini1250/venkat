@@ -14,7 +14,9 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-core" % sparkVersion % "provided",
   "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
 libraryDependencies += "com.teradata" % "terajdbc4" % "version"
-libraryDependencies += "com.teradata" % "tdgssconfig" % "version"
+libraryDependencies += "com.teradata" % "tdgssconfig" % "version",
+libraryDependencies += "javax.mail" % "javax.mail-api" % "1.6.2"
+
 
   
   // Logging (SLF4J and Log4j for better log management)
