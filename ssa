@@ -1,0 +1,81 @@
+import javax.mail._
+import javax.mail.internet._
+import java.util.Properties
+import scala.util.{Try, Success, Failure}
+
+object EmailNotificationApp {
+
+  // Function to send email notifications
+  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
+    // Get SMTP details from environment variables or fall back to default values
+    val smtpServer = sys.env.getOrElse("SMTP_SERVER", "smtp.gmail.com") // Default to Gmail if not set
+    val smtpPort = sys.env.getOrElse("SMTP_PORT", "587") // Default to 587 for TLS
+    val smtpUser = sys.env.getOrElse("SMTP_USER", "your_email@gmail.com") // Replace with your email
+    val smtpPassword = sys.env.getOrElse("SMTP_PASSWORD", "your_password") // Replace with your email password
+
+    // Prepare the list of email addresses (To and CC)
+    val emailList = emailAddresses.split(",").map(_.trim).filter(_.nonEmpty)
+    if (emailList.nonEmpty) {
+      val toEmail = emailList(0)
+      val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
+
+      // Set properties for the mail session
+      val properties = new Properties()
+      properties.put("mail.smtp.host", smtpServer)
+      properties.put("mail.smtp.port", smtpPort)
+      properties.put("mail.smtp.auth", "true")
+      properties.put("mail.smtp.starttls.enable", "true")  // Enable TLS encryption
+
+      // Create an authenticator for the SMTP server
+      val authenticator = new Authenticator() {
+        override def getPasswordAuthentication: PasswordAuthentication = {
+          new PasswordAuthentication(smtpUser, smtpPassword)
+        }
+      }
+
+      // Create the mail session
+      val session = Session.getInstance(properties, authenticator)
+
+      try {
+        // Create a MimeMessage object
+        val mimeMessage = new MimeMessage(session)
+
+        // Set the "From" address
+        mimeMessage.setFrom(new InternetAddress(smtpUser))
+
+        // Set the "To" addresses (the first email in the list)
+        mimeMessage.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail))
+
+        // If there are additional emails, set them as "CC"
+        if (ccEmails.nonEmpty) {
+          mimeMessage.setRecipients(Message.RecipientType.CC, InternetAddress.parse(ccEmails))
+        }
+
+        // Set the subject and body of the email
+        mimeMessage.setSubject(s"Alert: $alertCode - $business")
+        mimeMessage.setText(s"Message: $message\n\nBusiness: $business")
+
+        // Send the email
+        Transport.send(mimeMessage)
+
+        println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
+      } catch {
+        case ex: MessagingException =>
+          println(s"Failed to send email notification: ${ex.getMessage}")
+      }
+    } else {
+      println("No valid email addresses found to send the notification.")
+    }
+  }
+
+  // Example usage in main (or any other logic where you want to send an email)
+  def main(args: Array[String]): Unit = {
+    val alertCode = "A001"
+    val message = "This is a test email message."
+    val emailAddresses = "recipient@example.com,cc@example.com" // Replace with actual email addresses
+    val business = "BusinessUnit1"
+    
+    // Send the email notification
+    sendEmailNotification(alertCode, message, emailAddresses, business)
+  }
+}
