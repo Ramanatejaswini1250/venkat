@@ -1,0 +1,51 @@
+import java.sql.{Connection, DriverManager, ResultSet}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.{StructField, StructType, StringType}
+
+// Step 1: Set up SparkSession
+val spark = SparkSession.builder()
+  .appName("JDBC Query Example")
+  .getOrCreate()
+
+// Step 2: JDBC connection details
+val jdbcUrl = "jdbc:teradata://<hostname>/DATABASE=<database>"
+val user = "<user>"
+val password = "<password>"
+
+// Step 3: Create connection
+val conn: Connection = DriverManager.getConnection(jdbcUrl, user, password)
+
+try {
+  // Step 4: Execute query
+  val query = "SELECT * FROM your_table_name"
+  val stmt = conn.createStatement()
+  val resultSet: ResultSet = stmt.executeQuery(query)
+
+  // Step 5: Define schema for Spark DataFrame (Adjust as per your table)
+  val schema = StructType(Seq(
+    StructField("column1", StringType, nullable = true),
+    StructField("column2", StringType, nullable = true)
+    // Add more fields based on your table schema
+  ))
+
+  // Step 6: Convert ResultSet to Rows
+  val rows = Iterator.continually((resultSet, resultSet.next()))
+    .takeWhile(_._2)
+    .map { case (rs, _) =>
+      Row(rs.getString("column1"), rs.getString("column2")) // Adjust for your column types
+    }.toList
+
+  // Step 7: Create DataFrame from Rows
+  val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+
+  // Step 8: Register DataFrame as a temporary view
+  df.createOrReplaceTempView("your_table_view")
+
+  // Step 9: Query using Spark SQL
+  val resultDf = spark.sql("SELECT * FROM your_table_view WHERE column1 = 'some_value'")
+  resultDf.show()
+
+} finally {
+  // Close the connection
+  conn.close()
+}
