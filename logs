@@ -1,0 +1,1 @@
+./mail_notification.sh ALERT_CODE "Test Message" to@example.com cc@example.com BusinessName
