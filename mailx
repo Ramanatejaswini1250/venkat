@@ -1,0 +1,10 @@
+echo -e "$EMAIL_BODY" | mailx \
+  -v \
+  -s "Alert - $ALERT_CODE" \
+  -S smtp="$SMTP_SERVER:$SMTP_PORT" \
+  -S smtp-auth=login \
+  -S smtp-auth-user="$SMTP_USER" \
+  -S smtp-auth-password="$SMTP_PASSWORD" \
+  -S from="$SMTP_USER" \
+  -c "$CC_EMAILS" \
+  "$TO_EMAIL"
