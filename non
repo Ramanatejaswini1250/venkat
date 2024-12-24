@@ -55,6 +55,12 @@ object EmailNotificationApp {
         // Create a MimeMessage object
         val mimeMessage = new MimeMessage(session)
         mimeMessage.setFrom(new InternetAddress(smtpUser))
+val toAddresses = Array(new InternetAddress("recipient1@example.com"), new InternetAddress("recipient2@example.com"))
+val ccAddresses = Array(new InternetAddress("cc1@example.com"), new InternetAddress("cc2@example.com"))
+
+mimeMessage.setRecipients(Message.RecipientType.TO, toAddresses)
+mimeMessage.setRecipients(Message.RecipientType.CC, ccAddresses)
+
         mimeMessage.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail))
         if (ccEmails.nonEmpty) {
           mimeMessage.setRecipients(Message.RecipientType.CC, InternetAddress.parse(ccEmails))
