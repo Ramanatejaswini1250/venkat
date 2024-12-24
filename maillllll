@@ -55,3 +55,33 @@ else
     echo "Failed to send email to $TO_EMAIL with CC to $CC_EMAILS."
     exit 1
 fi
+
+
+
+
+
+val process = new ProcessBuilder(
+  "bash",
+  "/path/to/mail_notification.sh",
+  alertCode,
+  message,
+  toEmail,
+  ccEmails,
+  business,
+  smtpServer,  // Optional: pass the SMTP server address
+  smtpPort,    // Optional: pass the SMTP port
+  smtpUser,    // Optional: pass the SMTP username
+  smtpPassword // Optional: pass the SMTP password
+).start()
+
+// Process the output as needed
+val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+var line: String = null
+while ({ line = reader.readLine(); line != null }) {
+  println(line)
+}
+
+val exitCode = process.waitFor()
+if (exitCode != 0) {
+  println(s"Error executing the mail script with exit code: $exitCode")
+}
