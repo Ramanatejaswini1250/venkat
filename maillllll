@@ -1,87 +1,74 @@
 #!/bin/bash
 
-# Ensure proper usage of the script
+# Script: mail_notification.sh
+# Purpose: Send email notifications using SMTP settings from a properties file.
+
+# Validate input arguments
 if [ "$#" -lt 5 ]; then
-    echo "Usage: $0 <alertCode> <message> <toEmail> <ccEmails> <business> [smtpServer] [smtpPort] [smtpUser] [smtpPassword]"
-    exit 1
+  echo "Usage: $0 <alertCode> <message> <toEmail> <ccEmails> <business>"
+  exit 1
 fi
 
-# Arguments
 ALERT_CODE="$1"
 MESSAGE="$2"
 TO_EMAIL="$3"
 CC_EMAILS="$4"
 BUSINESS="$5"
 
-# Optional SMTP Configuration (can be overridden by parameters)
-SMTP_SERVER="${6:-smtp.yourmailserver.com}"   # Default SMTP server if not passed
-SMTP_PORT="${7:-587}"                         # Default SMTP port if not passed
-SMTP_USER="${8:-your_email@example.com}"      # Default SMTP user if not passed
-SMTP_PASSWORD="${9:-your_smtp_password}"      # Default SMTP password if not passed
+# Load SMTP configurations from properties file
+PROPERTIES_FILE="/path/to/smtp_config.properties"
+if [ ! -f "$PROPERTIES_FILE" ]; then
+  echo "Error: SMTP properties file not found at $PROPERTIES_FILE"
+  exit 1
+fi
 
-# Email Information
-FROM_EMAIL="$SMTP_USER"
-SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
-BODY="Hello,\n\nThis is an automated notification for the alert code: $ALERT_CODE.\n\nMessage: $MESSAGE\n\nBusiness: $BUSINESS"
+SMTP_SERVER=$(grep 'SMTP_SERVER' "$PROPERTIES_FILE" | cut -d '=' -f2)
+SMTP_PORT=$(grep 'SMTP_PORT' "$PROPERTIES_FILE" | cut -d '=' -f2)
+SMTP_USER=$(grep 'SMTP_USER' "$PROPERTIES_FILE" | cut -d '=' -f2)
+SMTP_PASSWORD=$(grep 'SMTP_PASSWORD' "$PROPERTIES_FILE" | cut -d '=' -f2)
 
-# Prepare the email content in the format accepted by SMTP
-EMAIL_CONTENT="From: $FROM_EMAIL\nTo: $TO_EMAIL\nCc: $CC_EMAILS\nSubject: $SUBJECT\n\n$BODY"
+if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_PORT" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ]; then
+  echo "Error: Missing SMTP configuration in $PROPERTIES_FILE"
+  exit 1
+fi
 
-# Function to send the email via SMTP
-send_email() {
-    # Establish SMTP connection using Netcat (nc)
-    {
-        echo "HELO $SMTP_SERVER"
-        echo "AUTH LOGIN"
-        echo -n "$SMTP_USER" | base64
-        echo -n "$SMTP_PASSWORD" | base64
-        echo "MAIL FROM:<$FROM_EMAIL>"
-        echo "RCPT TO:<$TO_EMAIL>"
-        echo "RCPT TO:<$CC_EMAILS>"
-        echo "DATA"
-        echo -e "$EMAIL_CONTENT"
-        echo "."
-        echo "QUIT"
-    } | nc $SMTP_SERVER $SMTP_PORT
-}
+# Create email content
+EMAIL_SUBJECT="Alert: $ALERT_CODE for $BUSINESS"
+EMAIL_BODY="Message: $MESSAGE"
 
-# Send the email
-send_email
+EMAIL_CONTENT=$(cat <<EOF
+From: $SMTP_USER
+To: $TO_EMAIL
+Cc: $CC_EMAILS
+Subject: $EMAIL_SUBJECT
+
+$EMAIL_BODY
+EOF
+)
+
+# Send email using sendmail
+{
+  echo "HELO localhost"
+  echo "AUTH LOGIN"
+  echo "$(echo -n "$SMTP_USER" | base64)"
+  echo "$(echo -n "$SMTP_PASSWORD" | base64)"
+  echo "MAIL FROM: <$SMTP_USER>"
+  echo "RCPT TO: <$TO_EMAIL>"
+  if [ -n "$CC_EMAILS" ]; then
+    for CC in $(echo "$CC_EMAILS" | sed "s/,/ /g"); do
+      echo "RCPT TO: <$CC>"
+    done
+  fi
+  echo "DATA"
+  echo "$EMAIL_CONTENT"
+  echo "."
+  echo "QUIT"
+} | nc "$SMTP_SERVER" "$SMTP_PORT"
 
 # Check if the email was sent successfully
 if [ $? -eq 0 ]; then
-    echo "Email sent successfully to $TO_EMAIL with CC to $CC_EMAILS."
+  echo "Email sent successfully to $TO_EMAIL with CC: $CC_EMAILS"
 else
-    echo "Failed to send email to $TO_EMAIL with CC to $CC_EMAILS."
-    exit 1
+  echo "Failed to send email."
+  exit 1
 fi
-
-
-
-
-
-val process = new ProcessBuilder(
-  "bash",
-  "/path/to/mail_notification.sh",
-  alertCode,
-  message,
-  toEmail,
-  ccEmails,
-  business,
-  smtpServer,  // Optional: pass the SMTP server address
-  smtpPort,    // Optional: pass the SMTP port
-  smtpUser,    // Optional: pass the SMTP username
-  smtpPassword // Optional: pass the SMTP password
-).start()
-
-// Process the output as needed
-val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
-var line: String = null
-while ({ line = reader.readLine(); line != null }) {
-  println(line)
-}
-
-val exitCode = process.waitFor()
-if (exitCode != 0) {
-  println(s"Error executing the mail script with exit code: $exitCode")
-}
