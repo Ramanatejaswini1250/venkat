@@ -1,74 +1,57 @@
 #!/bin/bash
 
-# Script: mail_notification.sh
-# Purpose: Send email notifications using SMTP settings from a properties file.
-
-# Validate input arguments
-if [ "$#" -lt 5 ]; then
-  echo "Usage: $0 <alertCode> <message> <toEmail> <ccEmails> <business>"
+# Load SMTP properties from the configuration file
+SMTP_CONFIG_FILE="smtp_config.properties"
+if [ ! -f "$SMTP_CONFIG_FILE" ]; then
+  echo "SMTP configuration file not found!"
   exit 1
 fi
 
-ALERT_CODE="$1"
-MESSAGE="$2"
-TO_EMAIL="$3"
-CC_EMAILS="$4"
-BUSINESS="$5"
+# Read SMTP configuration from properties file
+SMTP_HOST=$(grep -i 'smtp_host' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+SMTP_PORT=$(grep -i 'smtp_port' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+SMTP_USERNAME=$(grep -i 'smtp_username' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+SMTP_PASSWORD=$(grep -i 'smtp_password' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+FROM_EMAIL=$(grep -i 'from_email' $SMTP_CONFIG_FILE | cut -d '=' -f2)
 
-# Load SMTP configurations from properties file
-PROPERTIES_FILE="/path/to/smtp_config.properties"
-if [ ! -f "$PROPERTIES_FILE" ]; then
-  echo "Error: SMTP properties file not found at $PROPERTIES_FILE"
+# Define the email details from the script arguments
+ALERT_CODE=$1
+MESSAGE=$2
+TO_EMAIL=$3
+CC_EMAIL=$4
+BUSINESS=$5
+
+# Validate input parameters
+if [ -z "$TO_EMAIL" ]; then
+  echo "Error: No recipient email provided."
   exit 1
 fi
 
-SMTP_SERVER=$(grep 'SMTP_SERVER' "$PROPERTIES_FILE" | cut -d '=' -f2)
-SMTP_PORT=$(grep 'SMTP_PORT' "$PROPERTIES_FILE" | cut -d '=' -f2)
-SMTP_USER=$(grep 'SMTP_USER' "$PROPERTIES_FILE" | cut -d '=' -f2)
-SMTP_PASSWORD=$(grep 'SMTP_PASSWORD' "$PROPERTIES_FILE" | cut -d '=' -f2)
+# Prepare email subject and body
+SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
+BODY="Alert Code: $ALERT_CODE\nMessage: $MESSAGE\nBusiness: $BUSINESS"
 
-if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_PORT" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ]; then
-  echo "Error: Missing SMTP configuration in $PROPERTIES_FILE"
-  exit 1
-fi
-
-# Create email content
-EMAIL_SUBJECT="Alert: $ALERT_CODE for $BUSINESS"
-EMAIL_BODY="Message: $MESSAGE"
-
-EMAIL_CONTENT=$(cat <<EOF
-From: $SMTP_USER
-To: $TO_EMAIL
-Cc: $CC_EMAILS
-Subject: $EMAIL_SUBJECT
-
-$EMAIL_BODY
-EOF
-)
-
-# Send email using sendmail
-{
-  echo "HELO localhost"
-  echo "AUTH LOGIN"
-  echo "$(echo -n "$SMTP_USER" | base64)"
-  echo "$(echo -n "$SMTP_PASSWORD" | base64)"
-  echo "MAIL FROM: <$SMTP_USER>"
-  echo "RCPT TO: <$TO_EMAIL>"
-  if [ -n "$CC_EMAILS" ]; then
-    for CC in $(echo "$CC_EMAILS" | sed "s/,/ /g"); do
-      echo "RCPT TO: <$CC>"
-    done
+# Send the email using msmtp
+send_email() {
+  # Use msmtp to send the email via the configured SMTP server
+  (
+    echo "From: $FROM_EMAIL"
+    echo "To: $TO_EMAIL"
+    if [ -n "$CC_EMAIL" ]; then
+      echo "Cc: $CC_EMAIL"
+    fi
+    echo "Subject: $SUBJECT"
+    echo ""
+    echo -e "$BODY"
+  ) | msmtp --host=$SMTP_HOST --port=$SMTP_PORT --auth=on --user=$SMTP_USERNAME --passwordeval="echo $SMTP_PASSWORD" --from=$FROM_EMAIL $TO_EMAIL
+  
+  # Check if msmtp ran successfully
+  if [ $? -eq 0 ]; then
+    echo "Email sent to $TO_EMAIL and CC: $CC_EMAIL"
+  else
+    echo "Failed to send email"
   fi
-  echo "DATA"
-  echo "$EMAIL_CONTENT"
-  echo "."
-  echo "QUIT"
-} | nc "$SMTP_SERVER" "$SMTP_PORT"
+}
 
-# Check if the email was sent successfully
-if [ $? -eq 0 ]; then
-  echo "Email sent successfully to $TO_EMAIL with CC: $CC_EMAILS"
-else
-  echo "Failed to send email."
-  exit 1
-fi
+# Call the send_email function
+send_email
