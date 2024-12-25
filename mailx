@@ -1,53 +1,56 @@
 #!/bin/bash
 
-# Validate input arguments
-if [ "$#" -lt 5 ]; then
-  echo "Usage: $0 <alertCode> <message> <toEmail> <ccEmails> <business>"
-  exit 1
-fi
+# mail_notification.sh
 
-ALERT_CODE="$1"
-MESSAGE="$2"
-TO_EMAIL="$3"
-CC_EMAILS="$4"
-BUSINESS="$5"
-
-# Load SMTP configurations from properties file
+# Load SMTP configuration from properties file
 PROPERTIES_FILE="/path/to/smtp_config.properties"
 
-if [ ! -f "$PROPERTIES_FILE" ]; then
-  echo "Error: SMTP properties file not found at $PROPERTIES_FILE"
-  exit 1
-fi
+# Function to load property from properties file
+get_property() {
+  key=$1
+  value=$(grep -m 1 "^$key=" "$PROPERTIES_FILE" | cut -d'=' -f2-)
+  echo "$value"
+}
 
-SMTP_SERVER=$(grep 'SMTP_SERVER' "$PROPERTIES_FILE" | cut -d '=' -f2)
-SMTP_PORT=$(grep 'SMTP_PORT' "$PROPERTIES_FILE" | cut -d '=' -f2)
-SMTP_USER=$(grep 'SMTP_USER' "$PROPERTIES_FILE" | cut -d '=' -f2)
-SMTP_PASSWORD=$(grep 'SMTP_PASSWORD' "$PROPERTIES_FILE" | cut -d '=' -f2)
+# Read properties from the configuration file
+SMTP_HOST=$(get_property "smtp_host")
+SMTP_PORT=$(get_property "smtp_port")
+SMTP_USERNAME=$(get_property "smtp_username")
+SMTP_PASSWORD=$(get_property "smtp_password")
+FROM_EMAIL=$(get_property "from_email")
 
-if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_PORT" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ]; then
-  echo "Error: Missing SMTP configuration in $PROPERTIES_FILE"
-  exit 1
-fi
+# Read arguments passed from the Scala application
+ALERT_CODE=$1
+MESSAGE=$2
+TO_EMAIL=$3
+CC_EMAIL=$4
+BUSINESS=$5
 
-# Construct the email body
-EMAIL_BODY="$MESSAGE\n\nBusiness: $BUSINESS"
+# Create the email subject and body
+SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
+BODY="Alert Code: $ALERT_CODE\nMessage: $MESSAGE\nBusiness: $BUSINESS\n\nPlease check the issue."
 
-# Send the email using `mailx`
-echo -e "$EMAIL_BODY" | mailx \
-  -v \
-  -s "Alert - $ALERT_CODE" \
-  -S smtp="$SMTP_SERVER:$SMTP_PORT" \
-  -S smtp-auth=login \
-  -S smtp-auth-user="$SMTP_USER" \
-  -S smtp-auth-password="$SMTP_PASSWORD" \
-  -S from="$SMTP_USER" \
-  -c "$CC_EMAILS" \
-  "$TO_EMAIL"
+# Function to send email
+send_email() {
+  # Set up the email content using the `mail` command (ensure mailutils or similar is installed)
+  (
+    echo "From: $FROM_EMAIL"
+    echo "To: $TO_EMAIL"
+    if [ -n "$CC_EMAIL" ]; then
+      echo "Cc: $CC_EMAIL"
+    fi
+    echo "Subject: $SUBJECT"
+    echo ""
+    echo -e "$BODY"
+  ) | sendmail -S $SMTP_HOST:$SMTP_PORT -au$SMTP_USERNAME -ap$SMTP_PASSWORD -f$FROM_EMAIL "$TO_EMAIL"
+  
+  # Check if the email was sent successfully
+  if [ $? -eq 0 ]; then
+    echo "Email sent to $TO_EMAIL and CC: $CC_EMAIL"
+  else
+    echo "Failed to send email"
+  fi
+}
 
-if [ $? -eq 0 ]; then
-  echo "Email sent successfully to $TO_EMAIL"
-else
-  echo "Failed to send email"
-  exit 1
-fi
+# Send the email
+send_email
