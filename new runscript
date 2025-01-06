@@ -26,6 +26,7 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
   // Read the SQL script line by line
   val reader = new BufferedReader(new FileReader(scriptPath))
   var line: String = reader.readLine()
+  val commandBuffer = new StringBuilder
   var lineNumber = 1
 
   try {
@@ -34,22 +35,46 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
 
       // Skip empty lines and comments
       if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
-        try {
-          println(s"Executing line $lineNumber: $trimmedLine")
-          statement.execute(trimmedLine) // Execute the SQL command
-          val successMsg = s"Line $lineNumber executed successfully: $trimmedLine\n"
-          println(successMsg)
-          logBuffer.append(successMsg)
-        } catch {
-          case ex: Exception =>
-            val errorMsg = s"Error on line $lineNumber: $trimmedLine\nError Message: ${ex.getMessage}\n"
-            println(errorMsg)
-            logBuffer.append(errorMsg)
+        commandBuffer.append(trimmedLine).append(" ")
+
+        // Check if the command ends with `;` indicating it's complete
+        if (trimmedLine.endsWith(";")) {
+          val command = commandBuffer.toString().trim
+          try {
+            println(s"Executing command on line $lineNumber: $command")
+            statement.execute(command) // Execute the complete SQL command
+            val successMsg = s"Line $lineNumber executed successfully: $command\n"
+            println(successMsg)
+            logBuffer.append(successMsg)
+          } catch {
+            case ex: Exception =>
+              val errorMsg = s"Error on line $lineNumber: $command\nError Message: ${ex.getMessage}\n"
+              println(errorMsg)
+              logBuffer.append(errorMsg)
+          }
+          commandBuffer.clear() // Clear the buffer for the next command
         }
       }
 
       line = reader.readLine()
       lineNumber += 1
+    }
+
+    // Handle any remaining commands in the buffer (edge case for scripts without a final `;`)
+    if (commandBuffer.nonEmpty) {
+      val remainingCommand = commandBuffer.toString().trim
+      try {
+        println(s"Executing remaining command: $remainingCommand")
+        statement.execute(remainingCommand)
+        val successMsg = s"Remaining command executed successfully: $remainingCommand\n"
+        println(successMsg)
+        logBuffer.append(successMsg)
+      } catch {
+        case ex: Exception =>
+          val errorMsg = s"Error executing remaining command: $remainingCommand\nError Message: ${ex.getMessage}\n"
+          println(errorMsg)
+          logBuffer.append(errorMsg)
+      }
     }
   } catch {
     case ex: Exception =>
@@ -67,3 +92,12 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
     connection.close()
   }
 }
+
+// Example usage
+val scriptPath = "path/to/your/sql_script.sql"
+val jdbcUrl = "jdbc:mysql://localhost:3306/your_database"
+val jdbcUser = "your_username"
+val jdbcPassword = "your_password"
+val jdbcDriver = "com.mysql.cj.jdbc.Driver" // Use the appropriate driver for your database
+
+runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
