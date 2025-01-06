@@ -16,8 +16,20 @@ def getCurrentTimestamp: String = {
 def isCommentLine(line: String): Boolean = {
   line.trim.startsWith("--") || line.trim.isEmpty
 }
+// Function to validate if the provided path is a file
+def validateFilePath(path: String): Boolean = {
+  val filePath = Paths.get(path)
+  if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
+    true
+  } else {
+    println(s"Error: The path '$path' is not a valid file.")
+    false
+  }
+}
 
 def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+ // Validate if the provided script path is a valid file
+  if (!validateFilePath(scriptPath)) return
   println(s"Running SQL script from: $scriptPath")
   val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt" // Log file to save execution details
   val logBuffer = new StringBuilder
