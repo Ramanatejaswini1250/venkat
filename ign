@@ -1,0 +1,53 @@
+import scala.util.matching.Regex
+
+// Define a regex pattern to detect block comments (/* ... */) across multiple lines
+val blockCommentPattern: Regex = """(/\*[\s\S]*?\*/)|(/\*.*?\*/)""".r
+
+// Function to process lines and remove block comments and unwanted lines
+def processLines(lines: Seq[String]): Seq[String] = {
+  // Remove all block comments (/* ... */) across multiple lines
+  val withoutBlockComments = removeBlockComments(lines)
+
+  // Filter out specific unwanted lines (e.g., lines containing .IF ERRORCODE <> 0 THEN .GOTO ERROR;)
+  val validLines = withoutBlockComments
+    .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore specific lines
+  validLines
+}
+
+// Function to remove block comments (/* ... */) across multiple lines
+def removeBlockComments(lines: Seq[String]): Seq[String] = {
+  val blockCommentStart = "/*"
+  val blockCommentEnd = "*/"
+
+  var inBlockComment = false
+  lines.filterNot { line =>
+    if (inBlockComment) {
+      if (line.contains(blockCommentEnd)) {
+        inBlockComment = false
+      }
+      true  // Skip lines inside block comments
+    } else if (line.contains(blockCommentStart)) {
+      inBlockComment = true
+      true  // Skip lines starting a block comment
+    } else {
+      false // Keep lines outside comments
+    }
+  }
+}
+
+// Example input (lines with block comments and SQL statements)
+val lines = Seq(
+  "SELECT * FROM my_table;", 
+  "/* This is a block comment", 
+  "   with CREATE inside it */", 
+  "CREATE TABLE new_table (id INT);", 
+  "INSERT INTO my_table VALUES (1, 'test');", 
+  "-- This is a single-line comment", 
+  ".IF ERRORCODE <> 0 THEN .GOTO ERROR;"
+)
+
+// Process the lines
+val validLines = processLines(lines)
+
+// Output the filtered valid lines
+validLines.foreach(println)
