@@ -1,108 +1,101 @@
 import java.io.{BufferedReader, FileReader}
 import java.sql.{Connection, DriverManager, Statement}
-import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
-import scala.collection.mutable.ArrayBuffer
-import scala.util.matching.Regex
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import scala.jdk.CollectionConverters._
 
 object SqlScriptExecutor {
-
   // Function to generate a timestamped file name
   def getCurrentTimestamp: String = {
     val format = new SimpleDateFormat("yyyyMMddHHmmss")
     format.format(Calendar.getInstance().getTime)
   }
 
-  // Function to check if a line is a comment (either single-line or multi-line)
-  def isCommentLine(line: String): Boolean = {
-    line.trim.startsWith("--") || line.trim.isEmpty
-  }
-
-  // Function to validate if the provided path is a file
-  def validateFilePath(path: String): Boolean = {
-    val filePath = Paths.get(path)
-    if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
-      true
-    } else {
-      println(s"Error: The path '$path' is not a valid file.")
-      false
-    }
-  }
-
   // Function to remove block comments (/* */)
   def removeBlockComments(script: String): String = {
-    val blockCommentPattern: Regex = """(/\*[\s\S]*?\*/)""".r  // Match block comments (/* ... */)
+    val blockCommentPattern = """(/\*[\s\S]*?\*/)""".r  // Match block comments (/* ... */)
     blockCommentPattern.replaceAllIn(script, "")  // Replace block comments with an empty string
   }
 
-  // Function to process and execute SQL script
+  // Function to execute SQL script
   def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
-    // Validate if the provided script path is a valid file
-    if (!validateFilePath(scriptPath)) return
     println(s"Running SQL script from: $scriptPath")
-
-    // Define the log file for execution details
+    // Generate a timestamped log file path
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
     val logBuffer = new StringBuilder
 
-    // Register the JDBC driver
-    Class.forName(jdbcDriver)
+    try {
+      // Register JDBC driver
+      println("Registering JDBC driver...")
+      Class.forName(jdbcDriver)
 
-    // Establish the database connection
-    val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    val statement: Statement = connection.createStatement()
+      // Establish connection
+      println(s"Connecting to database at: $jdbcUrl")
+      val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement: Statement = connection.createStatement()
 
-    // Read the SQL script file
-    val reader = new BufferedReader(new FileReader(scriptPath))
-    val linesBuffer = ArrayBuffer[String]()
-    var line: String = reader.readLine()
+      // Read the SQL script
+      println("Reading SQL script...")
+      val lines = Files.readAllLines(Paths.get(scriptPath)).asScala.toList
+      println(s"Total lines in script: ${lines.size}")
 
-    // Read all lines into the buffer
-    while (line != null) {
-      linesBuffer += line
-      line = reader.readLine()
-    }
+      // Remove block comments (/* ... */) from the script
+      val scriptWithoutComments = removeBlockComments(lines.mkString("\n"))
 
-    // Join the lines into a single string
-    val script = linesBuffer.mkString("\n")
+      // Filter the lines
+      val validLines = scriptWithoutComments
+        .split("\n")
+        .drop(4) // Skip the first 4 lines
+        .dropRight(3) // Skip the last 3 lines
+        .filterNot(_.startsWith("--")) // Ignore lines with -- (single-line comments)
+        .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore lines with .IF ERRORCODE
 
-    // Remove block comments from the script
-    val scriptWithoutComments = removeBlockComments(script)
+      println("Filtered lines to execute:")
+      validLines.foreach(println)
 
-    // Split the script by semicolons to get individual SQL statements
-    val sqlStatements = scriptWithoutComments.split(";").map(_.trim).filter(_.nonEmpty)
-
-    // Filter out SQL statements that are commented out with '--'
-    val validStatements = sqlStatements.filterNot { statement =>
-      statement.startsWith("--") || statement.isEmpty
-    }
-
-    // Execute the valid SQL commands
-    validStatements.foreach { sql =>
-      try {
-        println(s"Executing: $sql")
-        statement.execute(sql) // Execute the SQL command
-        val successMsg = s"Executed successfully: $sql\n"
-        println(successMsg)
-        logBuffer.append(successMsg)
-      } catch {
-        case ex: Exception =>
-          val errorMsg = s"Error executing SQL: $sql\nError Message: ${ex.getMessage}\n"
-          println(errorMsg)
-          logBuffer.append(errorMsg)
+      // Prepare to execute SQL commands
+      val commandBuffer = new StringBuilder
+      for (line <- validLines) {
+        val trimmedLine = line.trim
+        // Skip empty lines
+        if (trimmedLine.nonEmpty) {
+          commandBuffer.append(trimmedLine).append(" ")
+          // If the line ends with a semicolon, execute the command
+          if (trimmedLine.endsWith(";")) {
+            val command = commandBuffer.toString().trim
+            try {
+              println(s"Executing command: $command")
+              statement.execute(command)
+              println(s"Command executed successfully: $command")
+              logBuffer.append(s"Command executed successfully: $command\n")
+            } catch {
+              case ex: Exception =>
+                val errorMsg = s"Error executing command: $command\nError Message: ${ex.getMessage}\n"
+                println(errorMsg)
+                logBuffer.append(errorMsg)
+            }
+            commandBuffer.clear() // Clear the buffer for the next command
+          }
+        }
       }
+
+      // Save execution log to file
+      println(s"Execution log saved to: $logPath")
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+
+      // Close resources
+      statement.close()
+      connection.close()
+    } catch {
+      case ex: Exception =>
+        val fatalErrorMsg = s"Fatal error occurred: ${ex.getMessage}\n"
+        println(fatalErrorMsg)
+        logBuffer.append(fatalErrorMsg)
+        // Save the error log to the file
+        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
     }
-
-    // Save the execution log to a file
-    Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-    println(s"Execution log saved to: $logPath")
-
-    // Close resources
-    reader.close()
-    statement.close()
-    connection.close()
   }
 
   // Main entry point for testing
