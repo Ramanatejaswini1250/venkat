@@ -5,6 +5,7 @@ import java.util.Calendar
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 import scala.collection.mutable.ArrayBuffer
+import scala.util.matching.Regex
 
 // Function to generate a timestamped file name
 def getCurrentTimestamp: String = {
@@ -36,6 +37,16 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
 
   // Register the JDBC driver
   Class.forName(jdbcDriver)
+
+
+
+// Define the regular expression for detecting 'CREATE' statements within comment blocks
+val createInCommentRegex: Regex = """/\*.*CREATE.*\*/""".r
+
+// Filter lines: Ignore lines that are commented out or contain 'CREATE' inside comments
+val validLines = lines
+  .filterNot(line => line.trim.startsWith("/*") && createInCommentRegex.findFirstIn(line).isDefined)  // Ignore CREATE inside comment blocks
+  .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore specific lines
 
   // Establish a connection
   val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
