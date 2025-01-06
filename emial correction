@@ -1,0 +1,21 @@
+def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
+  val (toEmails, ccEmails) = emailAddresses.split(";").partition(_.contains("@"))
+
+  try {
+    val process = new ProcessBuilder(
+      "/path/to/email/script.sh",
+      s"TO=${toEmails.mkString(";")}",
+      s"CC=${ccEmails.mkString(";")}",
+      s"SUBJECT=Alert: $alertCode",
+      s"BODY=$message"
+    ).start()
+
+    val exitCode = process.waitFor()
+    if (exitCode != 0) {
+      println(s"Email script failed with exit code: $exitCode")
+    }
+  } catch {
+    case e: Exception =>
+      println(s"Error in sending email for alertCode $alertCode: ${e.getMessage}")
+  }
+}
