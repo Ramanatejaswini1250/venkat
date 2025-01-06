@@ -4,6 +4,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
+import scala.collection.mutable.ArrayBuffer
 
 // Function to generate a timestamped file name
 def getCurrentTimestamp: String = {
@@ -34,27 +35,34 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
     connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
     statement = connection.createStatement()
 
-    // Read the SQL script line by line
+    // Read the SQL script into a list, filtering unwanted lines
     reader = new BufferedReader(new FileReader(scriptPath))
-
-    // Skip the first four lines
-    for (_ <- 1 to 4) {
-      reader.readLine()
-    }
-
-    var line: String = reader.readLine()
-    val commandBuffer = new StringBuilder
-    var lineNumber = 5 // Start line numbering from the fifth line
+    val allLines = new ArrayBuffer[String]()
+    var line = reader.readLine()
 
     while (line != null) {
       val trimmedLine = line.trim
 
-      // Skip empty lines and comments
-      if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
-        commandBuffer.append(trimmedLine).append(" ")
+      // Add lines to the buffer if they do not match the exclusion criteria
+      if (!trimmedLine.equalsIgnoreCase(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) {
+        allLines += trimmedLine
+      }
+      line = reader.readLine()
+    }
+
+    // Exclude the last 3 lines of the file
+    val validLines = allLines.dropRight(3)
+
+    // Process the filtered lines
+    val commandBuffer = new StringBuilder
+    var lineNumber = 1
+
+    for (sqlLine <- validLines) {
+      if (sqlLine.nonEmpty && !sqlLine.startsWith("--")) {
+        commandBuffer.append(sqlLine).append(" ")
 
         // Check if the command ends with `;` indicating it's complete
-        if (trimmedLine.endsWith(";")) {
+        if (sqlLine.endsWith(";")) {
           val command = commandBuffer.toString().trim
           try {
             println(s"Executing command on line $lineNumber: $command")
@@ -71,12 +79,10 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
           commandBuffer.clear() // Clear the buffer for the next command
         }
       }
-
-      line = reader.readLine()
       lineNumber += 1
     }
 
-    // Handle any remaining commands in the buffer (edge case for scripts without a final `;`)
+    // Handle any remaining commands in the buffer
     if (commandBuffer.nonEmpty) {
       val remainingCommand = commandBuffer.toString().trim
       try {
