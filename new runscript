@@ -1,49 +1,105 @@
-try {
-  println("Establishing database connection...")
-  val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-  println("Connection established.")
-  
-  val statement: Statement = connection.createStatement()
+import java.io.{BufferedReader, FileReader}
+import java.sql.{Connection, DriverManager, Statement}
+import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import scala.jdk.CollectionConverters._
 
-  println("Reading SQL script...")
-  val lines = Files.readAllLines(Paths.get(scriptPath)).asScala.toList
-  println(s"Total lines in script: ${lines.size}")
+object SqlScriptExecutor {
 
-  val validLines = lines
-    .drop(4)
-    .dropRight(3)
-    .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;"))
-    .map(_.trim)
+  // Function to generate a timestamped file name
+  def getCurrentTimestamp: String = {
+    val format = new SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(Calendar.getInstance().getTime)
+  }
 
-  println("Filtered lines to execute:")
-  validLines.foreach(println)
+  // Function to execute SQL script
+  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+    println(s"Running SQL script from: $scriptPath")
 
-  val commandBuffer = new StringBuilder
+    // Generate a timestamped log file path
+    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
+    val logBuffer = new StringBuilder
 
-  for (line <- validLines) {
-    if (line.nonEmpty && !line.startsWith("--")) {
-      commandBuffer.append(line).append(" ")
+    try {
+      // Register JDBC driver
+      println("Registering JDBC driver...")
+      Class.forName(jdbcDriver)
 
-      if (line.endsWith(";")) {
-        val command = commandBuffer.toString().trim
-        try {
-          println(s"Executing command: $command")
-          statement.execute(command)
-          println(s"Command executed successfully: $command")
-        } catch {
-          case ex: Exception =>
-            println(s"Error executing command: $command")
-            println(s"Error message: ${ex.getMessage}")
+      // Establish connection
+      println(s"Connecting to database at: $jdbcUrl")
+      val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement: Statement = connection.createStatement()
+
+      println("Reading SQL script...")
+      val lines = Files.readAllLines(Paths.get(scriptPath)).asScala.toList
+      println(s"Total lines in script: ${lines.size}")
+
+      // Filter the lines
+      val validLines = lines
+        .drop(4) // Skip the first 4 lines
+        .dropRight(3) // Skip the last 3 lines
+        .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore lines with .IF ERRORCODE
+
+      println("Filtered lines to execute:")
+      validLines.foreach(println)
+
+      // Prepare to execute SQL commands
+      val commandBuffer = new StringBuilder
+
+      for (line <- validLines) {
+        val trimmedLine = line.trim
+
+        // Skip empty lines or comments (lines starting with --)
+        if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
+          commandBuffer.append(trimmedLine).append(" ")
+
+          // If the line ends with a semicolon, execute the command
+          if (trimmedLine.endsWith(";")) {
+            val command = commandBuffer.toString().trim
+            try {
+              println(s"Executing command: $command")
+              statement.execute(command)
+              println(s"Command executed successfully: $command")
+              logBuffer.append(s"Command executed successfully: $command\n")
+            } catch {
+              case ex: Exception =>
+                val errorMsg = s"Error executing command: $command\nError Message: ${ex.getMessage}\n"
+                println(errorMsg)
+                logBuffer.append(errorMsg)
+            }
+            commandBuffer.clear() // Clear the buffer for the next command
+          }
         }
-        commandBuffer.clear()
       }
+
+      // Save execution log to file
+      println(s"Execution log saved to: $logPath")
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+
+      // Close resources
+      statement.close()
+      connection.close()
+    } catch {
+      case ex: Exception =>
+        val fatalErrorMsg = s"Fatal error occurred: ${ex.getMessage}\n"
+        println(fatalErrorMsg)
+        logBuffer.append(fatalErrorMsg)
+
+        // Save the error log to the file
+        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
     }
   }
 
-  statement.close()
-  connection.close()
-} catch {
-  case ex: Exception =>
-    println(s"Fatal error: ${ex.getMessage}")
-    ex.printStackTrace()
-}
+  // Main method to execute the script
+  def main(args: Array[String]): Unit = {
+    if (args.length != 5) {
+      println("Usage: SqlScriptExecutor <scriptPath> <jdbcUrl> <jdbcUser> <jdbcPassword> <jdbcDriver>")
+      System.exit(1)
+    }
+
+    // Read arguments
+    val scriptPath = args(0)
+    val jdbcUrl = args(1)
+    val jdbc
