@@ -26,9 +26,12 @@ TO_EMAIL=$3
 CC_EMAIL=$4
 BUSINESS=$5
 
-# Create the email subject and body
+# Create the email subject and body (using HTML format)
 SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
-BODY="Alert Code: $ALERT_CODE\nMessage: $MESSAGE\nBusiness: $BUSINESS\n\nPlease check the issue."
+BODY="<html><body><h1>Alert Code: $ALERT_CODE</h1><p>$MESSAGE</p><p><strong>Business:</strong> $BUSINESS</strong></p></body></html>"
+
+# Debug: Output body content
+echo "Body content: $BODY"
 
 # Function to send email
 send_email() {
@@ -40,8 +43,9 @@ send_email() {
       echo "Cc: $CC_EMAIL"
     fi
     echo "Subject: $SUBJECT"
+    echo "Content-Type: text/html; charset=UTF-8"
     echo ""
-    echo -e "$BODY"
+    echo "$BODY"
   ) | sendmail -S $SMTP_HOST:$SMTP_PORT -au$SMTP_USERNAME -ap$SMTP_PASSWORD -f$FROM_EMAIL "$TO_EMAIL"
   
   # Check if the email was sent successfully
