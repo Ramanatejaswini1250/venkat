@@ -2,7 +2,6 @@ import java.io.{BufferedReader, FileReader}
 import java.sql.{Connection, DriverManager, Statement}
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import scala.util.{Try, Success, Failure}
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 
@@ -29,36 +28,42 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
   var line: String = reader.readLine()
   var lineNumber = 1
 
-  while (line != null) {
-    val trimmedLine = line.trim
+  try {
+    while (line != null) {
+      val trimmedLine = line.trim
 
-    // Skip empty lines and comments
-    if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
-      Try {
-        println(s"Executing line $lineNumber: $trimmedLine")
-        statement.execute(trimmedLine) // Execute the SQL command
-      } match {
-        case Success(_) =>
+      // Skip empty lines and comments
+      if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
+        try {
+          println(s"Executing line $lineNumber: $trimmedLine")
+          statement.execute(trimmedLine) // Execute the SQL command
           val successMsg = s"Line $lineNumber executed successfully: $trimmedLine\n"
           println(successMsg)
           logBuffer.append(successMsg)
-        case Failure(ex) =>
-          val errorMsg = s"Error on line $lineNumber: $trimmedLine\nError Message: ${ex.getMessage}\n"
-          println(errorMsg)
-          logBuffer.append(errorMsg)
+        } catch {
+          case ex: Exception =>
+            val errorMsg = s"Error on line $lineNumber: $trimmedLine\nError Message: ${ex.getMessage}\n"
+            println(errorMsg)
+            logBuffer.append(errorMsg)
+        }
       }
+
+      line = reader.readLine()
+      lineNumber += 1
     }
+  } catch {
+    case ex: Exception =>
+      val fatalErrorMsg = s"Fatal error occurred while reading or processing the script: ${ex.getMessage}\n"
+      println(fatalErrorMsg)
+      logBuffer.append(fatalErrorMsg)
+  } finally {
+    // Save the execution log to a file
+    Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+    println(s"Execution log saved to: $logPath")
 
-    line = reader.readLine()
-    lineNumber += 1
+    // Close resources
+    reader.close()
+    statement.close()
+    connection.close()
   }
-
-  // Save the execution log to a file
-  Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-  println(s"Execution log saved to: $logPath")
-
-  // Close resources
-  reader.close()
-  statement.close()
-  connection.close()
 }
