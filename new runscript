@@ -41,7 +41,7 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
 
 
 val lineCommentPattern: Regex = """--.*""".r  // Match single-line comments (--)
-val blockCommentPattern: Regex = """\/\*.*?\*\/""".r  // Match block comments (/* ... */) non-greedily
+ val blockCommentPattern: Regex = """\/\*[\s\S]*?\*\/""".r
   
 
 // Filter lines: Ignore lines that are commented out or contain 'CREATE' inside comments
