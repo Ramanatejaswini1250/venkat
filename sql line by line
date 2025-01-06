@@ -1,0 +1,43 @@
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import scala.io.Source
+import scala.util.{Try, Failure, Success}
+import org.apache.spark.sql.SparkSession
+
+// Function to generate a timestamped file name
+def getCurrentTimestamp: String = {
+  val format = new SimpleDateFormat("yyyyMMddHHmmss")
+  format.format(Calendar.getInstance().getTime)
+}
+
+def runSqlScript(scriptPath: String, spark: SparkSession): Unit = {
+  println(s"Running SQL script from: $scriptPath")
+
+  val sqlLines = Source.fromFile(scriptPath).getLines().toList // Read SQL script line by line
+  val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt" // Log file to save execution details
+
+  val logBuffer = new StringBuilder
+
+  sqlLines.zipWithIndex.foreach { case (sql, lineNumber) =>
+    Try {
+      println(s"Executing line ${lineNumber + 1}: $sql")
+      spark.sql(sql) // Execute the SQL statement
+    } match {
+      case Success(_) =>
+        val successMsg = s"Line ${lineNumber + 1} executed successfully: $sql\n"
+        println(successMsg)
+        logBuffer.append(successMsg)
+      case Failure(ex) =>
+        val errorMsg = s"Error on line ${lineNumber + 1}: $sql\nError Message: ${ex.getMessage}\n"
+        println(errorMsg)
+        logBuffer.append(errorMsg)
+    }
+  }
+
+  // Save the execution log to a file
+  import java.nio.file.{Files, Paths}
+  import java.nio.charset.StandardCharsets
+
+  Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+  println(s"Execution log saved to: $logPath")
+}
