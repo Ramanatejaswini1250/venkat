@@ -17,19 +17,29 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
   val logBuffer = new StringBuilder
 
   // Register the JDBC driver
-  Class.forName(jdbcDriver)
+  try {
+    Class.forName(jdbcDriver)
+  } catch {
+    case ex: Exception =>
+      println(s"Error loading JDBC driver: ${ex.getMessage}")
+      return
+  }
 
   // Establish a connection
-  val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-  val statement: Statement = connection.createStatement()
-
-  // Read the SQL script line by line
-  val reader = new BufferedReader(new FileReader(scriptPath))
-  var line: String = reader.readLine()
-  val commandBuffer = new StringBuilder
-  var lineNumber = 1
+  var connection: Connection = null
+  var statement: Statement = null
+  var reader: BufferedReader = null
 
   try {
+    connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    statement = connection.createStatement()
+
+    // Read the SQL script line by line
+    reader = new BufferedReader(new FileReader(scriptPath))
+    var line: String = reader.readLine()
+    val commandBuffer = new StringBuilder
+    var lineNumber = 1
+
     while (line != null) {
       val trimmedLine = line.trim
 
@@ -78,18 +88,23 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
     }
   } catch {
     case ex: Exception =>
-      val fatalErrorMsg = s"Fatal error occurred while reading or processing the script: ${ex.getMessage}\n"
+      val fatalErrorMsg = s"Fatal error occurred: ${ex.getMessage}\n"
       println(fatalErrorMsg)
       logBuffer.append(fatalErrorMsg)
   } finally {
     // Save the execution log to a file
-    Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-    println(s"Execution log saved to: $logPath")
+    try {
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+      println(s"Execution log saved to: $logPath")
+    } catch {
+      case ex: Exception =>
+        println(s"Failed to write execution log: ${ex.getMessage}")
+    }
 
     // Close resources
-    reader.close()
-    statement.close()
-    connection.close()
+    if (reader != null) reader.close()
+    if (statement != null) statement.close()
+    if (connection != null) connection.close()
   }
 }
 
