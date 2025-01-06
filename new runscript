@@ -7,22 +7,27 @@ import java.util.Calendar
 import scala.jdk.CollectionConverters._
 
 object SqlScriptExecutor {
-  // Function to generate a timestamped file name
+  // Generate a timestamped log file name
   def getCurrentTimestamp: String = {
     val format = new SimpleDateFormat("yyyyMMddHHmmss")
     format.format(Calendar.getInstance().getTime)
   }
 
-  // Function to remove block comments (/* */)
+  // Remove block comments (/* ... */) and inline block comments
   def removeBlockComments(script: String): String = {
-    val blockCommentPattern = """(/\*[\s\S]*?\*/)""".r  // Match block comments (/* ... */)
-    blockCommentPattern.replaceAllIn(script, "")  // Replace block comments with an empty string
+    val blockCommentPattern = """(?s)/\*.*?\*/""".r
+    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
   }
 
-  // Function to execute SQL script
+  // Handle single-line comments (--) while preserving SQL before them
+  def removeInlineComments(line: String): String = {
+    val singleLineCommentPattern = """--.*""".r
+    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+  }
+
+  // Execute the SQL script
   def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
     println(s"Running SQL script from: $scriptPath")
-    // Generate a timestamped log file path
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
     val logBuffer = new StringBuilder
 
@@ -38,50 +43,41 @@ object SqlScriptExecutor {
 
       // Read the SQL script
       println("Reading SQL script...")
-      val lines = Files.readAllLines(Paths.get(scriptPath)).asScala.toList
-      println(s"Total lines in script: ${lines.size}")
+      val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
 
-      // Remove block comments (/* ... */) from the script
-      val scriptWithoutComments = removeBlockComments(lines.mkString("\n"))
+      // Process the script: remove block comments and split into lines
+      val scriptWithoutComments = removeBlockComments(script)
+      val lines = scriptWithoutComments.split("\n").toSeq
 
-      // Filter the lines
-      val validLines = scriptWithoutComments
-        .split("\n")
+      // Prepare and filter valid lines
+      val validLines = lines
         .drop(4) // Skip the first 4 lines
         .dropRight(3) // Skip the last 3 lines
-        .filterNot(_.startsWith("--")) // Ignore lines with -- (single-line comments)
-        .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore lines with .IF ERRORCODE
+        .map(removeInlineComments) // Remove inline comments (-- ...)
+        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
 
       println("Filtered lines to execute:")
       validLines.foreach(println)
 
-      // Prepare to execute SQL commands
-      val commandBuffer = new StringBuilder
-      for (line <- validLines) {
-        val trimmedLine = line.trim
-        // Skip empty lines
-        if (trimmedLine.nonEmpty) {
-          commandBuffer.append(trimmedLine).append(" ")
-          // If the line ends with a semicolon, execute the command
-          if (trimmedLine.endsWith(";")) {
-            val command = commandBuffer.toString().trim
-            try {
-              println(s"Executing command: $command")
-              statement.execute(command)
-              println(s"Command executed successfully: $command")
-              logBuffer.append(s"Command executed successfully: $command\n")
-            } catch {
-              case ex: Exception =>
-                val errorMsg = s"Error executing command: $command\nError Message: ${ex.getMessage}\n"
-                println(errorMsg)
-                logBuffer.append(errorMsg)
-            }
-            commandBuffer.clear() // Clear the buffer for the next command
-          }
+      // Combine valid lines into SQL commands and execute them
+      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+      commands.foreach { command =>
+        try {
+          println(s"Executing command: $command")
+          statement.execute(command)
+          val successMsg = s"[SUCCESS] Executed: $command"
+          println(successMsg)
+          logBuffer.append(successMsg + "\n")
+        } catch {
+          case ex: Exception =>
+            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
+            println(errorMsg)
+            logBuffer.append(errorMsg + "\n")
         }
       }
 
-      // Save execution log to file
+      // Save execution log to a file
       println(s"Execution log saved to: $logPath")
       Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
 
@@ -90,24 +86,21 @@ object SqlScriptExecutor {
       connection.close()
     } catch {
       case ex: Exception =>
-        val fatalErrorMsg = s"Fatal error occurred: ${ex.getMessage}\n"
+        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
         println(fatalErrorMsg)
-        logBuffer.append(fatalErrorMsg)
-        // Save the error log to the file
+        logBuffer.append(fatalErrorMsg + "\n")
         Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
     }
   }
 
-  // Main entry point for testing
+  // Main entry point
   def main(args: Array[String]): Unit = {
-    // Example usage - Replace these values with actual parameters
     val scriptPath = "path/to/your/sqlfile.sql"
     val jdbcUrl = "jdbc:your_database_url"
     val jdbcUser = "your_database_username"
     val jdbcPassword = "your_database_password"
     val jdbcDriver = "your.jdbc.Driver"
 
-    // Run the SQL script
     runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
   }
 }
