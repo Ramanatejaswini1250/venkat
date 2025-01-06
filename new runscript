@@ -1,112 +1,85 @@
 import java.io.{BufferedReader, FileReader}
 import java.sql.{Connection, DriverManager, Statement}
-import java.nio.file.{Files, Paths}
-import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import scala.jdk.CollectionConverters._
+import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+import scala.collection.JavaConverters._
 
-object SqlScriptExecutor {
+// Function to generate a timestamped file name
+def getCurrentTimestamp: String = {
+  val format = new SimpleDateFormat("yyyyMMddHHmmss")
+  format.format(Calendar.getInstance().getTime)
+}
 
-  // Function to generate a timestamped file name
-  def getCurrentTimestamp: String = {
-    val format = new SimpleDateFormat("yyyyMMddHHmmss")
-    format.format(Calendar.getInstance().getTime)
+// Function to check if a line is a comment
+def isCommentLine(line: String): Boolean = {
+  line.trim.startsWith("--") || line.trim.isEmpty
+}
+
+def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+  println(s"Running SQL script from: $scriptPath")
+  val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt" // Log file to save execution details
+  val logBuffer = new StringBuilder
+
+  // Register the JDBC driver
+  Class.forName(jdbcDriver)
+
+  // Establish a connection
+  val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+  val statement: Statement = connection.createStatement()
+
+  // Read the SQL script line by line
+  val reader = new BufferedReader(new FileReader(scriptPath))
+  var line: String = reader.readLine()
+  var lineNumber = 1
+  val linesBuffer = new collection.mutable.Buffer[String]
+
+  // Read the entire file and store the lines
+  while (line != null) {
+    linesBuffer += line
+    line = reader.readLine()
+    lineNumber += 1
   }
 
-  // Function to execute SQL script
-  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
-    println(s"Running SQL script from: $scriptPath")
+  // Now process the lines, skipping the first 4 and the last 3, and ignoring comments
+  val validLines = linesBuffer
+    .drop(4) // Skip the first 4 lines
+    .dropRight(3) // Skip the last 3 lines
+    .filterNot(isCommentLine) // Ignore commented lines
 
-    // Generate a timestamped log file path
-    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
-    val logBuffer = new StringBuilder
-
+  // Execute the SQL commands
+  validLines.foreach { trimmedLine =>
     try {
-      // Register JDBC driver
-      println("Registering JDBC driver...")
-      Class.forName(jdbcDriver)
-
-      // Establish connection
-      println(s"Connecting to database at: $jdbcUrl")
-      val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement: Statement = connection.createStatement()
-
-      println("Reading SQL script...")
-      val lines = Files.readAllLines(Paths.get(scriptPath)).asScala.toList
-      println(s"Total lines in script: ${lines.size}")
-
-      // Filter the lines
-      val validLines = lines
-        .drop(4) // Skip the first 4 lines
-        .dropRight(3) // Skip the last 3 lines
-        .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore lines with .IF ERRORCODE
-
-      println("Filtered lines to execute:")
-      validLines.foreach(println)
-
-      // Prepare to execute SQL commands
-      val commandBuffer = new StringBuilder
-
-      for (line <- validLines) {
-        val trimmedLine = line.trim
-
-        // Skip empty lines or comments (lines starting with --)
-        if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
-          commandBuffer.append(trimmedLine).append(" ")
-
-          // If the line ends with a semicolon, execute the command
-          if (trimmedLine.endsWith(";")) {
-            val command = commandBuffer.toString().trim
-            try {
-              println(s"Executing command: $command")
-              statement.execute(command)
-              println(s"Command executed successfully: $command")
-              logBuffer.append(s"Command executed successfully: $command\n")
-            } catch {
-              case ex: Exception =>
-                val errorMsg = s"Error executing command: $command\nError Message: ${ex.getMessage}\n"
-                println(errorMsg)
-                logBuffer.append(errorMsg)
-            }
-            commandBuffer.clear() // Clear the buffer for the next command
-          }
-        }
-      }
-
-      // Save execution log to file
-      println(s"Execution log saved to: $logPath")
-      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-
-      // Close resources
-      statement.close()
-      connection.close()
+      println(s"Executing: $trimmedLine")
+      statement.execute(trimmedLine.trim) // Execute the SQL command
+      val successMsg = s"Executed successfully: $trimmedLine\n"
+      println(successMsg)
+      logBuffer.append(successMsg)
     } catch {
       case ex: Exception =>
-        val fatalErrorMsg = s"Fatal error occurred: ${ex.getMessage}\n"
-        println(fatalErrorMsg)
-        logBuffer.append(fatalErrorMsg)
-
-        // Save the error log to the file
-        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+        val errorMsg = s"Error executing line: $trimmedLine\nError Message: ${ex.getMessage}\n"
+        println(errorMsg)
+        logBuffer.append(errorMsg)
     }
   }
 
-  // Main method to execute the script
-  def main(args: Array[String]): Unit = {
-    if (args.length != 5) {
-      println("Usage: SqlScriptExecutor <scriptPath> <jdbcUrl> <jdbcUser> <jdbcPassword> <jdbcDriver>")
-      System.exit(1)
-    }
+  // Save the execution log to a file
+  Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+  println(s"Execution log saved to: $logPath")
 
-    // Read arguments
-    val scriptPath = args(0)
-    val jdbcUrl = args(1)
-    val jdbcUser = args(2)
-    val jdbcPassword = args(3)
-    val jdbcDriver = args(4)
-
-    // Run the SQL script
-    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
-  }
+  // Close resources
+  reader.close()
+  statement.close()
+  connection.close()
 }
+
+// Example usage
+// Make sure to replace these values with actual parameters
+val scriptPath = "path/to/your/sqlfile.sql"
+val jdbcUrl = "jdbc:your_database_url"
+val jdbcUser = "your_database_username"
+val jdbcPassword = "your_database_password"
+val jdbcDriver = "your.jdbc.Driver"
+
+runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
