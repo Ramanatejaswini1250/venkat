@@ -30,10 +30,10 @@ BUSINESS=$5
 SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
 BODY="Alert Code: $ALERT_CODE\nMessage: $MESSAGE\nBusiness: $BUSINESS\n\nPlease check the issue."
 
-# Function to send email using mailx
+# Function to send email using msmtp
 send_email() {
-  echo -e "$BODY" | mailx -v -s "$SUBJECT" -r "$FROM_EMAIL" -S smtp="$SMTP_HOST:$SMTP_PORT" -S smtp-auth=login -S smtp-auth-user="$SMTP_USERNAME" -S smtp-auth-password="$SMTP_PASSWORD" -S ssl-verify=ignore "$TO_EMAIL"
-
+  echo -e "Subject: $SUBJECT\nTo: $TO_EMAIL\nCc: $CC_EMAIL\nContent-Type: text/plain; charset=UTF-8\n\n$BODY" | msmtp -v --from="$FROM_EMAIL" --auth=login --user="$SMTP_USERNAME" --passwordeval="echo $SMTP_PASSWORD" --host="$SMTP_HOST" --port="$SMTP_PORT" "$TO_EMAIL"
+  
   # Check if the email was sent successfully
   if [ $? -eq 0 ]; then
     echo "Email sent to $TO_EMAIL and CC: $CC_EMAIL"
