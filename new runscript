@@ -36,9 +36,15 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
 
     // Read the SQL script line by line
     reader = new BufferedReader(new FileReader(scriptPath))
+
+    // Skip the first four lines
+    for (_ <- 1 to 4) {
+      reader.readLine()
+    }
+
     var line: String = reader.readLine()
     val commandBuffer = new StringBuilder
-    var lineNumber = 1
+    var lineNumber = 5 // Start line numbering from the fifth line
 
     while (line != null) {
       val trimmedLine = line.trim
