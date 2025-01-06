@@ -102,4 +102,11 @@ object SqlScriptExecutor {
     // Read arguments
     val scriptPath = args(0)
     val jdbcUrl = args(1)
-    val jdbc
+    val jdbcUser = args(2)
+    val jdbcPassword = args(3)
+    val jdbcDriver = args(4)
+
+    // Run the SQL script
+    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
+  }
+}
