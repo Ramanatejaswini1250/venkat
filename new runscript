@@ -1,0 +1,64 @@
+import java.io.{BufferedReader, FileReader}
+import java.sql.{Connection, DriverManager, Statement}
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import scala.util.{Try, Success, Failure}
+import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+
+// Function to generate a timestamped file name
+def getCurrentTimestamp: String = {
+  val format = new SimpleDateFormat("yyyyMMddHHmmss")
+  format.format(Calendar.getInstance().getTime)
+}
+
+def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+  println(s"Running SQL script from: $scriptPath")
+  val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt" // Log file to save execution details
+  val logBuffer = new StringBuilder
+
+  // Register the JDBC driver
+  Class.forName(jdbcDriver)
+
+  // Establish a connection
+  val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+  val statement: Statement = connection.createStatement()
+
+  // Read the SQL script line by line
+  val reader = new BufferedReader(new FileReader(scriptPath))
+  var line: String = reader.readLine()
+  var lineNumber = 1
+
+  while (line != null) {
+    val trimmedLine = line.trim
+
+    // Skip empty lines and comments
+    if (trimmedLine.nonEmpty && !trimmedLine.startsWith("--")) {
+      Try {
+        println(s"Executing line $lineNumber: $trimmedLine")
+        statement.execute(trimmedLine) // Execute the SQL command
+      } match {
+        case Success(_) =>
+          val successMsg = s"Line $lineNumber executed successfully: $trimmedLine\n"
+          println(successMsg)
+          logBuffer.append(successMsg)
+        case Failure(ex) =>
+          val errorMsg = s"Error on line $lineNumber: $trimmedLine\nError Message: ${ex.getMessage}\n"
+          println(errorMsg)
+          logBuffer.append(errorMsg)
+      }
+    }
+
+    line = reader.readLine()
+    lineNumber += 1
+  }
+
+  // Save the execution log to a file
+  Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+  println(s"Execution log saved to: $logPath")
+
+  // Close resources
+  reader.close()
+  statement.close()
+  connection.close()
+}
