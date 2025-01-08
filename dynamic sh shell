@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Check if the environment is passed as an argument
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <environment (dev|test)>"
+  exit 1
+fi
+
+# Read the environment argument
+ENV=$1
+
+# Define the base path
+BASE_PATH="/usr/local/omnia/run"
+
+# Validate the environment
+if [[ "$ENV" != "dev" && "$ENV" != "test" ]]; then
+  echo "Invalid environment: $ENV. Use 'dev' or 'test'."
+  exit 1
+fi
+
+# Run the Spark job
+spark-submit \
+  --class EmailNotificationApp \
+  --master local[*] \
+  path_to_jar/EmailNotificationApp.jar $ENV $BASE_PATH
