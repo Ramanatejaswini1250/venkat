@@ -1,5 +1,11 @@
 import org.apache.spark.sql.{SparkSession, DataFrame}
 import java.io.{BufferedReader, InputStreamReader}
+import java.text.SimpleDateFormat
+import java.util.{Calendar, Date}
+import scala.util.{Try, Success, Failure}
+import scala.io.Source
+import java.nio.file.{Files, Paths}
+import java.sql.{Connection, DriverManager, Statement}
 
 object EmailNotificationApp {
   
@@ -8,7 +14,7 @@ object EmailNotificationApp {
     .appName("EmailNotificationApp")
     .master("local[*]") // Adjust as needed for your environment
     .getOrCreate()
-  
+
   // JDBC connection parameters (to be set with actual values)
   val jdbcUrl: String = "jdbc:your_database_url"
   val jdbcUser: String = "your_user"
@@ -16,313 +22,222 @@ object EmailNotificationApp {
   val jdbcDriver: String = "com.jdbc.Driver"  // Specify the correct JDBC driver class
 
   // Function to send email notifications via a shell script with first email in To and others in CC
-def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
-  val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
-  val emailList = emailAddresses.split(",").map(_.trim)
+  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
+    val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
+    val emailList = emailAddresses.split(",").map(_.trim)
 
-  if (emailList.nonEmpty) {
-    val toEmail = emailList(0)
-    val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
+    if (emailList.nonEmpty) {
+      val toEmail = emailList(0)
+      val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
 
-    Try {
-      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
+      Try {
+        val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
 
-      val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
-      var line: String = null
-      while ({ line = reader.readLine(); line != null }) {
-        println(line)
+        val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+        var line: String = null
+        while ({ line = reader.readLine(); line != null }) {
+          println(line)
+        }
+
+        val exitCode = process.waitFor()
+        if (exitCode != 0) {
+          throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
+        } else {
+          println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
+        }
+      } match {
+        case Success(_) => println(s"Notification sent for alertCode: $alertCode")
+        case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
       }
-
-      val exitCode = process.waitFor()
-      if (exitCode != 0) {
-        throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
-      } else {
-        println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
-      }
-    } match {
-      case Success(_) => println(s"Notification sent for alertCode: $alertCode")
-      case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
+    } else {
+      println("No email addresses found to send the notification.")
     }
-  } else {
-    println("No email addresses found to send the notification.")
   }
-}
 
-  // Function to run SQL script
+  // Function to run SQL script and halt execution if it fails
   def runSqlScript(scriptPath: String): Unit = {
-    // Implement running the SQL script here, e.g., using `spark.sql()` or executing via command line
-    println(s"Running SQL script at: $scriptPath")
-    // Example:
-    // val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
-    // spark.sql(sqlContent)  // This is just a placeholder
+    try {
+      // Read the SQL script file content
+      val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
+
+      // Execute the SQL query using Spark (or another method if needed)
+      val result = spark.sql(sqlContent)  // For Spark SQL execution
+
+      // Check for specific success criteria, or handle failure
+      val status = result.count()  // This could be any check based on your query result
+      if (status == 0) {
+        println(s"SQL script executed successfully: $scriptPath")
+      } else {
+        println(s"SQL script failed, halting execution for: $scriptPath")
+        throw new Exception(s"SQL execution failed, halting further execution.")
+      }
+    } catch {
+      case ex: Exception =>
+        println(s"Error executing SQL script: ${ex.getMessage}")
+        throw new Exception(s"SQL script failed: ${ex.getMessage}, halting process.")
+    }
   }
-// Function to generate a timestamped file name
-def getCurrentTimestamp: String = {
-  val format = new SimpleDateFormat("yyyyMMddHHmmss")
-  format.format(Calendar.getInstance().getTime)
-}
 
-def validateData(masterDF: DataFrame, fileDF: DataFrame): Boolean = {
-  // Ensure both DataFrames are sorted
-  val sortedMasterDF = masterDF.orderBy(masterDF.columns.map(col): _*)
-  val sortedFileDF = fileDF.orderBy(fileDF.columns.map(col): _*)
+  // Function to generate a timestamped file name
+  def getCurrentTimestamp: String = {
+    val format = new SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(Calendar.getInstance().getTime)
+  }
 
-  // Compare the two DataFrames
-  val areEqual = sortedMasterDF.except(sortedFileDF).isEmpty &&
-                 sortedFileDF.except(sortedMasterDF).isEmpty
-
-  areEqual
-}
-
+  // Function to process each record in the DataFrame
   def processRecords(df: DataFrame): Unit = {
-  df.foreachPartition { partition =>
-    partition.foreach { row =>
-      val alertCode = row.getAs[String]("alert_code")
-      val dtCount = row.getAs[Int]("dt_count")
-      val dateToLoad = row.getAs[String]("date_to_load")
-      val bteqLocation = row.getAs[String]("bteq_location")
-      val emailAddress = row.getAs[String]("email_address")
-      val business = row.getAs[String]("business")
+    df.foreachPartition { partition =>
+      partition.foreach { row =>
+        val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val dateToLoad = row.getAs[String]("date_to_load")
+        val bteqLocation = row.getAs[String]("bteq_location")
+        val emailAddress = row.getAs[String]("email_address")
+        val business = row.getAs[String]("business")
 
-      val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-        sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-        throw new Exception("Missing source_table_name")
-      }
+        val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
+          sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
+          throw new Exception("Missing source_table_name")
+        }
 
-      val frequency = row.getAs[String]("frequency").getOrElse {
-        sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-        throw new Exception("Missing frequency")
-      }
+        val frequency = row.getAs[String]("frequency").getOrElse {
+          sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
+          throw new Exception("Missing frequency")
+        }
 
-      val filterColumn = row.getAs[String]("filter_column").getOrElse {
-        sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-        throw new Exception("Missing filter_column")
-      }
+        val filterColumn = row.getAs[String]("filter_column").getOrElse {
+          sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
+          throw new Exception("Missing filter_column")
+        }
 
-      try {
-        if (dtCount > 0) {
-          val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
-          
-          val sourceTableCountDF = spark.read
-            .format("jdbc")
-            .option("url", jdbcUrl)
-            .option("dbtable", jdbcQuery)
-            .option("user", jdbcUser)
-            .option("password", jdbcPassword)
-            .option("driver", jdbcDriver)
-            .load()
-
-          val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-
-          if (sourceTableCount == dtCount) {
-            val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+        try {
+          if (dtCount > 0) {
+            val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
             
-            if (Files.exists(Paths.get(sqlFolderPath))) {
-              val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+            val sourceTableCountDF = spark.read
+              .format("jdbc")
+              .option("url", jdbcUrl)
+              .option("dbtable", jdbcQuery)
+              .option("user", jdbcUser)
+              .option("password", jdbcPassword)
+              .option("driver", jdbcDriver)
+              .load()
+
+            val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+
+            if (sourceTableCount == dtCount) {
+              val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
               
-              if (Files.exists(Paths.get(sqlFilePath))) {
-                runSqlScript(sqlFilePath)
-                sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+              if (Files.exists(Paths.get(sqlFolderPath))) {
+                val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+                
+                if (Files.exists(Paths.get(sqlFilePath))) {
+                  runSqlScript(sqlFilePath)  // Run the SQL script
+                  sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+                } else {
+                  val message = s"SQL file not found for alertCode: $alertCode"
+                  sendEmailNotification(alertCode, message, emailAddress, business)
+                  println(message)
+                }
               } else {
-                val message = s"SQL file not found for alertCode: $alertCode"
+                val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
                 sendEmailNotification(alertCode, message, emailAddress, business)
                 println(message)
               }
             } else {
-              val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+              val message = s"Source table count does not match DT_COUNT"
               sendEmailNotification(alertCode, message, emailAddress, business)
               println(message)
             }
+
+            // Step 1: Count Validation - Compare RAMP_MASTER_TARGET1 count with dtCount
+            println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
+
+            val countValidationQuery =
+              """
+                |(SELECT COUNT(*) AS master_count
+                | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
+                |""".stripMargin
+
+            val masterCountDF = spark.read
+              .format("jdbc")
+              .option("url", jdbcUrl)
+              .option("dbtable", countValidationQuery)
+              .option("user", jdbcUser)
+              .option("password", jdbcPassword)
+              .option("driver", jdbcDriver)
+              .load()
+
+            val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
+
+            if (masterTargetCount != dtCount) {
+              val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
+              sendEmailNotification(alertCode, message, emailAddress, business)
+              println(message)
+              throw new Exception(message)
+            } else {
+              println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
+
+              // ---- Blank Validation Logic (Step 2) ----
+              println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
+
+              val blankCountQuery =
+                """
+                  |(SELECT COUNT(*) AS blank_count
+                  | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+                  | WHERE variable = '') AS subquery
+                  |""".stripMargin
+
+              val blankCountDF = spark.read
+                .format("jdbc")
+                .option("url", jdbcUrl)
+                .option("dbtable", blankCountQuery)
+                .option("user", jdbcUser)
+                .option("password", jdbcPassword)
+                .option("driver", jdbcDriver)
+                .load()
+
+              val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
+
+              if (blankCount > 0) {
+                println(s"Found $blankCount blank values. Updating them to NULL...")
+
+                val updateBlankValuesQuery =
+                  """
+                    |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+                    |SET variable = NULL
+                    |WHERE variable = ''
+                    |""".stripMargin
+
+                val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+                val statement = connection.createStatement()
+                statement.executeUpdate(updateBlankValuesQuery)
+                statement.close()
+                connection.close()
+
+                println("Blank values updated successfully.")
+              } else {
+                println("No blank values found in RAMP_MASTER_TARGET2.")
+              }
+            }
           } else {
-            val message = s"Source table count does not match DT_COUNT"
+            val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
+            sendEmailNotification(alertCode, message, emailAddress, business)
+            throw new Exception(message)
+          }
+        } catch {
+          case ex: Exception =>
+            val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
             sendEmailNotification(alertCode, message, emailAddress, business)
             println(message)
-          }
-// Step 1: Count Validation - Compare RAMP_MASTER_TARGET1 count with dtCount
-  println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
-
-  val countValidationQuery =
-    """
-      |(SELECT COUNT(*) AS master_count
-      | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
-      |""".stripMargin
-
-  val masterCountDF = spark.read
-    .format("jdbc")
-    .option("url", jdbcUrl)
-    .option("dbtable", countValidationQuery)
-    .option("user", jdbcUser)
-    .option("password", jdbcPassword)
-    .option("driver", jdbcDriver)
-    .load()
-
-  val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
-
-  if (masterTargetCount != dtCount) {
-    val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
-    sendEmailNotification(alertCode, message, emailAddress, business)
-    println(message)
-    throw new Exception(message)
-  } else {
-    println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
-
-    // ---- Blank Validation Logic (Step 2) ----
-    println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
-
-    val blankCountQuery =
-      """
-        |(SELECT COUNT(*) AS blank_count
-        | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-        | WHERE variable = '') AS subquery
-        |""".stripMargin
-
-    val blankCountDF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", blankCountQuery)
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
-
-    val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
-
-    if (blankCount > 0) {
-      println(s"Found $blankCount blank values. Updating them to NULL...")
-
-      val updateBlankValuesQuery =
-        """
-          |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-          |SET variable = NULL
-          |WHERE variable = ''
-          |""".stripMargin
-
-      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement = connection.createStatement()
-      statement.executeUpdate(updateBlankValuesQuery)
-      statement.close()
-      connection.close()
-
-      println("Blank values updated successfully.")
-    } else {
-      println("No blank values found in RAMP_MASTER_TARGET2.")
-    }
-
-    // ---- Export Data to Files (Step 3) ----
-    println("Exporting data to CSV files...")
-
-    // Export Master File 1
-    val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
-    val masterFile1Path = s"/output/path/YYYMMDDHHMMSS_Master_Table1.csv"
-
-    val masterFile1DF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", masterFile1Query)
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
-
-  masterFile1DF.coalesce(1)
-  .write
-  .option("header", "true")
-  .option("delimiter", ",")
-  .csv(masterFile1Path)
-
-println(s"Data written to CSV file at: $masterFile1Path")
-
-// Now, read the CSV file back into a DataFrame
-val masterFile1CSVDF = spark.read
-  .option("header", "true")  // Ensures the first row is treated as the header
-  .option("delimiter", ",")  // Sets the delimiter to comma
-  .csv(masterFile1Path)  // Reads the CSV file as a DataFr
-
-println(s"Data written to CSV file at: $masterFile1Path")
-
-// Now, read the CSV file back into a DataFrame
-val masterFile1CSVDF = spark.read
-  .option("header", "true")  // Ensures the first row is treated as the header
-  .option("delimiter", ",")  // Sets the delimiter to comma
-  .csv(masterFile1Path)  // Reads the CSV file as a DataFr
-
-    println(s"Master File 1 exported to: $masterFile1Path")
-// ---- Validate Data ----
-println("Starting data validation between Master Table 1 and exported Master File 1 CSV...")
-val isValid = validateData(masterTable1DF, masterFile1CSVDF)
-if (isValid) {
-  println(s"Data validation successful: Master Table 1 matches Master File 1 CSV.")
-} else {
-  println(s"Data validation failed: Master Table 1 does not match Master File 1 CSV.")
-  throw new Exception("Data mismatch between Master Table 1 and Master File 1 CSV.")
-}
-
-// ---- Log Validation Result ----
-val logPath = s"/output/path/validation_log_${currentTimestamp}.txt"
-val logMessage = if (isValid) "Validation Successful" else "Validation Failed"
-
-// Save the log message as a text file
-spark.sparkContext.parallelize(Seq(logMessage)).saveAsTextFile(logPath)
-
-println(s"Validation result logged at: $logPath")
-
-    // Export Master File 2
-    val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
-    val masterFile2Path = s"/output/path/YYYMMDDHHMMSS_Master_Table2.csv"
-
-    val masterFile2DF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", masterFile2Query)
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
-
-    masterFile2DF.coalesce(1)
-      .write
-      .option("header", "true")
-      .option("delimiter", ",")
-      .csv(masterFile2Path)
-
-    println(s"Master File 2 exported to: $masterFile2Path")
-
-    // Send success notification
-    sendEmailNotification(alertCode, "SQL script executed and files exported successfully", emailAddress, business)
-  }
-}
-        } else {
-          val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
-          sendEmailNotification(alertCode, message, emailAddress, business)
-          throw new Exception(message)
+            ex.printStackTrace()
         }
-      } catch {
-        case ex: Exception =>
-          val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
-          sendEmailNotification(alertCode, message, emailAddress, business)
-          println(message)
-          ex.printStackTrace()
       }
     }
   }
-}
-
 
   // Entry point for the Spark job
   def main(args: Array[String]): Unit = {
     // Simulate a DataFrame as an example (replace with actual DataFrame loading)
     val data = Seq(
-      ("A001", 10, "2024-12-16", "/path/to/sql", Some("source_table"), Some("daily"), Some("filter_column")),
-      ("A002", 5, "2024-12-17", "/path/to/sql", Some("source_table"), Some("hourly"), Some("filter_column"))
-    )
-
-    import spark.implicits._
-    val df = data.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "source_table_name", "frequency", "filter_column")
-
-    // Process the records and send notifications
-    processRecords(df)
-
-    // Stop the Spark session
-    spark.stop()
-  }
-}
+      ("A001", 10, "2024-12-16", "/path/to/sql
