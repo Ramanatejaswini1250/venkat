@@ -7,8 +7,8 @@ import java.time.DayOfWeek
 object CreateFolderStructure {
 
   def main(args: Array[String]): Unit = {
-    // Define the base shared location (replace this with your actual path)
-    val basePath = "\\\\naunsw001\\rbscusr_crel_data_sy$\\Level 4\\15 Controls Analytics and Automation\\6 RAMP\\1 Run\\"
+    // Define the base local location (change this to your local path)
+    val basePath = "C:\\Users\\YourUsername\\Documents\\LandingFolder\\"
 
     // Generate the folder name in the required format: YYYYMMDDHHMMSS_RBSCC_DAY
     val folderName = getFormattedFolderName()
@@ -16,10 +16,14 @@ object CreateFolderStructure {
     // Full path including the dynamically generated folder name
     val finalFolderPath = s"${basePath}Files for Upload\\DOT Digital Operations-Daily\\$folderName"
 
-    // Create the folder
-    createFolderHierarchy(finalFolderPath)
-
-    println(s"Folder created successfully at: $finalFolderPath")
+    // Check if the base local path exists and is accessible
+    if (Files.exists(Paths.get(basePath))) {
+      // Create the folder
+      createFolderHierarchy(finalFolderPath)
+      println(s"Folder created successfully at: $finalFolderPath")
+    } else {
+      println(s"Local path not accessible: $basePath")
+    }
   }
 
   // Function to generate the formatted folder name
