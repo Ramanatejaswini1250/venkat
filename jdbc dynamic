@@ -1,0 +1,83 @@
+import org.apache.spark.sql.{SparkSession, DataFrame}
+import java.io.{BufferedReader, InputStreamReader}
+import java.util.Properties
+import scala.io.Source
+import java.nio.file.{Files, Paths}
+
+object EmailNotificationApp {
+
+  // Function to construct the configuration path dynamically
+  def getConfigPath(env: String): String = {
+    s"/usr/local/omnia/run/datascience.$env/etl-ramp-automation/run/config"
+  }
+
+  // Function to load properties from the configuration file
+  def loadProperties(env: String): Properties = {
+    val properties = new Properties()
+    val configPath = s"${getConfigPath(env)}/jdbc.conf"
+
+    if (!Files.exists(Paths.get(configPath))) {
+      throw new Exception(s"Configuration file not found at: $configPath")
+    }
+
+    val source = Source.fromFile(configPath)
+    try {
+      properties.load(source.bufferedReader())
+    } finally {
+      source.close()
+    }
+    properties
+  }
+
+  // Entry point for the Spark job
+  def main(args: Array[String]): Unit = {
+    // Get the environment from command-line args or default to "dev"
+    val env = if (args.nonEmpty) args(0) else "dev"
+
+    // Validate the environment
+    if (!Set("dev", "test").contains(env)) {
+      throw new IllegalArgumentException(s"Invalid environment: $env. Use 'dev' or 'test'.")
+    }
+
+    println(s"Running in $env environment")
+
+    // Load the properties for the specific environment
+    val jdbcProps = loadProperties(env)
+
+    // Extract JDBC properties
+    val jdbcUrl = jdbcProps.getProperty("jdbc.url")
+    val jdbcUser = jdbcProps.getProperty("jdbc.user")
+    val jdbcPassword = jdbcProps.getProperty("jdbc.password")
+    val jdbcDriver = jdbcProps.getProperty("jdbc.driver")
+
+    // Define Spark session
+    val spark: SparkSession = SparkSession.builder()
+      .appName("EmailNotificationApp")
+      .master("local[*]") // Adjust as needed for your environment
+      .getOrCreate()
+
+    // Example usage of JDBC properties in Spark
+    println(s"JDBC URL: $jdbcUrl")
+    println(s"JDBC User: $jdbcUser")
+
+    // Replace with your actual processing logic
+    val data = Seq(
+      ("A001", 10, "2024-12-16", "/path/to/sql", Some("source_table"), Some("daily"), Some("filter_column")),
+      ("A002", 5, "2024-12-17", "/path/to/sql", Some("source_table"), Some("hourly"), Some("filter_column"))
+    )
+
+    import spark.implicits._
+    val df = data.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "source_table_name", "frequency", "filter_column")
+
+    // Process the records (replace this with your actual method)
+    processRecords(df)
+
+    // Stop the Spark session
+    spark.stop()
+  }
+
+  // Placeholder for the processRecords method
+  def processRecords(df: DataFrame): Unit = {
+    df.show() // Replace with actual processing logic
+  }
+}
