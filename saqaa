@@ -1,9 +1,11 @@
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
-import java.io.IOException
+import java.sql.{Connection, DriverManager, Statement}
+import java.text.SimpleDateFormat
+import java.util.Calendar
 
 object SqlScriptExecutor {
-  
+
   // Function to read file contents as bytes and decode to UTF-8
   def readFileAsString(path: String): String = {
     try {
@@ -35,6 +37,9 @@ object SqlScriptExecutor {
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
     val logBuffer = new StringBuilder
 
+    var connection: Connection = null
+    var statement: Statement = null
+
     try {
       // Register JDBC driver
       println("Registering JDBC driver...")
@@ -42,8 +47,11 @@ object SqlScriptExecutor {
 
       // Establish connection
       println(s"Connecting to database at: $jdbcUrl")
-      val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement: Statement = connection.createStatement()
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      statement = connection.createStatement()
+
+      // Set timeout for SQL commands
+      statement.setQueryTimeout(30)  // Set 30 seconds timeout for each query
 
       // Read the SQL script with specified encoding (UTF-8)
       println("Reading SQL script...")
@@ -66,6 +74,9 @@ object SqlScriptExecutor {
       println("Filtered lines to execute:")
       validLines.foreach(println)
 
+      // Begin transaction
+      connection.setAutoCommit(false)
+
       // Prepare to execute SQL commands
       val commandBuffer = new StringBuilder
       for (line <- validLines) {
@@ -78,27 +89,38 @@ object SqlScriptExecutor {
             val command = commandBuffer.toString().trim
             try {
               println(s"Executing command: $command")
+              // Check if the thread was interrupted before executing
+              if (Thread.interrupted()) {
+                throw new InterruptedException("The thread was interrupted before executing the query.")
+              }
               statement.execute(command)
               println(s"Command executed successfully: $command")
               logBuffer.append(s"Command executed successfully: $command\n")
             } catch {
+              case ex: InterruptedException =>
+                println(s"Query execution was interrupted: ${ex.getMessage}")
+                logBuffer.append(s"Query execution was interrupted: ${ex.getMessage}\n")
+                // Optionally rethrow the exception to stop further execution
+                throw ex
               case ex: Exception =>
-                val errorMsg = s"Error executing command: $command\nError Message: ${ex.getMessage}\n"
-                println(errorMsg)
-                logBuffer.append(errorMsg)
+                println(s"Error executing command: $command\nMessage: ${ex.getMessage}")
+                logBuffer.append(s"Error executing command: $command\nMessage: ${ex.getMessage}\n")
+                // Rollback transaction if error occurs
+                connection.rollback()
+                throw ex  // Stop execution after error
             }
             commandBuffer.clear() // Clear the buffer for the next command
           }
         }
       }
 
+      // Commit the transaction if all commands succeed
+      connection.commit()
+
       // Save execution log to file
       println(s"Execution log saved to: $logPath")
       Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
 
-      // Close resources
-      statement.close()
-      connection.close()
     } catch {
       case ex: Exception =>
         val fatalErrorMsg = s"Fatal error occurred: ${ex.getMessage}\n"
@@ -106,6 +128,11 @@ object SqlScriptExecutor {
         logBuffer.append(fatalErrorMsg)
         // Save the error log to the file
         Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+
+    } finally {
+      // Close resources
+      if (statement != null) statement.close()
+      if (connection != null) connection.close()
     }
   }
 
