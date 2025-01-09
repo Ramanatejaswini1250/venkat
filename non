@@ -1,196 +1,68 @@
-import org.apache.spark.sql.{SparkSession, DataFrame}
-import java.io.{BufferedReader, InputStreamReader}
-import javax.mail._
-import javax.mail.internet._
-import java.util.Properties
-import java.text.{SimpleDateFormat}
-import java.util.{Calendar}
-import scala.util.{Try, Success, Failure}
-import java.nio.file.{Files, Paths}
+def runSqlScript(
+    scriptPath: String,
+    jdbcUrl: String,
+    jdbcUser: String,
+    jdbcPassword: String,
+    jdbcDriver: String,
+    schema: String
+): Unit = {
+  println(s"Running SQL script from: $scriptPath")
+  val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
+  val logBuffer = new StringBuilder
 
-object EmailNotificationApp {
-  
-  // Define Spark session (initialize the Spark context)
-  val spark: SparkSession = SparkSession.builder()
-    .appName("EmailNotificationApp")
-    .master("local[*]") // Adjust as needed for your environment
-    .getOrCreate()
+  var connection: Connection = null
+  var statement: Statement = null
 
-  // JDBC connection parameters (to be set with actual values)
-  val jdbcUrl: String = "jdbc:your_database_url"
-  val jdbcUser: String = "your_user"
-  val jdbcPassword: String = "your_password"
-  val jdbcDriver: String = "com.jdbc.Driver"  // Specify the correct JDBC driver class
+  try {
+    // Register JDBC driver
+    println("Registering JDBC driver...")
+    Class.forName(jdbcDriver)
 
-  // Function to send email notifications
-  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
-    val smtpServer = "smtp.yourmailserver.com"  // Replace with your SMTP server
-    val smtpPort = "587"                        // Port for TLS
-    val smtpUser = "your_email@example.com"     // Replace with your SMTP username
-    val smtpPassword = sys.env("SMTP_PASSWORD_ENV_VAR")  // Use environment variable for security
+    // Establish connection
+    println(s"Connecting to database at: $jdbcUrl")
+    connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    statement = connection.createStatement()
 
-    val emailList = emailAddresses.split(",").map(_.trim)
-    if (emailList.nonEmpty) {
-      val toEmail = emailList(0)
-      val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
+    // Read the SQL script
+    println("Reading SQL script...")
+    val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
 
-      // Set properties for the mail session
-      val properties = new Properties()
-      properties.put("mail.smtp.host", smtpServer)
-      properties.put("mail.smtp.port", smtpPort)
-      properties.put("mail.smtp.auth", "true")
-      properties.put("mail.smtp.starttls.enable", "true")
+    // Process the script to handle inserts without columns
+    println("Processing the script to handle missing columns in INSERT statements...")
+    val processedScript = processInsertQueries(script, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, schema)
 
-      // Create an authenticator for the SMTP server
-      val authenticator = new Authenticator() {
-        override def getPasswordAuthentication: PasswordAuthentication = {
-          new PasswordAuthentication(smtpUser, smtpPassword)
-        }
-      }
+    // Split processed script into individual SQL commands
+    val commands = processedScript.split(";").map(_.trim).filter(_.nonEmpty)
 
-      // Create the mail session
-      val session = Session.getInstance(properties, authenticator)
-
+    // Execute each command
+    commands.foreach { command =>
       try {
-        // Create a MimeMessage object
-        val mimeMessage = new MimeMessage(session)
-        mimeMessage.setFrom(new InternetAddress(smtpUser))
-val toAddresses = Array(new InternetAddress("recipient1@example.com"), new InternetAddress("recipient2@example.com"))
-val ccAddresses = Array(new InternetAddress("cc1@example.com"), new InternetAddress("cc2@example.com"))
-
-mimeMessage.setRecipients(Message.RecipientType.TO, toAddresses)
-mimeMessage.setRecipients(Message.RecipientType.CC, ccAddresses)
-
-        mimeMessage.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail))
-        if (ccEmails.nonEmpty) {
-          mimeMessage.setRecipients(Message.RecipientType.CC, InternetAddress.parse(ccEmails))
-        }
-        mimeMessage.setSubject(s"Alert: $alertCode - $business")
-        mimeMessage.setText(s"Message: $message\n\nBusiness: $business")
-
-        // Send the email
-        Transport.send(mimeMessage)
-        println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
+        println(s"Executing: $command")
+        statement.execute(command)
+        val successMsg = s"[SUCCESS] Executed: $command"
+        println(successMsg)
+        logBuffer.append(successMsg + "\n")
       } catch {
-        case ex: MessagingException =>
-          println(s"Failed to send email notification: ${ex.getMessage}")
-      }
-    } else {
-      println("No email addresses found to send the notification.")
-    }
-  }
-
-  // Function to run SQL script
-  def runSqlScript(scriptPath: String): Unit = {
-    println(s"Running SQL script at: $scriptPath")
-  }
-
-  // Function to generate a timestamped file name
-  def getCurrentTimestamp: String = {
-    val format = new SimpleDateFormat("yyyyMMddHHmmss")
-    format.format(Calendar.getInstance().getTime)
-  }
-
-  def validateData(masterDF: DataFrame, fileDF: DataFrame): Boolean = {
-    val sortedMasterDF = masterDF.orderBy(masterDF.columns.map(col): _*)
-    val sortedFileDF = fileDF.orderBy(fileDF.columns.map(col): _*)
-    sortedMasterDF.except(sortedFileDF).isEmpty && sortedFileDF.except(sortedMasterDF).isEmpty
-  }
-
-  def processRecords(df: DataFrame): Unit = {
-    df.foreachPartition { partition =>
-      partition.foreach { row =>
-        val alertCode = row.getAs[String]("alert_code")
-        val dtCount = row.getAs[Int]("dt_count")
-        val dateToLoad = row.getAs[String]("date_to_load")
-        val bteqLocation = row.getAs[String]("bteq_location")
-        val emailAddress = row.getAs[String]("email_address")
-        val business = row.getAs[String]("business")
-
-        val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-          sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-          throw new Exception("Missing source_table_name")
-        }
-
-        val frequency = row.getAs[String]("frequency").getOrElse {
-          sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-          throw new Exception("Missing frequency")
-        }
-
-        val filterColumn = row.getAs[String]("filter_column").getOrElse {
-          sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-          throw new Exception("Missing filter_column")
-        }
-
-        try {
-          if (dtCount > 0) {
-            val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
-            
-            val sourceTableCountDF = spark.read
-              .format("jdbc")
-              .option("url", jdbcUrl)
-              .option("dbtable", jdbcQuery)
-              .option("user", jdbcUser)
-              .option("password", jdbcPassword)
-              .option("driver", jdbcDriver)
-              .load()
-
-            val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-
-            if (sourceTableCount == dtCount) {
-              val sqlFolderPath = "/path/to/sql/folder" // Modify as needed
-              if (Files.exists(Paths.get(sqlFolderPath))) {
-                val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
-                
-                if (Files.exists(Paths.get(sqlFilePath))) {
-                  runSqlScript(sqlFilePath)
-                  sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
-                } else {
-                  val message = s"SQL file not found for alertCode: $alertCode"
-                  sendEmailNotification(alertCode, message, emailAddress, business)
-                  println(message)
-                }
-              } else {
-                val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
-                sendEmailNotification(alertCode, message, emailAddress, business)
-                println(message)
-              }
-            } else {
-              val message = s"Source table count does not match DT_COUNT"
-              sendEmailNotification(alertCode, message, emailAddress, business)
-              println(message)
-            }
-          } else {
-            val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
-            sendEmailNotification(alertCode, message, emailAddress, business)
-            throw new Exception(message)
-          }
-        } catch {
-          case ex: Exception =>
-            val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
-            sendEmailNotification(alertCode, message, emailAddress, business)
-            println(message)
-            ex.printStackTrace()
-        }
+        case ex: Exception =>
+          val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
+          println(errorMsg)
+          logBuffer.append(errorMsg + "\n")
       }
     }
-  }
 
-  // Entry point for the Spark job
-  def main(args: Array[String]): Unit = {
-    // Simulate a DataFrame as an example (replace with actual DataFrame loading)
-    val data = Seq(
-      ("A001", 10, "2024-12-16", "/path/to/sql", Some("source_table"), Some("daily"), Some("filter_column")),
-      ("A002", 5, "2024-12-17", "/path/to/sql", Some("source_table"), Some("hourly"), Some("filter_column"))
-    )
+    // Save execution log to a file
+    println(s"Execution log saved to: $logPath")
+    Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
 
-    import spark.implicits._
-    val df = data.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "source_table_name", "frequency", "filter_column")
-
-    // Process the records and send notifications
-    processRecords(df)
-
-    // Stop the Spark session
-    spark.stop()
+  } catch {
+    case ex: Exception =>
+      val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
+      println(fatalErrorMsg)
+      logBuffer.append(fatalErrorMsg + "\n")
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+  } finally {
+    // Close resources
+    if (statement != null) statement.close()
+    if (connection != null) connection.close()
   }
 }
