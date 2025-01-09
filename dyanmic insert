@@ -1,46 +1,45 @@
 import java.nio.file.{Files, Paths}
 import java.nio.file.attribute.FileTime
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
-import java.sql.{Connection, DriverManager}
+import java.io.IOException
+import java.sql.{Connection, DriverManager, Statement}
 import scala.collection.JavaConverters._
 
 object SqlUtils {
 
-  // Fetch columns dynamically from the target table
+  // Method to get the column names of a table
   def getTableColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String): Seq[String] = {
-    Class.forName(jdbcDriver) // Register JDBC driver
-
     var connection: Connection = null
-    var columns: Seq[String] = Seq()
-    try {
-      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val meta = connection.getMetaData
-      val rs = meta.getColumns(null, null, tableName, null)
+    var statement: Statement = null
 
-      while (rs.next()) {
-        columns = columns :+ rs.getString("COLUMN_NAME")
-      }
+    try {
+      // Register JDBC driver
+      Class.forName(jdbcDriver)
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      statement = connection.createStatement()
+
+      // Get the column names using JDBC metadata
+      val resultSet = statement.executeQuery(s"SELECT * FROM $tableName LIMIT 1")
+      val metadata = resultSet.getMetaData
+      (1 to metadata.getColumnCount).map(metadata.getColumnName)
+    } catch {
+      case ex: Exception =>
+        println(s"[ERROR] Failed to fetch columns for table $tableName: ${ex.getMessage}")
+        Seq.empty
     } finally {
+      if (statement != null) statement.close()
       if (connection != null) connection.close()
     }
-    columns
   }
 
-  // Modify INSERT queries missing column names
-  def processInsertQueries(query: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): String = {
-    val insertPattern = "(?i)insert into ([a-zA-Z0-9_.]+)\s+values".r
-
-    insertPattern.findFirstMatchIn(query) match {
-      case Some(m) =>
-        val tableName = m.group(1)
-        val columns = getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
-        if (columns.nonEmpty) {
-          val columnsString = columns.mkString(", ")
-          query.replace(s"INSERT INTO $tableName", s"INSERT INTO $tableName ($columnsString)")
-        } else query
-
-      case None => query // Return the original query if no INSERT pattern is matched
+  // Method to handle insert statements without column names
+  def processInsertQueries(query: String, tableName: String, columns: Seq[String]): String = {
+    if (columns.isEmpty) {
+      println(s"[WARNING] No columns fetched for table $tableName. Query may fail.")
+      query
+    } else {
+      val columnsString = columns.mkString(", ")
+      query.replaceFirst("(?i)insert into " + tableName, s"INSERT INTO $tableName ($columnsString)")
     }
   }
 }
@@ -55,7 +54,7 @@ object SqlScriptExecutor {
 
   // Function to remove block comments (/* ... */)
   def removeBlockComments(script: String): String = {
-    val blockCommentPattern = "(?s)/\*.*?\*/".r
+    val blockCommentPattern = "(?s)/\\*.*?\\*/".r
     blockCommentPattern.replaceAllIn(script, "") // Remove block comments
   }
 
@@ -77,10 +76,10 @@ object SqlScriptExecutor {
         val fileTime: FileTime = Files.getLastModifiedTime(logFile)
         val fileAge = currentTime - fileTime.toMillis
 
-        // Check if file is older than 24 hours (24 hours * 60 minutes * 60 seconds * 1000 ms)
+        // Check if file is older than 24 hours
         if (fileAge > TimeUnit.HOURS.toMillis(24)) {
           println(s"Deleting old log file: ${logFile.getFileName}")
-          Files.delete(logFile) // Delete the log file
+          Files.delete(logFile)
         }
       } catch {
         case e: IOException => println(s"Error checking file $logFile: ${e.getMessage}")
@@ -94,6 +93,9 @@ object SqlScriptExecutor {
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
     val logBuffer = new StringBuilder
 
+    var connection: Connection = null
+    var statement: Statement = null
+
     try {
       // Register JDBC driver
       println("Registering JDBC driver...")
@@ -101,12 +103,12 @@ object SqlScriptExecutor {
 
       // Establish connection
       println(s"Connecting to database at: $jdbcUrl")
-      val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement = connection.createStatement()
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      statement = connection.createStatement()
 
       // Read the SQL script
       println("Reading SQL script...")
-      val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
+      val script = Files.readString(Paths.get(scriptPath), java.nio.charset.StandardCharsets.UTF_8)
 
       // Process the script: remove block comments and split into lines
       val scriptWithoutComments = removeBlockComments(script)
@@ -122,18 +124,22 @@ object SqlScriptExecutor {
 
       commands.foreach { command =>
         try {
-          // Handle INSERT queries without columns
-          val processedCommand =
-            if (command.toLowerCase.startsWith("insert into")) {
-              SqlUtils.processInsertQueries(command, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
-            } else command
-
-          println(s"Executing command: $processedCommand")
-          statement.execute(processedCommand)
-          val successMsg = s"[SUCCESS] Executed: $processedCommand"
-          println(successMsg)
-          logBuffer.append(successMsg + "\n")
-
+          if (command.toLowerCase.startsWith("insert into")) {
+            val tableName = command.split(" ")(2) // Extract table name from the insert statement
+            val columns = SqlUtils.getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
+            val commandWithColumns = SqlUtils.processInsertQueries(command, tableName, columns)
+            println(s"Executing command: $commandWithColumns")
+            statement.execute(commandWithColumns)
+            val successMsg = s"[SUCCESS] Executed: $commandWithColumns"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          } else {
+            println(s"Executing command: $command")
+            statement.execute(command)
+            val successMsg = s"[SUCCESS] Executed: $command"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          }
         } catch {
           case ex: Exception =>
             val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
@@ -144,17 +150,17 @@ object SqlScriptExecutor {
 
       // Save execution log to a file
       println(s"Execution log saved to: $logPath")
-      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
-      // Close resources
-      statement.close()
-      connection.close()
     } catch {
       case ex: Exception =>
         val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
         println(fatalErrorMsg)
         logBuffer.append(fatalErrorMsg + "\n")
-        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    } finally {
+      if (statement != null) statement.close()
+      if (connection != null) connection.close()
     }
 
     // Clean old log files after execution
