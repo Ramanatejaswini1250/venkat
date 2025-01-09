@@ -1,0 +1,174 @@
+import java.nio.file.{Files, Paths}
+import java.nio.file.attribute.FileTime
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
+import java.sql.{Connection, DriverManager}
+import scala.collection.JavaConverters._
+
+object SqlUtils {
+
+  // Fetch columns dynamically from the target table
+  def getTableColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String): Seq[String] = {
+    Class.forName(jdbcDriver) // Register JDBC driver
+
+    var connection: Connection = null
+    var columns: Seq[String] = Seq()
+    try {
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val meta = connection.getMetaData
+      val rs = meta.getColumns(null, null, tableName, null)
+
+      while (rs.next()) {
+        columns = columns :+ rs.getString("COLUMN_NAME")
+      }
+    } finally {
+      if (connection != null) connection.close()
+    }
+    columns
+  }
+
+  // Modify INSERT queries missing column names
+  def processInsertQueries(query: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): String = {
+    val insertPattern = "(?i)insert into ([a-zA-Z0-9_.]+)\s+values".r
+
+    insertPattern.findFirstMatchIn(query) match {
+      case Some(m) =>
+        val tableName = m.group(1)
+        val columns = getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
+        if (columns.nonEmpty) {
+          val columnsString = columns.mkString(", ")
+          query.replace(s"INSERT INTO $tableName", s"INSERT INTO $tableName ($columnsString)")
+        } else query
+
+      case None => query // Return the original query if no INSERT pattern is matched
+    }
+  }
+}
+
+object SqlScriptExecutor {
+
+  // Generate a timestamped log file name
+  def getCurrentTimestamp: String = {
+    val format = new java.text.SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(java.util.Calendar.getInstance().getTime)
+  }
+
+  // Function to remove block comments (/* ... */)
+  def removeBlockComments(script: String): String = {
+    val blockCommentPattern = "(?s)/\*.*?\*/".r
+    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
+  }
+
+  // Function to handle inline comments (--) while preserving SQL before them
+  def removeInlineComments(line: String): String = {
+    val singleLineCommentPattern = "--.*".r
+    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+  }
+
+  // Function to delete log files older than 24 hours
+  def cleanOldLogFiles(logDirectory: String): Unit = {
+    println(s"Cleaning up old log files from: $logDirectory")
+
+    val logFiles = Files.list(Paths.get(logDirectory)).iterator().asScala
+    val currentTime = System.currentTimeMillis()
+
+    logFiles.foreach { logFile =>
+      try {
+        val fileTime: FileTime = Files.getLastModifiedTime(logFile)
+        val fileAge = currentTime - fileTime.toMillis
+
+        // Check if file is older than 24 hours (24 hours * 60 minutes * 60 seconds * 1000 ms)
+        if (fileAge > TimeUnit.HOURS.toMillis(24)) {
+          println(s"Deleting old log file: ${logFile.getFileName}")
+          Files.delete(logFile) // Delete the log file
+        }
+      } catch {
+        case e: IOException => println(s"Error checking file $logFile: ${e.getMessage}")
+      }
+    }
+  }
+
+  // Execute the SQL script
+  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+    println(s"Running SQL script from: $scriptPath")
+    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
+    val logBuffer = new StringBuilder
+
+    try {
+      // Register JDBC driver
+      println("Registering JDBC driver...")
+      Class.forName(jdbcDriver)
+
+      // Establish connection
+      println(s"Connecting to database at: $jdbcUrl")
+      val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
+
+      // Read the SQL script
+      println("Reading SQL script...")
+      val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
+
+      // Process the script: remove block comments and split into lines
+      val scriptWithoutComments = removeBlockComments(script)
+      val lines = scriptWithoutComments.split("\n").toSeq
+
+      // Prepare and filter valid lines
+      val validLines = lines
+        .map(removeInlineComments) // Remove inline comments (-- ...)
+        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+
+      // Combine valid lines into SQL commands and execute them
+      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+      commands.foreach { command =>
+        try {
+          // Handle INSERT queries without columns
+          val processedCommand =
+            if (command.toLowerCase.startsWith("insert into")) {
+              SqlUtils.processInsertQueries(command, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
+            } else command
+
+          println(s"Executing command: $processedCommand")
+          statement.execute(processedCommand)
+          val successMsg = s"[SUCCESS] Executed: $processedCommand"
+          println(successMsg)
+          logBuffer.append(successMsg + "\n")
+
+        } catch {
+          case ex: Exception =>
+            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
+            println(errorMsg)
+            logBuffer.append(errorMsg + "\n")
+        }
+      }
+
+      // Save execution log to a file
+      println(s"Execution log saved to: $logPath")
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+
+      // Close resources
+      statement.close()
+      connection.close()
+    } catch {
+      case ex: Exception =>
+        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
+        println(fatalErrorMsg)
+        logBuffer.append(fatalErrorMsg + "\n")
+        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+    }
+
+    // Clean old log files after execution
+    cleanOldLogFiles("path/to/logs") // Specify your log directory path
+  }
+
+  // Main entry point
+  def main(args: Array[String]): Unit = {
+    val scriptPath = "path/to/your/sqlfile.sql"
+    val jdbcUrl = "jdbc:your_database_url"
+    val jdbcUser = "your_database_username"
+    val jdbcPassword = "your_database_password"
+    val jdbcDriver = "your.jdbc.Driver"
+
+    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
+  }
+}
