@@ -1,6 +1,6 @@
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
-import java.sql.{Connection, DriverManager, ResultSet}
+import java.sql.{Connection, DriverManager}
 import scala.util.Try
 
 object SqlScriptExecutor {
@@ -20,11 +20,10 @@ object SqlScriptExecutor {
       connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
       val statement = connection.createStatement()
 
-      // Use "SHOW COLUMNS FROM <tableName>"
-      val query = s"SHOW COLUMNS FROM $tableName"
+      val tableNameOnly = tableName.split("\\.").last // Support fully qualified names
+      val query = s"SHOW COLUMNS FROM $tableNameOnly"
       val resultSet = statement.executeQuery(query)
 
-      // Extract column names from the result
       val columns = Iterator
         .continually(resultSet)
         .takeWhile(_.next())
@@ -51,12 +50,18 @@ object SqlScriptExecutor {
       query: String
   ): String = {
     val columns = getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
+
+    if (columns.isEmpty)
+      throw new Exception(s"No columns found for table: $tableName")
+
     val columnsString = columns.map(col => s"`$col`").mkString(", ")
 
-    if (columns.isEmpty) throw new Exception(s"No columns found for table: $tableName")
+    val updatedQuery = query.replaceFirst(
+      "(?i)(INSERT INTO\\s+\\w+(\\.\\w+)?)",
+      s"INSERT INTO $tableName ($columnsString)"
+    )
 
-    // Replace the INSERT INTO statement
-    query.replaceFirst("(?i)insert into\\s+\\w+", s"INSERT INTO $tableName ($columnsString)")
+    updatedQuery
   }
 
   // Execute a SQL script using JDBC
@@ -65,7 +70,8 @@ object SqlScriptExecutor {
       jdbcUrl: String,
       jdbcUser: String,
       jdbcPassword: String,
-      jdbcDriver: String
+      jdbcDriver: String,
+      tableNames: Seq[String]
   ): Unit = {
     println(s"Running SQL script from: $scriptPath")
     val logPath = s"sql_execution_log_${System.currentTimeMillis}.txt"
@@ -77,39 +83,45 @@ object SqlScriptExecutor {
       val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
       val statement = connection.createStatement()
 
-      // Read the SQL script
       val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
-
-      // Split the script into commands
       val commands = script.split(";").map(_.trim).filter(_.nonEmpty)
 
       commands.foreach { command =>
-        try {
-          if (command.toLowerCase.startsWith("insert into")) {
-            val tableName = command.split(" ")(2) // Extract table name
-            val processedCommand = handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
-            println(s"Executing: $processedCommand")
-            statement.execute(processedCommand)
-          } else {
-            println(s"Executing: $command")
-            statement.execute(command)
+        tableNames.foreach { tableName =>
+          try {
+            if (command.toLowerCase.startsWith(s"insert into $tableName")) {
+              val processedCommand = handleInsertWithoutColumns(
+                jdbcUrl,
+                jdbcUser,
+                jdbcPassword,
+                jdbcDriver,
+                tableName,
+                command
+              )
+              println(s"Executing: $processedCommand")
+              statement.execute(processedCommand)
+            } else if (command.contains(tableName)) {
+              println(s"Executing for table $tableName: $command")
+              statement.execute(command)
+            } else {
+              println(s"Executing: $command")
+              statement.execute(command)
+            }
+
+            val successMsg = s"[SUCCESS] Executed: $command"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          } catch {
+            case ex: Exception =>
+              val errorMsg = s"[ERROR] Failed to execute command for table $tableName: $command\nReason: ${ex.getMessage}"
+              println(errorMsg)
+              logBuffer.append(errorMsg + "\n")
           }
-          val successMsg = s"[SUCCESS] Executed: $command"
-          println(successMsg)
-          logBuffer.append(successMsg + "\n")
-        } catch {
-          case ex: Exception =>
-            val errorMsg = s"[ERROR] Failed to execute command: $command\nReason: ${ex.getMessage}"
-            println(errorMsg)
-            logBuffer.append(errorMsg + "\n")
         }
       }
 
-      // Save execution log to a file
       Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
       println(s"Execution log saved to: $logPath")
-
-      // Close connection
       connection.close()
     } catch {
       case ex: Exception =>
@@ -127,6 +139,8 @@ object SqlScriptExecutor {
     val jdbcPassword = "your_database_password"
     val jdbcDriver = "your.jdbc.Driver"
 
-    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
+    val tableNames = Seq("table1", "table2", "table3") // Add all your table names here
+
+    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableNames)
   }
 }
