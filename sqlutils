@@ -1,0 +1,52 @@
+// SqlUtils.scala
+import java.sql.{Connection, DriverManager, Statement}
+
+object SqlUtils {
+  
+  // Fetch columns dynamically from the target table
+  def getColumnsForTable(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String): Seq[String] = {
+    Class.forName(jdbcDriver) // Load the JDBC driver
+    var connection: Connection = null
+    var statement: Statement = null
+    var columns: Seq[String] = Seq()
+
+    try {
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      statement = connection.createStatement()
+
+      // Query to get column names from the target table
+      val query = s"DESCRIBE $tableName"
+      val resultSet = statement.executeQuery(query)
+
+      // Read column names from the result set
+      while (resultSet.next()) {
+        columns = columns :+ resultSet.getString("Field") // Assuming the column names are in the "Field" column
+      }
+
+    } catch {
+      case ex: Exception => println(s"Error fetching columns for $tableName: ${ex.getMessage}")
+    } finally {
+      if (statement != null) statement.close()
+      if (connection != null) connection.close()
+    }
+
+    columns
+  }
+
+  // Modify the SQL script by adding explicit column names to the INSERT INTO statement
+  def modifyInsertScript(script: String, targetTable: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): String = {
+    val columns = getColumnsForTable(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, targetTable)
+
+    // Check if columns were fetched successfully
+    if (columns.nonEmpty) {
+      val columnNames = columns.mkString(", ")
+      val updatedScript = script.replaceFirst(
+        """INSERT INTO\s+""" + targetTable + """\s*\(.*\)\s*SELECT \*""",
+        s"INSERT INTO $targetTable ($columnNames) SELECT ${columns.mkString(", ")}"
+      )
+      updatedScript
+    } else {
+      script // Return original script if columns couldn't be fetched
+    }
+  }
+}
