@@ -1,0 +1,23 @@
+if (sourceTableCount != dtCount) {
+  val htmlTable =
+    s"""
+       |<table border="1" cellpadding="5" cellspacing="0">
+       |  <tr>
+       |    <th>Volume Header</th>
+       |    <th>Actual Volume</th>
+       |    <th>Source Table</th>
+       |  </tr>
+       |  <tr>
+       |    <td>$dtCount</td>
+       |    <td>$sourceTableCount</td>
+       |    <td>$sourceTableName</td>
+       |  </tr>
+       |</table>
+       |""".stripMargin
+
+  val message = s"Volume mismatch detected for alertCode: $alertCode. Please find details below:"
+  sendEmailNotification(alertCode, message, emailAddress, business, htmlTable)
+
+  println(s"Email sent with volume mismatch details: $htmlTable")
+  throw new Exception(s"Volume mismatch: dt_count=$dtCount, sourceTableCount=$sourceTableCount")
+}
