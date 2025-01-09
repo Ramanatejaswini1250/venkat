@@ -3,12 +3,63 @@ import java.nio.file.attribute.FileTime
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.TimeUnit
 import java.io.IOException
+import scala.collection.JavaConverters._
+
+object SqlUtils {
+
+  // Method to get the column names of a table
+  def getTableColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String): Seq[String] = {
+    // Register JDBC driver
+    Class.forName(jdbcDriver)
+
+    // Establish connection
+    val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    val statement = connection.createStatement()
+
+    try {
+      // Get the column names from the specified table
+      val resultSet = statement.executeQuery(s"DESCRIBE $tableName")
+      var columns = Seq[String]()
+
+      while (resultSet.next()) {
+        columns = columns :+ resultSet.getString("Field") // Assuming the column names are in the "Field" column
+      }
+      columns
+    } finally {
+      statement.close()
+      connection.close()
+    }
+  }
+
+  // Method to handle insert statements without column names
+  def handleInsertWithoutColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String, query: String): String = {
+    // Get the table columns dynamically
+    val columns = getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
+    val columnsString = columns.mkString(", ")
+    val queryWithColumns = query.replace("insert into", s"insert into $tableName ($columnsString)")
+
+    queryWithColumns
+  }
+}
 
 object SqlScriptExecutor {
+
   // Generate a timestamped log file name
   def getCurrentTimestamp: String = {
     val format = new java.text.SimpleDateFormat("yyyyMMddHHmmss")
     format.format(java.util.Calendar.getInstance().getTime)
+  }
+
+  // Function to remove block comments (/* ... */)
+  def removeBlockComments(script: String): String = {
+    val blockCommentPattern = """(?s)/\*.*?\*/""".r
+    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
+  }
+
+  // Function to handle inline comments (--) while preserving SQL before them
+  def removeInlineComments(line: String): String = {
+    val singleLineCommentPattern = """--.*""".r
+    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
   }
 
   // Function to delete log files older than 24 hours
@@ -70,11 +121,22 @@ object SqlScriptExecutor {
 
       commands.foreach { command =>
         try {
-          println(s"Executing command: $command")
-          statement.execute(command)
-          val successMsg = s"[SUCCESS] Executed: $command"
-          println(successMsg)
-          logBuffer.append(successMsg + "\n")
+          // Check if the command is an insert without columns
+          if (command.toLowerCase.startsWith("insert into")) {
+            val tableName = command.split(" ")(2) // Extract table name from the insert statement
+            val commandWithColumns = SqlUtils.handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
+            println(s"Executing command: $commandWithColumns")
+            statement.execute(commandWithColumns)
+            val successMsg = s"[SUCCESS] Executed: $commandWithColumns"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          } else {
+            println(s"Executing command: $command")
+            statement.execute(command)
+            val successMsg = s"[SUCCESS] Executed: $command"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          }
         } catch {
           case ex: Exception =>
             val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
