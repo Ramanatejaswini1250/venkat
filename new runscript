@@ -1,28 +1,37 @@
-import java.io.{BufferedReader, FileReader}
-import java.sql.{Connection, DriverManager, Statement}
 import java.nio.file.{Files, Paths}
-import java.nio.charset.StandardCharsets
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import scala.jdk.CollectionConverters._
+import java.nio.file.attribute.FileTime
+import java.nio.file.StandardCopyOption
+import java.util.concurrent.TimeUnit
+import java.io.IOException
 
 object SqlScriptExecutor {
   // Generate a timestamped log file name
   def getCurrentTimestamp: String = {
-    val format = new SimpleDateFormat("yyyyMMddHHmmss")
-    format.format(Calendar.getInstance().getTime)
+    val format = new java.text.SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(java.util.Calendar.getInstance().getTime)
   }
 
-  // Remove block comments (/* ... */) and inline block comments
-  def removeBlockComments(script: String): String = {
-    val blockCommentPattern = """(?s)/\*.*?\*/""".r
-    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
-  }
+  // Function to delete log files older than 24 hours
+  def cleanOldLogFiles(logDirectory: String): Unit = {
+    println(s"Cleaning up old log files from: $logDirectory")
 
-  // Handle single-line comments (--) while preserving SQL before them
-  def removeInlineComments(line: String): String = {
-    val singleLineCommentPattern = """--.*""".r
-    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+    val logFiles = Files.list(Paths.get(logDirectory)).iterator().asScala
+    val currentTime = System.currentTimeMillis()
+
+    logFiles.foreach { logFile =>
+      try {
+        val fileTime: FileTime = Files.getLastModifiedTime(logFile)
+        val fileAge = currentTime - fileTime.toMillis
+
+        // Check if file is older than 24 hours (24 hours * 60 minutes * 60 seconds * 1000 ms)
+        if (fileAge > TimeUnit.HOURS.toMillis(24)) {
+          println(s"Deleting old log file: ${logFile.getFileName}")
+          Files.delete(logFile) // Delete the log file
+        }
+      } catch {
+        case e: IOException => println(s"Error checking file $logFile: ${e.getMessage}")
+      }
+    }
   }
 
   // Execute the SQL script
@@ -38,12 +47,12 @@ object SqlScriptExecutor {
 
       // Establish connection
       println(s"Connecting to database at: $jdbcUrl")
-      val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement: Statement = connection.createStatement()
+      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
 
       // Read the SQL script
       println("Reading SQL script...")
-      val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
+      val script = java.nio.file.Files.readString(java.nio.file.Paths.get(scriptPath), java.nio.charset.StandardCharsets.UTF_8)
 
       // Process the script: remove block comments and split into lines
       val scriptWithoutComments = removeBlockComments(script)
@@ -55,9 +64,6 @@ object SqlScriptExecutor {
         .dropRight(3) // Skip the last 3 lines
         .map(removeInlineComments) // Remove inline comments (-- ...)
         .filter(_.nonEmpty) // Remove empty or whitespace-only lines
-
-      println("Filtered lines to execute:")
-      validLines.foreach(println)
 
       // Combine valid lines into SQL commands and execute them
       val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
@@ -79,7 +85,7 @@ object SqlScriptExecutor {
 
       // Save execution log to a file
       println(s"Execution log saved to: $logPath")
-      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+      java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
       // Close resources
       statement.close()
@@ -89,8 +95,11 @@ object SqlScriptExecutor {
         val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
         println(fatalErrorMsg)
         logBuffer.append(fatalErrorMsg + "\n")
-        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+        java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
     }
+
+    // Clean old log files after execution
+    cleanOldLogFiles("path/to/logs") // Specify your log directory path
   }
 
   // Main entry point
