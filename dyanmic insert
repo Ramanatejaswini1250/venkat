@@ -1,101 +1,132 @@
-import org.apache.spark.sql.SparkSession
-import java.sql.{Connection, DriverManager, Statement}
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
+import java.sql.{Connection, DriverManager, ResultSet}
+import scala.util.Try
 
-object SqlUtils {
+object SqlScriptExecutor {
 
-  // Fetch columns for a table in Spark SQL
-  def getSparkTableColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, tableName: String): Seq[String] = {
-    // Establish connection
-    val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    val query = 
-      s"""
-         |SELECT column_name 
-         |FROM information_schema.columns 
-         |WHERE table_name = '${tableName.split('.').last}' AND table_schema = '${tableName.split('.').head}'
-         |ORDER BY ordinal_position
-       """.stripMargin
-    val statement = connection.createStatement()
-    
+  // Fetch column names using "SHOW COLUMNS"
+  def getTableColumns(
+      jdbcUrl: String,
+      jdbcUser: String,
+      jdbcPassword: String,
+      jdbcDriver: String,
+      tableName: String
+  ): Seq[String] = {
+    Class.forName(jdbcDriver)
+    var connection: Connection = null
+
     try {
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
+
+      // Use "SHOW COLUMNS FROM <tableName>"
+      val query = s"SHOW COLUMNS FROM $tableName"
       val resultSet = statement.executeQuery(query)
-      val columns = Iterator.continually(resultSet).takeWhile(_.next()).map(_.getString("column_name")).toSeq
+
+      // Extract column names from the result
+      val columns = Iterator
+        .continually(resultSet)
+        .takeWhile(_.next())
+        .map(_.getString(1)) // Column names are typically in the first column
+        .toSeq
+
       if (columns.isEmpty) throw new Exception(s"No columns found for table: $tableName")
       columns
+    } catch {
+      case ex: Exception =>
+        throw new Exception(s"Error fetching columns for table $tableName: ${ex.getMessage}", ex)
     } finally {
-      statement.close()
-      connection.close()
+      if (connection != null) connection.close()
     }
   }
 
-  // Process insert queries with missing column names
-  def processInsertQueries(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String, query: String): String = {
-    val columns = getSparkTableColumns(jdbcUrl, jdbcUser, jdbcPassword, tableName)
-    val columnsString = columns.mkString(", ")
-    query.replace(s"INSERT INTO $tableName", s"INSERT INTO $tableName ($columnsString)")
-  }
-}
+  // Handle INSERT statements without column names
+  def handleInsertWithoutColumns(
+      jdbcUrl: String,
+      jdbcUser: String,
+      jdbcPassword: String,
+      jdbcDriver: String,
+      tableName: String,
+      query: String
+  ): String = {
+    val columns = getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
+    val columnsString = columns.map(col => s"`$col`").mkString(", ")
 
-object SqlScriptExecutor {
-  
-  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableNames: Seq[String]): Unit = {
+    if (columns.isEmpty) throw new Exception(s"No columns found for table: $tableName")
+
+    // Replace the INSERT INTO statement
+    query.replaceFirst("(?i)insert into\\s+\\w+", s"INSERT INTO $tableName ($columnsString)")
+  }
+
+  // Execute a SQL script using JDBC
+  def runSqlScript(
+      scriptPath: String,
+      jdbcUrl: String,
+      jdbcUser: String,
+      jdbcPassword: String,
+      jdbcDriver: String
+  ): Unit = {
     println(s"Running SQL script from: $scriptPath")
-    val logPath = s"sql_execution_log_${System.currentTimeMillis()}.txt"
+    val logPath = s"sql_execution_log_${System.currentTimeMillis}.txt"
     val logBuffer = new StringBuilder
 
-    // Register JDBC driver
     Class.forName(jdbcDriver)
 
-    // Establish connection
-    val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    val statement = connection.createStatement()
+    try {
+      val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
 
-    // Read SQL script
-    val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
+      // Read the SQL script
+      val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
 
-    // Split script into commands and execute them
-    val commands = script.split(";").map(_.trim).filter(_.nonEmpty)
+      // Split the script into commands
+      val commands = script.split(";").map(_.trim).filter(_.nonEmpty)
 
-    tableNames.foreach { tableName =>
       commands.foreach { command =>
         try {
-          val updatedCommand = 
-            if (command.toLowerCase.startsWith(s"insert into $tableName".toLowerCase))
-              SqlUtils.processInsertQueries(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
-            else command
-
-          println(s"Executing command: $updatedCommand")
-          statement.execute(updatedCommand)
-          logBuffer.append(s"[SUCCESS] Executed: $updatedCommand\n")
+          if (command.toLowerCase.startsWith("insert into")) {
+            val tableName = command.split(" ")(2) // Extract table name
+            val processedCommand = handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
+            println(s"Executing: $processedCommand")
+            statement.execute(processedCommand)
+          } else {
+            println(s"Executing: $command")
+            statement.execute(command)
+          }
+          val successMsg = s"[SUCCESS] Executed: $command"
+          println(successMsg)
+          logBuffer.append(successMsg + "\n")
         } catch {
           case ex: Exception =>
-            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
+            val errorMsg = s"[ERROR] Failed to execute command: $command\nReason: ${ex.getMessage}"
             println(errorMsg)
             logBuffer.append(errorMsg + "\n")
         }
       }
+
+      // Save execution log to a file
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
+      println(s"Execution log saved to: $logPath")
+
+      // Close connection
+      connection.close()
+    } catch {
+      case ex: Exception =>
+        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
+        println(fatalErrorMsg)
+        logBuffer.append(fatalErrorMsg + "\n")
     }
-
-    // Save log to file
-    Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-    println(s"Execution log saved to: $logPath")
-
-    // Close resources
-    statement.close()
-    connection.close()
   }
 
+  // Main entry point
   def main(args: Array[String]): Unit = {
     val scriptPath = "path/to/your/sqlfile.sql"
-    val jdbcUrl = "jdbc:spark://your-spark-cluster-url"
-    val jdbcUser = "your_spark_user"
-    val jdbcPassword = "your_spark_password"
-    val jdbcDriver = "org.apache.hive.jdbc.HiveDriver"
+    val jdbcUrl = "jdbc:your_database_url"
+    val jdbcUser = "your_database_username"
+    val jdbcPassword = "your_database_password"
+    val jdbcDriver = "your.jdbc.Driver"
 
-    // List of tables
-    val tableNames = Seq("database_name.table_name1", "database_name.table_name2")
-
-    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableNames)
+    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
   }
 }
