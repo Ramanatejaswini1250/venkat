@@ -87,36 +87,27 @@ object SqlScriptExecutor {
       val commands = script.split(";").map(_.trim).filter(_.nonEmpty)
 
       commands.foreach { command =>
-        tableNames.foreach { tableName =>
-          try {
-            if (command.toLowerCase.startsWith(s"insert into $tableName")) {
-              val processedCommand = handleInsertWithoutColumns(
-                jdbcUrl,
-                jdbcUser,
-                jdbcPassword,
-                jdbcDriver,
-                tableName,
-                command
-              )
-              println(s"Executing: $processedCommand")
-              statement.execute(processedCommand)
-            } else if (command.contains(tableName)) {
-              println(s"Executing for table $tableName: $command")
-              statement.execute(command)
-            } else {
-              println(s"Executing: $command")
-              statement.execute(command)
-            }
+        try {
+          // Check if the command starts with INSERT INTO and matches any table name
+          val tableNameOpt = tableNames.find(tableName => command.toLowerCase.startsWith(s"insert into $tableName"))
 
-            val successMsg = s"[SUCCESS] Executed: $command"
-            println(successMsg)
-            logBuffer.append(successMsg + "\n")
-          } catch {
-            case ex: Exception =>
-              val errorMsg = s"[ERROR] Failed to execute command for table $tableName: $command\nReason: ${ex.getMessage}"
-              println(errorMsg)
-              logBuffer.append(errorMsg + "\n")
+          val processedCommand = tableNameOpt match {
+            case Some(tableName) =>
+              handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
+            case None => command // For other commands, use as-is
           }
+
+          println(s"Executing: $processedCommand")
+          statement.execute(processedCommand)
+
+          val successMsg = s"[SUCCESS] Executed: $command"
+          println(successMsg)
+          logBuffer.append(successMsg + "\n")
+        } catch {
+          case ex: Exception =>
+            val errorMsg = s"[ERROR] Failed to execute command: $command\nReason: ${ex.getMessage}"
+            println(errorMsg)
+            logBuffer.append(errorMsg + "\n")
         }
       }
 
