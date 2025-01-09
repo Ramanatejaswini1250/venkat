@@ -1,142 +1,35 @@
-import java.io.{BufferedReader, FileReader}
-import java.sql.{Connection, DriverManager, Statement}
-import java.nio.file.{Files, Paths}
-import java.nio.charset.StandardCharsets
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import scala.jdk.CollectionConverters._
+// Method to handle insert statements without column names
+def handleInsertWithoutColumns(
+    jdbcUrl: String,
+    jdbcUser: String,
+    jdbcPassword: String,
+    jdbcDriver: String,
+    tableName: String,
+    query: String,
+    schema: String
+): String = {
+  val columns = getColumnsForTable(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, schema)
 
-object SqlScriptExecutor {
-  // Generate a timestamped log file name
-  def getCurrentTimestamp: String = {
-    val format = new SimpleDateFormat("yyyyMMddHHmmss")
-    format.format(Calendar.getInstance().getTime)
-  }
-
-  // Fetch columns dynamically from the target table
-  def getColumnsForTable(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String): Seq[String] = {
-    Class.forName(jdbcDriver) // Load the JDBC driver
-    var connection: Connection = null
-    var statement: Statement = null
-    var columns: Seq[String] = Seq()
-
-    try {
-      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      statement = connection.createStatement()
-
-      // Query to get column names from the target table
-      val query = s"DESCRIBE $tableName"
-      val resultSet = statement.executeQuery(query)
-
-      // Read column names from the result set
-      while (resultSet.next()) {
-        columns = columns :+ resultSet.getString("Field") // Assuming the column names are in the "Field" column
-      }
-
-    } catch {
-      case ex: Exception => println(s"Error fetching columns for $tableName: ${ex.getMessage}")
-    } finally {
-      if (statement != null) statement.close()
-      if (connection != null) connection.close()
-    }
-
-    columns
-  }
-
-  // Modify the SQL script by adding explicit column names to the INSERT INTO statement
-  def modifyInsertScript(script: String, targetTable: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): String = {
-    val columns = getColumnsForTable(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, targetTable)
-
-    // Check if columns were fetched successfully
-    if (columns.nonEmpty) {
-      val columnNames = columns.mkString(", ")
-      val updatedScript = script.replaceFirst(
-        """INSERT INTO\s+""" + targetTable + """\s*\(.*\)\s*SELECT \*""",
-        s"INSERT INTO $targetTable ($columnNames) SELECT ${columns.mkString(", ")}"
-      )
-      updatedScript
-    } else {
-      script // Return original script if columns couldn't be fetched
-    }
-  }
-
-  // Execute the modified SQL script
-  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, targetTables: Seq[String]): Unit = {
-    println(s"Running SQL script from: $scriptPath")
-    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
-    val logBuffer = new StringBuilder
-
-    try {
-      // Register JDBC driver
-      println("Registering JDBC driver...")
-      Class.forName(jdbcDriver)
-
-      // Establish connection
-      println(s"Connecting to database at: $jdbcUrl")
-      val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement: Statement = connection.createStatement()
-
-      // Read the SQL script
-      println("Reading SQL script...")
-      val script = Files.readString(Paths.get(scriptPath), StandardCharsets.UTF_8)
-
-      // Process each table individually
-      var modifiedScript = script
-      targetTables.foreach { tableName =>
-        modifiedScript = modifyInsertScript(modifiedScript, tableName, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
-      }
-
-      // Process the modified script
-      val lines = modifiedScript.split("\n").toSeq
-      val validLines = lines.map(_.trim).filter(_.nonEmpty)
-      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
-
-      commands.foreach { command =>
-        try {
-          println(s"Executing command: $command")
-          statement.execute(command)
-          val successMsg = s"[SUCCESS] Executed: $command"
-          println(successMsg)
-          logBuffer.append(successMsg + "\n")
-        } catch {
-          case ex: Exception =>
-            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
-            println(errorMsg)
-            logBuffer.append(errorMsg + "\n")
-        }
-      }
-
-      // Save execution log to a file
-      println(s"Execution log saved to: $logPath")
-      Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-
-      // Close resources
-      statement.close()
-      connection.close()
-    } catch {
-      case ex: Exception =>
-        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
-        println(fatalErrorMsg)
-        logBuffer.append(fatalErrorMsg + "\n")
-        Files.write(Paths.get(logPath), logBuffer.toString().getBytes(StandardCharsets.UTF_8))
-    }
-  }
-
-  // Main entry point
-  def main(args: Array[String]): Unit = {
-    val scriptPath = "path/to/your/sqlfile.sql"
-    val jdbcUrl = "jdbc:your_database_url"
-    val jdbcUser = "your_database_username"
-    val jdbcPassword = "your_database_password"
-    val jdbcDriver = "your.jdbc.Driver"
-
-    // List of target tables that require column handling
-    val targetTables = Seq(
-      "U_D_DSV_001_RSS_0.RAMP_RA0387_TRGT",
-      "U_D_DSV_001_RSS_0.RAMP_RA0388_TRGT",
-      "U_D_DSV_001_RSS_0.RAMP_RA0389_TRGT"
+  if (columns.nonEmpty) {
+    val columnList = columns.mkString(", ")
+    // Replace the insert statement without columns
+    query.replaceFirst(
+      s"(?i)INSERT INTO\\s+$tableName\\s+(VALUES|SELECT)",
+      s"INSERT INTO $tableName ($columnList) \\1"
     )
-
-    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, targetTables)
+  } else {
+    println(s"[WARNING] Columns for table '$tableName' could not be fetched. Returning original query.")
+    query // Return the original query if column names could not be fetched
   }
+}
+
+// Example usage of handleInsertWithoutColumns
+def processInsertQueries(script: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, schema: String): String = {
+  val insertPattern = """(?i)INSERT INTO\s+([\w.]+)\s*(VALUES|SELECT)""".r
+
+  // Replace all insert statements without columns
+  insertPattern.replaceAllIn(script, m => {
+    val tableName = m.group(1) // Extract table name
+    handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, m.matched, schema)
+  })
 }
