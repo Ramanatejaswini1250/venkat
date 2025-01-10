@@ -63,11 +63,11 @@ def sendEmailNotification(
 val htmlTable =
   s"""
      |<table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 50%; text-align: center;">
-     |  <thead style="background-color: #f2f2f2;">
+     |  <thead style="background-color: #f2f2f2; font-weight: bold;">
      |    <tr>
-     |      <th>Volume Header</th>
-     |      <th>Actual Volume</th>
-     |      <th>Source Table</th>
+     |      <th style="background-color: #f2f2f2; color: #333;">Volume Header</th>
+     |      <th style="background-color: #f2f2f2; color: #333;">Actual Volume</th>
+     |      <th style="background-color: #f2f2f2; color: #333;">Source Table</th>
      |    </tr>
      |  </thead>
      |  <tbody>
@@ -79,6 +79,7 @@ val htmlTable =
      |  </tbody>
      |</table>
      |""".stripMargin
+
 
 #!/bin/bash
 
