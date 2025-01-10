@@ -1,124 +1,84 @@
-if (dtCount > 0) {
-  // Step 1: Count Validation - Compare RAMP_MASTER_TARGET1 count with dtCount
-  println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.types._
+import java.io.File
+import org.apache.commons.io.FileUtils
 
-  val countValidationQuery =
+object MasterTableToCSV {
+
+  def main(args: Array[String]): Unit = {
+
+    // Initialize SparkSession
+    val spark = SparkSession.builder()
+      .appName("MasterTableToCSV")
+      .master("local[*]") // Use local mode for testing
+      .getOrCreate()
+
+    // JDBC connection details
+    val jdbcUrl = "jdbc:mysql://your-database-url:3306/your-database"
+    val jdbcUser = "your-username"
+    val jdbcPassword = "your-password"
+    val jdbcDriver = "com.mysql.cj.jdbc.Driver"
+
+    // Table query
+    val masterTable1Query = s"""
+      SELECT * 
+      FROM your_database.your_table_name
+      ORDER BY 1
     """
-      |(SELECT COUNT(*) AS master_count
-      | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
-      |""".stripMargin
 
-  val masterCountDF = spark.read
-    .format("jdbc")
-    .option("url", jdbcUrl)
-    .option("dbtable", countValidationQuery)
-    .option("user", jdbcUser)
-    .option("password", jdbcPassword)
-    .option("driver", jdbcDriver)
-    .load()
+    // File path for saving the CSV
+    val finalFolderPath = "/path/to/output/directory"
+    val currentTimestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date())
+    val masterFile1Path = s"$finalFolderPath/${currentTimestamp}_Master_Table1.csv"
 
-  val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
+    // Define schema for the table (adjust as per your table structure)
+    val schema_master1 = StructType(
+      Seq(
+        StructField("ALERT_ID", StringType, nullable = true),
+        StructField("ALERT_CODE", StringType, nullable = true),
+        StructField("BUSINESS_LINE", StringType, nullable = true),
+        StructField("EVENT_TIMESTAMP", StringType, nullable = true),
+        StructField("PRIORITY", IntegerType, nullable = true),
+        StructField("ALERT_DUE_DATE", StringType, nullable = true)
+      )
+    )
 
-  if (masterTargetCount != dtCount) {
-    val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
-    sendEmailNotification(alertCode, message, emailAddress, business)
-    println(message)
-    throw new Exception(message)
-  } else {
-    println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
-
-    // ---- Blank Validation Logic (Step 2) ----
-    println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
-
-    val blankCountQuery =
-      """
-        |(SELECT COUNT(*) AS blank_count
-        | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-        | WHERE variable = '') AS subquery
-        |""".stripMargin
-
-    val blankCountDF = spark.read
+    // Fetch data from the database into a DataFrame
+    val masterTable1DF = spark.read
       .format("jdbc")
       .option("url", jdbcUrl)
-      .option("dbtable", blankCountQuery)
+      .option("dbtable", s"(${masterTable1Query}) as tmp")
       .option("user", jdbcUser)
       .option("password", jdbcPassword)
       .option("driver", jdbcDriver)
+      .schema(schema_master1) // Optional: If schema is known
       .load()
 
-    val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
-
-    if (blankCount > 0) {
-      println(s"Found $blankCount blank values. Updating them to NULL...")
-
-      val updateBlankValuesQuery =
-        """
-          |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-          |SET variable = NULL
-          |WHERE variable = ''
-          |""".stripMargin
-
-      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement = connection.createStatement()
-      statement.executeUpdate(updateBlankValuesQuery)
-      statement.close()
-      connection.close()
-
-      println("Blank values updated successfully.")
-    } else {
-      println("No blank values found in RAMP_MASTER_TARGET2.")
-    }
-
-    // ---- Export Data to Files (Step 3) ----
-    println("Exporting data to CSV files...")
-
-    // Export Master File 1
-    val masterFile1Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 ORDER BY 1) AS subquery"
-    val masterFile1Path = s"/output/path/YYYMMDDHHMMSS_Master_Table1.csv"
-
-    val masterFile1DF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", masterFile1Query)
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
-
-    masterFile1DF.coalesce(1)
+    // Write DataFrame to a single CSV file
+    masterTable1DF
+      .coalesce(1) // Combine all partitions into one
       .write
-      .option("header", "true")
-      .option("delimiter", ",")
-      .csv(masterFile1Path)
+      .option("header", "true") // Include column headers
+      .option("delimiter", ",") // Specify the column delimiter
+      .mode("overwrite") // Overwrite if the file already exists
+      .csv(s"$finalFolderPath/tmp") // Write to a temporary directory
 
-    println(s"Master File 1 exported to: $masterFile1Path")
+    // Move the single part file to the final desired location
+    val tmpDir = new File(s"$finalFolderPath/tmp")
+    val finalCsv = new File(masterFile1Path)
 
-    // Export Master File 2
-    val masterFile2Query = "(SELECT * FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 ORDER BY 1, 2) AS subquery"
-    val masterFile2Path = s"/output/path/YYYMMDDHHMMSS_Master_Table2.csv"
+    // Locate the part file in the temporary directory
+    val partFile = tmpDir.listFiles().find(_.getName.startsWith("part")).get
 
-    val masterFile2DF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", masterFile2Query)
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
+    // Rename (or move) the part file to the final CSV path
+    FileUtils.moveFile(partFile, finalCsv)
 
-    masterFile2DF.coalesce(1)
-      .write
-      .option("header", "true")
-      .option("delimiter", ",")
-      .csv(masterFile2Path)
+    // Delete the temporary directory
+    FileUtils.deleteDirectory(tmpDir)
 
-    println(s"Master File 2 exported to: $masterFile2Path")
+    println(s"Master Table 1 data written to a single CSV file at: $masterFile1Path")
 
-    // Send success notification
-    sendEmailNotification(alertCode, "SQL script executed and files exported successfully", emailAddress, business)
+    // Stop SparkSession
+    spark.stop()
   }
-} else {
-  val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
-  sendEmailNotification(alertCode, message, emailAddress, business)
-  throw new Exception(message)
 }
