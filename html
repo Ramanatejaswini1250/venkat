@@ -1,23 +1,82 @@
-if (sourceTableCount != dtCount) {
-  val htmlTable =
-    s"""
-       |<table border="1" cellpadding="5" cellspacing="0">
-       |  <tr>
-       |    <th>Volume Header</th>
-       |    <th>Actual Volume</th>
-       |    <th>Source Table</th>
-       |  </tr>
-       |  <tr>
-       |    <td>$dtCount</td>
-       |    <td>$sourceTableCount</td>
-       |    <td>$sourceTableName</td>
-       |  </tr>
-       |</table>
-       |""".stripMargin
+import scala.util.{Try, Success, Failure}
+import java.io.{BufferedReader, InputStreamReader}
 
-  val message = s"Volume mismatch detected for alertCode: $alertCode. Please find details below:"
-  sendEmailNotification(alertCode, message, emailAddress, business, htmlTable)
+def sendEmailNotification(
+    alertCode: String,
+    message: String,
+    emailAddresses: String,
+    business: String,
+    htmlTable: String
+): Unit = {
+  val shellScriptPath = "/path/to/email_notification.sh" // Update with actual path to the shell script
 
-  println(s"Email sent with volume mismatch details: $htmlTable")
-  throw new Exception(s"Volume mismatch: dt_count=$dtCount, sourceTableCount=$sourceTableCount")
+  // Split the comma-separated email addresses into an array
+  val emailList = emailAddresses.split(",").map(_.trim)
+
+  // Ensure the email list is not empty
+  if (emailList.nonEmpty) {
+    // Assign the first email address to "To" and up to 3 others to "CC"
+    val toEmail = emailList.head
+    val ccEmails = emailList.drop(1).take(3).mkString(",")
+
+    Try {
+      // Combine message and HTML table into a single HTML email body
+      val htmlMessage =
+        s"""
+           |<html>
+           |<body>
+           |<h2>Alert Code: $alertCode</h2>
+           |<p>$message</p>
+           |$htmlTable
+           |<p>Business: $business</p>
+           |</body>
+           |</html>
+           |""".stripMargin
+
+      // Execute the shell script
+      val process = new ProcessBuilder("bash", shellScriptPath, alertCode, toEmail, ccEmails, htmlMessage).start()
+
+      // Capture the output from the shell script
+      val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+      var line: String = null
+      while ({ line = reader.readLine(); line != null }) {
+        println(line) // Print or log the output
+      }
+
+      // Wait for the process to finish and check the exit code
+      val exitCode = process.waitFor()
+      if (exitCode != 0) {
+        throw new Exception(s"Shell script execution failed with exit code: $exitCode")
+      } else {
+        println(s"Email sent successfully: To = $toEmail, CC = $ccEmails")
+      }
+    } match {
+      case Success(_) => println(s"Notification sent successfully for alertCode: $alertCode")
+      case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
+    }
+  } else {
+    println("Email address list is empty; no notification sent.")
+  }
 }
+
+
+val htmlTable =
+  s"""
+     |<table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 50%; text-align: center;">
+     |  <thead style="background-color: #f2f2f2;">
+     |    <tr>
+     |      <th>Volume Header</th>
+     |      <th>Actual Volume</th>
+     |      <th>Source Table</th>
+     |    </tr>
+     |  </thead>
+     |  <tbody>
+     |    <tr>
+     |      <td style="font-weight: bold; color: red;">$dtCount</td>
+     |      <td style="font-weight: bold; color: red;">$sourceTableCount</td>
+     |      <td>$sourceTableName</td>
+     |    </tr>
+     |  </tbody>
+     |</table>
+     |""".stripMargin
+
