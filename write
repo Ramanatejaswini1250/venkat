@@ -1,0 +1,28 @@
+import java.io.File
+
+// Method to check write permissions
+def checkWritePermission(path: String): Boolean = {
+  val folder = new File(path)
+  if (!folder.exists()) {
+    println(s"Output directory does not exist. Attempting to create: $path")
+    folder.mkdirs() // Create the directory if it doesn't exist
+  }
+  folder.canWrite
+}
+
+// Check permissions for the final output folder
+if (!checkWritePermission(finalFolderPath)) {
+  throw new Exception(s"Write permission denied for directory: $finalFolderPath. Please check permissions.")
+} else {
+  println(s"Write permission verified for directory: $finalFolderPath")
+}
+
+// Proceed with writing the output
+val tempOutputPath = s"$finalFolderPath/tmp"
+masterTable1DF
+  .coalesce(1)
+  .write
+  .option("header", "true")
+  .option("delimiter", ",")
+  .mode("overwrite")
+  .csv(tempOutputPath)
