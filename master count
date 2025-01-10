@@ -1,84 +1,127 @@
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.types._
+import java.sql.{Connection, DriverManager, ResultSet}
 import java.io.File
 import org.apache.commons.io.FileUtils
 
-object MasterTableToCSV {
+// Initialize Spark Session
+val spark = SparkSession.builder()
+  .appName("Master Table Export and Validation")
+  .config("spark.master", "local[*]")
+  .getOrCreate()
 
-  def main(args: Array[String]): Unit = {
+// Database connection properties
+val jdbcUrl = "jdbc:mysql://your-database-url:3306/your-database"
+val jdbcUser = "your-username"
+val jdbcPassword = "your-password"
+val jdbcDriver = "com.mysql.cj.jdbc.Driver"
 
-    // Initialize SparkSession
-    val spark = SparkSession.builder()
-      .appName("MasterTableToCSV")
-      .master("local[*]") // Use local mode for testing
-      .getOrCreate()
+// Define the query for the Master Table
+val masterTable1Query =
+  """
+    SELECT * 
+    FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST 
+    ORDER BY 1
+  """
 
-    // JDBC connection details
-    val jdbcUrl = "jdbc:mysql://your-database-url:3306/your-database"
-    val jdbcUser = "your-username"
-    val jdbcPassword = "your-password"
-    val jdbcDriver = "com.mysql.cj.jdbc.Driver"
+// Generate the file path with a timestamp
+val currentTimestamp = java.time.LocalDateTime.now().toString.replace(":", "").replace(".", "")
+val finalFolderPath = "/path/to/your/output/directory" // Replace with your folder path
+val masterFile1Path = s"$finalFolderPath/$currentTimestamp_Master_Table1.csv"
 
-    // Table query
-    val masterTable1Query = s"""
-      SELECT * 
-      FROM your_database.your_table_name
-      ORDER BY 1
-    """
+// Set up a JDBC connection
+Class.forName(jdbcDriver)
+val connection: Connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+val statement = connection.createStatement()
 
-    // File path for saving the CSV
-    val finalFolderPath = "/path/to/output/directory"
-    val currentTimestamp = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date())
-    val masterFile1Path = s"$finalFolderPath/${currentTimestamp}_Master_Table1.csv"
+// Execute the query to fetch data
+val masterTable1: ResultSet = statement.executeQuery(masterTable1Query)
 
-    // Define schema for the table (adjust as per your table structure)
-    val schema_master1 = StructType(
-      Seq(
-        StructField("ALERT_ID", StringType, nullable = true),
-        StructField("ALERT_CODE", StringType, nullable = true),
-        StructField("BUSINESS_LINE", StringType, nullable = true),
-        StructField("EVENT_TIMESTAMP", StringType, nullable = true),
-        StructField("PRIORITY", IntegerType, nullable = true),
-        StructField("ALERT_DUE_DATE", StringType, nullable = true)
-      )
+// Define the schema for the Master Table
+val schema_master1 = StructType(
+  Seq(
+    StructField("ALERT_ID", StringType, nullable = true),
+    StructField("ALERT_CODE", StringType, nullable = true),
+    StructField("BUSINESS_LINE", StringType, nullable = true),
+    StructField("EVENT_TIMESTAMP", StringType, nullable = true),
+    StructField("PRIORITY", IntegerType, nullable = true),
+    StructField("ALERT_DUE_DATE", StringType, nullable = true)
+  )
+)
+
+// Convert the ResultSet to Rows
+val rows_master1 = Iterator
+  .continually((masterTable1.next(), masterTable1))
+  .takeWhile(_._1)
+  .map { case (_, rs) =>
+    Row(
+      rs.getString("ALERT_ID"),
+      rs.getString("ALERT_CODE"),
+      rs.getString("BUSINESS_LINE"),
+      rs.getString("EVENT_TIMESTAMP"),
+      rs.getInt("PRIORITY"),
+      rs.getString("ALERT_DUE_DATE")
     )
-
-    // Fetch data from the database into a DataFrame
-    val masterTable1DF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", s"(${masterTable1Query}) as tmp")
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .schema(schema_master1) // Optional: If schema is known
-      .load()
-
-    // Write DataFrame to a single CSV file
-    masterTable1DF
-      .coalesce(1) // Combine all partitions into one
-      .write
-      .option("header", "true") // Include column headers
-      .option("delimiter", ",") // Specify the column delimiter
-      .mode("overwrite") // Overwrite if the file already exists
-      .csv(s"$finalFolderPath/tmp") // Write to a temporary directory
-
-    // Move the single part file to the final desired location
-    val tmpDir = new File(s"$finalFolderPath/tmp")
-    val finalCsv = new File(masterFile1Path)
-
-    // Locate the part file in the temporary directory
-    val partFile = tmpDir.listFiles().find(_.getName.startsWith("part")).get
-
-    // Rename (or move) the part file to the final CSV path
-    FileUtils.moveFile(partFile, finalCsv)
-
-    // Delete the temporary directory
-    FileUtils.deleteDirectory(tmpDir)
-
-    println(s"Master Table 1 data written to a single CSV file at: $masterFile1Path")
-
-    // Stop SparkSession
-    spark.stop()
   }
+  .toList
+
+// Create a DataFrame from the Rows
+val masterTable1DF = spark.createDataFrame(
+  spark.sparkContext.parallelize(rows_master1),
+  schema_master1
+)
+
+// Write the DataFrame to a temporary directory with coalesce
+val tempOutputPath = s"$finalFolderPath/tmp"
+masterTable1DF
+  .coalesce(1) // Ensure a single part file
+  .write
+  .option("header", "true") // Include column headers
+  .option("delimiter", ",") // Use comma as delimiter
+  .mode("overwrite") // Overwrite if file already exists
+  .csv(tempOutputPath)
+
+// Move the single CSV part file to the final destination
+val tmpDir = new File(tempOutputPath)
+val finalCsv = new File(masterFile1Path)
+
+// Find and move the part file to the desired location
+val partFile = tmpDir.listFiles().find(_.getName.startsWith("part")).get
+FileUtils.moveFile(partFile, finalCsv)
+FileUtils.deleteDirectory(tmpDir) // Clean up the temporary directory
+
+println(s"Data successfully exported to CSV: $masterFile1Path")
+
+// Validate the output
+val masterFile1CSVDF = spark.read
+  .option("header", "true")
+  .option("delimiter", ",")
+  .csv(masterFile1Path)
+
+// Function to validate two DataFrames
+def validateData(df1: DataFrame, df2: DataFrame): Boolean = {
+  df1.except(df2).isEmpty && df2.except(df1).isEmpty
 }
+
+println("Starting data validation...")
+val isValid = validateData(masterTable1DF, masterFile1CSVDF)
+
+if (isValid) {
+  println("Data validation successful: Exported CSV matches Master Table.")
+} else {
+  println(
+    s"""
+       |Data validation failed!
+       |Source row count: ${masterTable1DF.count()}
+       |CSV row count: ${masterFile1CSVDF.count()}
+       |Check for mismatches between the source table and the exported file.
+       |""".stripMargin
+  )
+}
+
+// Clean up JDBC connection
+statement.close()
+connection.close()
+
+// Stop SparkSession
+spark.stop()
