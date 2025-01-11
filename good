@@ -26,6 +26,16 @@ object EmailNotificationApp {
   val jdbcPassword: String = "your_password"
   val jdbcDriver: String = "com.jdbc.Driver"  // Specify the correct JDBC driver class
 
+val df1=
+val df2=
+
+df1.createorReplaceTempView("RAMP_ALERT_LOAD")
+dfs.createOrReplaceTempView("Ramp_ETL_INFO")
+
+val alert_query =spark.sql(" select alertcode,datetoload from RAMP_ALERT_LOAD left join RAMP_ETL_INFO")
+val df = alert_query.toDF()
+
+
   // Function to send email notifications via a shell script with first email in To and others in CC
   def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
     val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
@@ -220,10 +230,10 @@ object EmailNotificationApp {
     cleanOldLogFiles("path/to/logs") // Specify your log directory path
   }
 
-  // Function to process alerts and check for 'D' frequency and business mapping
-  def processAlertsAndCheckCutoff(df: DataFrame): Unit = {
-    val currentDateTime = LocalDateTime.now()
-    val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
+  // Process the DataFrame directly
+  val currentDateTime = LocalDateTime.now()
+  val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
+
 
     df.collect().foreach { row =>
       val alertCode = row.getAs[String]("alert_code")
