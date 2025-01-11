@@ -239,6 +239,8 @@ object EmailNotificationApp {
  // Process the DataFrame directly
   val currentDateTime = LocalDateTime.now()
   val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
+val aert_query=spark.sql("")
+val df=alert_query.toDF("alert_code","dt_count".....)
 
 df.collect().foreach { row =>
         val alertCode = row.getAs[String]("alert_code")
