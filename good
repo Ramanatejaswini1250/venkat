@@ -123,10 +123,7 @@ object EmailNotificationApp {
         println(s"Error while creating folder: ${ex.getMessage}")
     }
   }
-  // Function to process each record in the DataFrame
-  def processRecords(df: DataFrame): Unit = {
-    df.foreachPartition { partition =>
-      partition.foreach { row =>
+df.collect().foreach { row =>
         val alertCode = row.getAs[String]("alert_code")
         val dtCount = row.getAs[Int]("dt_count")
         val dateToLoad = row.getAs[String]("date_to_load")
