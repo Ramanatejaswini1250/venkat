@@ -6,9 +6,14 @@ import scala.util.{Try, Success, Failure}
 import scala.io.Source
 import java.nio.file.{Files, Paths}
 import java.sql.{Connection, DriverManager, Statement}
+import java.nio.file.{FileTime, Paths}
+import java.io.IOException
+import java.time.{LocalDateTime, DayOfWeek}
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 
 object EmailNotificationApp {
-  
+
   // Define Spark session (initialize the Spark context)
   val spark: SparkSession = SparkSession.builder()
     .appName("EmailNotificationApp")
@@ -54,28 +59,16 @@ object EmailNotificationApp {
     }
   }
 
-  // Function to run SQL script and halt execution if it fails
-  def runSqlScript(scriptPath: String): Unit = {
-    try {
-      // Read the SQL script file content
-      val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
+  // Function to remove block comments (/* ... */)
+  def removeBlockComments(script: String): String = {
+    val blockCommentPattern = """(?s)/\*.*?\*/""".r
+    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
+  }
 
-      // Execute the SQL query using Spark (or another method if needed)
-      val result = spark.sql(sqlContent)  // For Spark SQL execution
-
-      // Check for specific success criteria, or handle failure
-      val status = result.count()  // This could be any check based on your query result
-      if (status == 0) {
-        println(s"SQL script executed successfully: $scriptPath")
-      } else {
-        println(s"SQL script failed, halting execution for: $scriptPath")
-        throw new Exception(s"SQL execution failed, halting further execution.")
-      }
-    } catch {
-      case ex: Exception =>
-        println(s"Error executing SQL script: ${ex.getMessage}")
-        throw new Exception(s"SQL script failed: ${ex.getMessage}, halting process.")
-    }
+  // Function to handle inline comments (--) while preserving SQL before them
+  def removeInlineComments(line: String): String = {
+    val singleLineCommentPattern = """--.*""".r
+    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
   }
 
   // Function to generate a timestamped file name
@@ -83,7 +76,8 @@ object EmailNotificationApp {
     val format = new SimpleDateFormat("yyyyMMddHHmmss")
     format.format(Calendar.getInstance().getTime)
   }
- // Function to generate the formatted folder name
+
+  // Function to generate the formatted folder name
   def getFormattedFolderName(): String = {
     val currentDateTime = LocalDateTime.now
     val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
@@ -107,7 +101,7 @@ object EmailNotificationApp {
   // Function to create the folder hierarchy
   def createFolderHierarchy(folderPath: String): Unit = {
     try {
-      val folder = new File(folderPath)
+      val folder = new java.io.File(folderPath)
 
       if (!folder.exists()) {
         if (folder.mkdirs()) {
@@ -122,17 +116,6 @@ object EmailNotificationApp {
       case ex: Exception =>
         println(s"Error while creating folder: ${ex.getMessage}")
     }
-  }
-// Function to remove block comments (/* ... */)
-  def removeBlockComments(script: String): String = {
-    val blockCommentPattern = """(?s)/\*.*?\*/""".r
-    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
-  }
-
-  // Function to handle inline comments (--) while preserving SQL before them
-  def removeInlineComments(line: String): String = {
-    val singleLineCommentPattern = """--.*""".r
-    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
   }
 
   // Function to delete log files older than 24 hours
@@ -158,7 +141,7 @@ object EmailNotificationApp {
     }
   }
 
-  // Execute the SQL script
+  // Function to run SQL script and halt execution if it fails
   def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
     println(s"Running SQL script from: $scriptPath")
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
@@ -237,157 +220,73 @@ object EmailNotificationApp {
     cleanOldLogFiles("path/to/logs") // Specify your log directory path
   }
 
-df.collect().foreach { row =>
-        val alertCode = row.getAs[String]("alert_code")
-        val dtCount = row.getAs[Int]("dt_count")
-        val dateToLoad = row.getAs[String]("date_to_load")
-        val bteqLocation = row.getAs[String]("bteq_location")
-        val emailAddress = row.getAs[String]("email_address")
-        val business = row.getAs[String]("business")
-
-        val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-          sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-          throw new Exception("Missing source_table_name")
-        }
-
-        val frequency = row.getAs[String]("frequency").getOrElse {
-          sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-          throw new Exception("Missing frequency")
-        }
-
-        val filterColumn = row.getAs[String]("filter_column").getOrElse {
-          sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-          throw new Exception("Missing filter_column")
-        }
-
-        try {
-          if (dtCount > 0) {
-            val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
-            
-            val sourceTableCountDF = spark.read
-              .format("jdbc")
-              .option("url", jdbcUrl)
-              .option("dbtable", jdbcQuery)
-              .option("user", jdbcUser)
-              .option("password", jdbcPassword)
-              .option("driver", jdbcDriver)
-              .load()
-
-            val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-
-            if (sourceTableCount == dtCount) {
-              val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
-              
-              if (Files.exists(Paths.get(sqlFolderPath))) {
-                val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
-                
-                if (Files.exists(Paths.get(sqlFilePath))) {
-                  runSqlScript(sqlFilePath)  // Run the SQL script
-                  sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
-                } else {
-                  val message = s"SQL file not found for alertCode: $alertCode"
-                  sendEmailNotification(alertCode, message, emailAddress, business)
-                  println(message)
-                }
-              } else {
-                val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
-                sendEmailNotification(alertCode, message, emailAddress, business)
-                println(message)
-              }
-            } else {
-              val message = s"Source table count does not match DT_COUNT"
-              sendEmailNotification(alertCode, message, emailAddress, business)
-              println(message)
-            }
-
-            // Step 1: Count Validation - Compare RAMP_MASTER_TARGET1 count with dtCount
-            println("Performing count validation between RAMP_MASTER_TARGET1 and dt_count...")
-
-            val countValidationQuery =
-              """
-                |(SELECT COUNT(*) AS master_count
-                | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery
-                |""".stripMargin
-
-            val masterCountDF = spark.read
-              .format("jdbc")
-              .option("url", jdbcUrl)
-              .option("dbtable", countValidationQuery)
-              .option("user", jdbcUser)
-              .option("password", jdbcPassword)
-              .option("driver", jdbcDriver)
-              .load()
-
-            val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
-
-            if (masterTargetCount != dtCount) {
-              val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
-              sendEmailNotification(alertCode, message, emailAddress, business)
-              println(message)
-              throw new Exception(message)
-            } else {
-              println(s"Count validation passed: Master_Target1 count matches dt_count ($dtCount).")
-
-              // ---- Blank Validation Logic (Step 2) ----
-              println(s"Checking for blank values in RAMP_MASTER_TARGET2...")
-
-              val blankCountQuery =
-                """
-                  |(SELECT COUNT(*) AS blank_count
-                  | FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-                  | WHERE variable = '') AS subquery
-                  |""".stripMargin
-
-              val blankCountDF = spark.read
-                .format("jdbc")
-                .option("url", jdbcUrl)
-                .option("dbtable", blankCountQuery)
-                .option("user", jdbcUser)
-                .option("password", jdbcPassword)
-                .option("driver", jdbcDriver)
-                .load()
-
-              val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
-
-              if (blankCount > 0) {
-                println(s"Found $blankCount blank values. Updating them to NULL...")
-
-                val updateBlankValuesQuery =
-                  """
-                    |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-                    |SET variable = NULL
-                    |WHERE variable = ''
-                    |""".stripMargin
-
-                val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-                val statement = connection.createStatement()
-                statement.executeUpdate(updateBlankValuesQuery)
-                statement.close()
-                connection.close()
-
-                println("Blank values updated successfully.")
-              } else {
-                println("No blank values found in RAMP_MASTER_TARGET2.")
-              }
-            }
-          } else {
-            val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
-            sendEmailNotification(alertCode, message, emailAddress, business)
-            throw new Exception(message)
-          }
-        } catch {
-          case ex: Exception =>
-            val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
-            sendEmailNotification(alertCode, message, emailAddress, business)
-            println(message)
-            ex.printStackTrace()
-        }
-      }
-    }
-  }
-
   // Entry point for the Spark job
   def main(args: Array[String]): Unit = {
     // Simulate a DataFrame as an example (replace with actual DataFrame loading)
     val data = Seq(
-      ("A001", 10, "2024-12-16", "/path/to/sql
+      ("A001", 10, "2024-12-16", "/path/to/sql_folder", "user@example.com", "Business_Unit_1", "source_table", "daily", "date_column")
+    )
+
+    val df = spark.createDataFrame(data).toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "email_address", "business", "source_table_name", "frequency", "filter_column")
+
+    // Loop over DataFrame and process each row
+    df.collect().foreach { row =>
+      val alertCode = row.getAs[String]("alert_code")
+      val dtCount = row.getAs[Int]("dt_count")
+      val dateToLoad = row.getAs[String]("date_to_load")
+      val bteqLocation = row.getAs[String]("bteq_location")
+      val emailAddress = row.getAs[String]("email_address")
+      val business = row.getAs[String]("business")
+      val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
+        sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
+        throw new Exception("Missing source_table_name")
+      }
+
+      val frequency = row.getAs[String]("frequency").getOrElse {
+        sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
+        throw new Exception("Missing frequency")
+      }
+
+      val filterColumn = row.getAs[String]("filter_column").getOrElse {
+        sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
+        throw new Exception("Missing filter_column")
+      }
+
+      try {
+        if (dtCount > 0) {
+          val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+
+          val sourceTableCountDF = spark.read
+            .format("jdbc")
+            .option("url", jdbcUrl)
+            .option("dbtable", jdbcQuery)
+            .option("user", jdbcUser)
+            .option("password", jdbcPassword)
+            .option("driver", jdbcDriver)
+            .load()
+
+          val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+
+          if (sourceTableCount == dtCount) {
+            val sqlFolderPath = getFormattedFolderName() // Adjust based on your actual folder location
+            if (Files.exists(Paths.get(sqlFolderPath))) {
+              val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+              if (Files.exists(Paths.get(sqlFilePath))) {
+                runSqlScript(sqlFilePath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver) // Run the SQL script
+                sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+              } else {
+                val message = s"SQL file not found for alertCode: $alertCode"
+                sendEmailNotification(alertCode, message, emailAddress, business)
+                println(message)
+              }
+            }
+          } else {
+            sendEmailNotification(alertCode, s"Mismatch in counts: Expected $dtCount, Found $sourceTableCount", emailAddress, business)
+          }
+        }
+      } catch {
+        case ex: Exception => sendEmailNotification(alertCode, s"Error processing data: ${ex.getMessage}", emailAddress, business)
+      }
+    }
+  }
+}
