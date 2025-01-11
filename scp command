@@ -1,86 +1,45 @@
-import java.io.File
-import java.nio.file.{Files, Path, Paths, StandardCopyOption}
-import scala.sys.process._
-import scala.util.{Try, Failure, Success}
+import java.io.{BufferedReader, InputStreamReader}
 
-val tempOutputPath1 = s"$finalFolderPath/tmp1"
-val tempOutputPath2 = s"$finalFolderPath/tmp2"
+def transferFilesUsingScp(sourcePath: String, targetPath: String): Unit = {
+  try {
+    // Define the SCP command
+    val scpCommand = Seq("scp", "-r", sourcePath, s"user@remote-server:$targetPath") // Update `user@remote-server`
 
-// Write DataFrames
-masterTable1DF.write.option("header", "true").mode("overwrite").csv(tempOutputPath1)
-masterTable2DF.write.option("header", "true").mode("overwrite").csv(tempOutputPath2)
+    // Start the process
+    val processBuilder = new ProcessBuilder(scpCommand: _*)
+    val process = processBuilder.start()
 
-// Helper function to move the part file
-def movePartFile(tempDir: String, finalPath: String): Unit = {
-  val dir = new File(tempDir)
-  
-  // Find the part file
-  val partFile: Option[File] = dir.listFiles().find(_.getName.startsWith("part"))
-  partFile match {
-    case Some(file) =>
-      val sourcePath: Path = file.toPath
-      val destinationPath: Path = Paths.get(finalPath)
-      Try {
-        // Move the file
-        Files.move(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING)
-      } match {
-        case Success(_) =>
-          println(s"File successfully moved to: $finalPath")
-        case Failure(e) =>
-          println(s"Error moving file: ${e.getMessage}")
-          e.printStackTrace()
-      }
-    case None =>
-      throw new Exception(s"No part file found in directory: $tempDir")
+    // Capture the output (if any)
+    val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+    var line: String = null
+    while ({ line = reader.readLine(); line != null }) {
+      println(line)
+    }
+
+    // Wait for the process to complete and get the exit code
+    val exitCode = process.waitFor()
+    if (exitCode == 0) {
+      println(s"Files successfully transferred from $sourcePath to $targetPath")
+    } else {
+      throw new Exception(s"SCP command failed with exit code $exitCode")
+    }
+  } catch {
+    case ex: Exception =>
+      println(s"Error during file transfer: ${ex.getMessage}")
+      throw new Exception("SCP transfer failed", ex)
   }
 }
 
-// Move part files for both tables
-movePartFile(tempOutputPath1, masterFile1Path)
-movePartFile(tempOutputPath2, masterFile2Path)
+// Integrate the logic after successful validation
+if (masterTableCount == dtCount && masterFileCount == dtCount) {
+  println("Validation between masterTable1DF and MasterFile1csvDF successful.")
 
-// Helper function to clean up directories
-def deleteDirectory(dirPath: String): Unit = {
-  val dir = new File(dirPath)
-  if (dir.exists()) {
-    dir.listFiles().foreach(_.delete()) // Delete all files in the directory
-    dir.delete() // Delete the directory itself
-    println(s"Temporary directory cleaned up: $dirPath")
-  } else {
-    println(s"Directory does not exist: $dirPath")
-  }
-}
-
-// Clean up temporary directories
-deleteDirectory(tempOutputPath1)
-deleteDirectory(tempOutputPath2)
-
-println(s"Master Table 1 written to: $masterFile1Path")
-println(s"Master Table 2 written to: $masterFile2Path")
-
-// SCP Command to Transfer Files
-val remoteHost = "host"
-val remoteUser = "edupugvr"
-val remotePath = "/home/edupugve/"
-
-// Execute SCP for Master Table 1
-val scpCommand1 = s"scp $masterFile1Path $remoteUser@$remoteHost:$remotePath"
-println(s"Executing: $scpCommand1")
-val scpResult1 = scpCommand1.!
-
-if (scpResult1 == 0) {
-  println(s"Master Table 1 successfully transferred to $remoteHost:$remotePath")
+  // Trigger the SCP command
+  val sourcePath = "/disk1/source"
+  val targetPath = "/etl/inbound"
+  transferFilesUsingScp(sourcePath, targetPath)
 } else {
-  println(s"Error transferring Master Table 1 to $remoteHost:$remotePath")
-}
-
-// Execute SCP for Master Table 2
-val scpCommand2 = s"scp $masterFile2Path $remoteUser@$remoteHost:$remotePath"
-println(s"Executing: $scpCommand2")
-val scpResult2 = scpCommand2.!
-
-if (scpResult2 == 0) {
-  println(s"Master Table 2 successfully transferred to $remoteHost:$remotePath")
-} else {
-  println(s"Error transferring Master Table 2 to $remoteHost:$remotePath")
+  val message = s"Validation failed: Master table or file counts do not match dt_count."
+  sendEmailNotification(alertCode, message, emailAddress, business)
+  throw new Exception(message)
 }
