@@ -288,5 +288,117 @@ object EmailNotificationApp {
         case ex: Exception => sendEmailNotification(alertCode, s"Error processing data: ${ex.getMessage}", emailAddress, business)
       }
     }
+
+var validationSuccess = false
+
+breakable {
+  while (!validationSuccess) {
+    try {
+      println("Starting validation process...")
+
+      // ---- Step 1: Count Validation ----
+      val countValidationQuery =
+        """
+          |SELECT COUNT(*) AS master_count
+          |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
+        """.stripMargin
+
+      val masterCountDF = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", s"($countValidationQuery) AS subquery")
+        .option("user", jdbcUser)
+        .option("password", jdbcPassword)
+        .option("driver", jdbcDriver)
+        .load()
+
+      val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
+
+      if (masterTargetCount != dtCount) {
+        val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
+        println(message)
+        throw new Exception(message)
+      }
+      println("Count validation for Master_Target1 passed.")
+
+      // ---- Step 2: Blank Value Validation ----
+      val blankCountQuery =
+        """
+          |SELECT COUNT(*) AS blank_count
+          |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+          |WHERE variable = ''
+        """.stripMargin
+
+      val blankCountDF = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", s"($blankCountQuery) AS subquery")
+        .option("user", jdbcUser)
+        .option("password", jdbcPassword)
+        .option("driver", jdbcDriver)
+        .load()
+
+      val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
+
+      if (blankCount > 0) {
+        println(s"Found $blankCount blank values in Master_Target2. Updating them to NULL...")
+        
+        val updateBlankValuesQuery =
+          """
+            |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+            |SET variable = NULL
+            |WHERE variable = ''
+          """.stripMargin
+
+        val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+        try {
+          val statement = connection.createStatement()
+          statement.executeUpdate(updateBlankValuesQuery)
+          statement.close()
+        } finally {
+          connection.close()
+        }
+        println("Blank values updated successfully.")
+      } else {
+        println("No blank values found in Master_Target2.")
+      }
+
+      // ---- Step 3: Archive Alert Load Table ----
+      println("Archiving data from RAMP_ALERT_LOAD to RAMP_ALERT_LOAD_ARCHIVE...")
+
+      val archiveQuery =
+        """
+          |INSERT INTO U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD_ARCHIVE (alert_code, other_columns...)
+          |SELECT alert_code, other_columns...
+          |FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD
+          |WHERE NOT EXISTS (
+          |    SELECT 1
+          |    FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD_ARCHIVE
+          |    WHERE RAMP_ALERT_LOAD_ARCHIVE.alert_code = RAMP_ALERT_LOAD.alert_code
+          |)
+        """.stripMargin
+
+      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      try {
+        val statement = connection.createStatement()
+        statement.executeUpdate(archiveQuery)
+        statement.close()
+      } finally {
+        connection.close()
+      }
+
+      println("Data successfully archived.")
+
+      // If all validations and archiving succeed, exit the loop
+      validationSuccess = true
+      println("Validation and archiving process completed successfully.")
+
+    } catch {
+      case e: Exception =>
+        println(s"Validation failed: ${e.getMessage}")
+        println("Retrying the process on rerun...")
+        Thread.sleep(5000) // Optional: Wait for 5 seconds before retrying
+    }
+  }
   }
 }
