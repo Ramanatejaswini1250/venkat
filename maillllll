@@ -27,9 +27,13 @@ if [ -z "$TO_EMAIL" ]; then
   exit 1
 fi
 
+FOOTER_PATTERN="\\*+ IMPORTANT MESSAGE"
+CLEANED_MESSAGE=$(echo "$MESSAGE" | sed "/$FOOTER_PATTERN/,\$d")
+
 # Prepare email subject and body
 SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
-BODY="Alert Code: $ALERT_CODE\nMessage: $MESSAGE\nBusiness: $BUSINESS"
+BODY="Alert Code: $ALERT_CODE\nMessage: $CLEANED_MESSAGE\nBusiness: $BUSINESS\n\nThanks and Regards,\nCDAO Team"
+
 
 # Send the email using msmtp
 send_email() {
