@@ -83,7 +83,46 @@ object EmailNotificationApp {
     val format = new SimpleDateFormat("yyyyMMddHHmmss")
     format.format(Calendar.getInstance().getTime)
   }
+ // Function to generate the formatted folder name
+  def getFormattedFolderName(): String = {
+    val currentDateTime = LocalDateTime.now
+    val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+    val formattedDate = currentDateTime.format(dateFormatter)
 
+    // Get the current day of the week (e.g., MON, TUE, etc.)
+    val currentDay = currentDateTime.getDayOfWeek match {
+      case DayOfWeek.MONDAY    => "MON"
+      case DayOfWeek.TUESDAY   => "TUE"
+      case DayOfWeek.WEDNESDAY => "WED"
+      case DayOfWeek.THURSDAY  => "THU"
+      case DayOfWeek.FRIDAY    => "FRI"
+      case DayOfWeek.SATURDAY  => "SAT"
+      case DayOfWeek.SUNDAY    => "SUN"
+    }
+
+    // Construct the folder name
+    s"${formattedDate}_RBSCC_$currentDay"
+  }
+
+  // Function to create the folder hierarchy
+  def createFolderHierarchy(folderPath: String): Unit = {
+    try {
+      val folder = new File(folderPath)
+
+      if (!folder.exists()) {
+        if (folder.mkdirs()) {
+          println(s"Successfully created folder: $folderPath")
+        } else {
+          throw new Exception(s"Failed to create folder: $folderPath")
+        }
+      } else {
+        println(s"Folder already exists: $folderPath")
+      }
+    } catch {
+      case ex: Exception =>
+        println(s"Error while creating folder: ${ex.getMessage}")
+    }
+  }
   // Function to process each record in the DataFrame
   def processRecords(df: DataFrame): Unit = {
     df.foreachPartition { partition =>
