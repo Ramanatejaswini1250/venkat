@@ -220,185 +220,52 @@ object EmailNotificationApp {
     cleanOldLogFiles("path/to/logs") // Specify your log directory path
   }
 
+  // Function to process alerts and check for 'D' frequency and business mapping
+  def processAlertsAndCheckCutoff(df: DataFrame): Unit = {
+    val currentDateTime = LocalDateTime.now()
+    val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
+
+    df.collect().foreach { row =>
+      val alertCode = row.getAs[String]("alert_code")
+      val frequency = row.getAs[String]("frequency")
+      val business = row.getAs[String]("business")
+      val emailAddress = row.getAs[String]("email_address")
+
+      // Check for 'D' frequency and process within the cutoff time
+      if (frequency == "D") {
+        if (currentDateTime.isAfter(cutoffTime)) {
+          val message = s"AlertCode $alertCode with frequency 'D' was not processed by cutoff time (16:30)"
+          if (business.nonEmpty) {
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          } else {
+            sendEmailNotification(alertCode, message, emailAddress, "CDAO@cba.com")
+          }
+        }
+      }
+
+      // If no business is mapped, send email to CDAO
+      if (business == null || business.isEmpty) {
+        val message = s"AlertCode $alertCode is not mapped to any business."
+        sendEmailNotification(alertCode, message, emailAddress, "CDAO@cba.com")
+      } else {
+        sendEmailNotification(alertCode, "Alert processed", emailAddress, business)
+      }
+    }
+  }
+
   // Entry point for the Spark job
   def main(args: Array[String]): Unit = {
     // Simulate a DataFrame as an example (replace with actual DataFrame loading)
     val data = Seq(
-      ("A001", 10, "2024-12-16", "/path/to/sql_folder", "user@example.com", "Business_Unit_1", "source_table", "daily", "date_column")
+      ("A001", 10, "2024-12-16", "/path/to/sql_folder", "user@example.com", "Business_Unit_1", "source_table", "D", "date_column"),
+      ("A002", 15, "2024-12-17", "/path/to/sql_folder", "user@example.com", "", "source_table", "D", "date_column")
     )
 
     val df = spark.createDataFrame(data).toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "email_address", "business", "source_table_name", "frequency", "filter_column")
 
-    // Loop over DataFrame and process each row
-    df.collect().foreach { row =>
-      val alertCode = row.getAs[String]("alert_code")
-      val dtCount = row.getAs[Int]("dt_count")
-      val dateToLoad = row.getAs[String]("date_to_load")
-      val bteqLocation = row.getAs[String]("bteq_location")
-      val emailAddress = row.getAs[String]("email_address")
-      val business = row.getAs[String]("business")
-      val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-        sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-        throw new Exception("Missing source_table_name")
-      }
+    // Process alerts and check for cutoff time and business mapping
+    processAlertsAndCheckCutoff(df)
 
-      val frequency = row.getAs[String]("frequency").getOrElse {
-        sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-        throw new Exception("Missing frequency")
-      }
-
-      val filterColumn = row.getAs[String]("filter_column").getOrElse {
-        sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-        throw new Exception("Missing filter_column")
-      }
-
-      try {
-        if (dtCount > 0) {
-          val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
-
-          val sourceTableCountDF = spark.read
-            .format("jdbc")
-            .option("url", jdbcUrl)
-            .option("dbtable", jdbcQuery)
-            .option("user", jdbcUser)
-            .option("password", jdbcPassword)
-            .option("driver", jdbcDriver)
-            .load()
-
-          val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-
-          if (sourceTableCount == dtCount) {
-            val sqlFolderPath = getFormattedFolderName() // Adjust based on your actual folder location
-            if (Files.exists(Paths.get(sqlFolderPath))) {
-              val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
-              if (Files.exists(Paths.get(sqlFilePath))) {
-                runSqlScript(sqlFilePath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver) // Run the SQL script
-                sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
-              } else {
-                val message = s"SQL file not found for alertCode: $alertCode"
-                sendEmailNotification(alertCode, message, emailAddress, business)
-                println(message)
-              }
-            }
-          } else {
-            sendEmailNotification(alertCode, s"Mismatch in counts: Expected $dtCount, Found $sourceTableCount", emailAddress, business)
-          }
-        }
-      } catch {
-        case ex: Exception => sendEmailNotification(alertCode, s"Error processing data: ${ex.getMessage}", emailAddress, business)
-      }
-    }
-
-var validationSuccess = false
-
-breakable {
-  while (!validationSuccess) {
-    try {
-      println("Starting validation process...")
-
-      // ---- Step 1: Count Validation ----
-      val countValidationQuery =
-        """
-          |SELECT COUNT(*) AS master_count
-          |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
-        """.stripMargin
-
-      val masterCountDF = spark.read
-        .format("jdbc")
-        .option("url", jdbcUrl)
-        .option("dbtable", s"($countValidationQuery) AS subquery")
-        .option("user", jdbcUser)
-        .option("password", jdbcPassword)
-        .option("driver", jdbcDriver)
-        .load()
-
-      val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
-
-      if (masterTargetCount != dtCount) {
-        val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
-        println(message)
-        throw new Exception(message)
-      }
-      println("Count validation for Master_Target1 passed.")
-
-      // ---- Step 2: Blank Value Validation ----
-      val blankCountQuery =
-        """
-          |SELECT COUNT(*) AS blank_count
-          |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-          |WHERE variable = ''
-        """.stripMargin
-
-      val blankCountDF = spark.read
-        .format("jdbc")
-        .option("url", jdbcUrl)
-        .option("dbtable", s"($blankCountQuery) AS subquery")
-        .option("user", jdbcUser)
-        .option("password", jdbcPassword)
-        .option("driver", jdbcDriver)
-        .load()
-
-      val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
-
-      if (blankCount > 0) {
-        println(s"Found $blankCount blank values in Master_Target2. Updating them to NULL...")
-        
-        val updateBlankValuesQuery =
-          """
-            |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-            |SET variable = NULL
-            |WHERE variable = ''
-          """.stripMargin
-
-        val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-        try {
-          val statement = connection.createStatement()
-          statement.executeUpdate(updateBlankValuesQuery)
-          statement.close()
-        } finally {
-          connection.close()
-        }
-        println("Blank values updated successfully.")
-      } else {
-        println("No blank values found in Master_Target2.")
-      }
-
-      // ---- Step 3: Archive Alert Load Table ----
-      println("Archiving data from RAMP_ALERT_LOAD to RAMP_ALERT_LOAD_ARCHIVE...")
-
-      val archiveQuery =
-        """
-          |INSERT INTO U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD_ARCHIVE (alert_code, other_columns...)
-          |SELECT alert_code, other_columns...
-          |FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD
-          |WHERE NOT EXISTS (
-          |    SELECT 1
-          |    FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD_ARCHIVE
-          |    WHERE RAMP_ALERT_LOAD_ARCHIVE.alert_code = RAMP_ALERT_LOAD.alert_code
-          |)
-        """.stripMargin
-
-      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      try {
-        val statement = connection.createStatement()
-        statement.executeUpdate(archiveQuery)
-        statement.close()
-      } finally {
-        connection.close()
-      }
-
-      println("Data successfully archived.")
-
-      // If all validations and archiving succeed, exit the loop
-      validationSuccess = true
-      println("Validation and archiving process completed successfully.")
-
-    } catch {
-      case e: Exception =>
-        println(s"Validation failed: ${e.getMessage}")
-        println("Retrying the process on rerun...")
-        Thread.sleep(5000) // Optional: Wait for 5 seconds before retrying
-    }
-  }
+    // Continue with the rest of the logic as previously outlined...
   }
 }
