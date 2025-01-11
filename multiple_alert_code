@@ -1,0 +1,98 @@
+import org.apache.spark.sql.DataFrame
+import java.time.LocalDateTime
+import scala.collection.mutable
+
+object EmailNotificationApp {
+
+  // Map to track processed alert_codes for the current hour
+  var processedAlertCodes: mutable.Set[String] = mutable.Set()
+
+  // Function to process alerts for the current hour
+  def processAlertsForCurrentHour(alertQuery: DataFrame): Unit = {
+    val currentDateTime = LocalDateTime.now()
+    val currentHour = currentDateTime.getHour
+
+    // Reset processedAlertCodes at the start of a new hour
+    if (processedAlertCodes.isEmpty || currentDateTime.getMinute == 0) {
+      processedAlertCodes.clear()
+      println(s"Resetting processed alert_codes at hour: $currentHour")
+    }
+
+    // Process the alertQuery for the current hour
+    alertQuery.collect().foreach { row =>
+      val alertCode = row.getAs[String]("alert_code")
+      val dtCount = row.getAs[Int]("dt_count")
+      val dateToLoad = row.getAs[String]("date_to_load")
+      val emailAddress = row.getAs[String]("email_address")
+      val business = row.getAs[String]("business")
+      val frequency = row.getAs[String]("frequency")
+      val filterColumn = row.getAs[String]("filter_column")
+
+      // Check if this alert_code has been processed in the current hour
+      if (!processedAlertCodes.contains(alertCode)) {
+        try {
+          if (dtCount > 0) {
+            val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
+              sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
+              throw new Exception("Missing source_table_name")
+            }
+
+            // SQL logic based on dtCount
+            val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+            val sourceTableCountDF = spark.read
+              .format("jdbc")
+              .option("url", "jdbc:mysql://localhost:3306/your_database")
+              .option("dbtable", jdbcQuery)
+              .option("user", "your_user")
+              .option("password", "your_password")
+              .load()
+
+            val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+
+            if (sourceTableCount == dtCount) {
+              val sqlFolderPath = "/path/to/sql/folder" // Update with your path
+              if (Files.exists(Paths.get(sqlFolderPath))) {
+                val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+                if (Files.exists(Paths.get(sqlFilePath))) {
+                  runSqlScript(sqlFilePath)
+                  sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+                } else {
+                  val message = s"SQL file not found for alertCode: $alertCode"
+                  sendEmailNotification(alertCode, message, emailAddress, business)
+                }
+              } else {
+                val message = s"Folder not found for frequency at path: $sqlFolderPath"
+                sendEmailNotification(alertCode, message, emailAddress, business)
+              }
+            } else {
+              val message = s"Source table count does not match DT_COUNT"
+              sendEmailNotification(alertCode, message, emailAddress, business)
+            }
+          } else {
+            val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+
+          // Mark the alert_code as processed for the current hour
+          processedAlertCodes.add(alertCode)
+        } catch {
+          case ex: Exception =>
+            val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
+            sendEmailNotification(alertCode, message, emailAddress, business)
+            ex.printStackTrace()
+        }
+      }
+    }
+  }
+
+  // Dummy email notification function
+  def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String): Unit = {
+    println(s"Sending email to $emailAddress for alertCode: $alertCode, Business: $business, Message: $message")
+  }
+
+  // Dummy SQL script execution function
+  def runSqlScript(filePath: String): Unit = {
+    println(s"Executing SQL script from file: $filePath")
+  }
+
+}
