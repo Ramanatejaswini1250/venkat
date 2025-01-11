@@ -457,4 +457,6 @@ breakable {
   def main(args: Array[String]): Unit = {
     // Simulate a DataFrame as an example (replace with actual DataFrame loading)
     val data = Seq(
-      ("A001", 10, "2024-12-16", "/path/to/sql
+      ("A001", 10, "2024-12-16", "/path/to/sql"))
+}
+}
