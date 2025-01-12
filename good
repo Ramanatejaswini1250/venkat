@@ -291,6 +291,42 @@ df.collect().foreach { row =>
 
         try {
           if (dtCount > 0) {
+import java.time.{LocalDateTime, LocalTime, DayOfWeek}
+
+// Adding new logic inside the existing code structure
+
+object EmailNotificationApp {
+  // Define cutoff time (16:30)
+  val cutoffTime = LocalTime.of(16, 30) // 16:30 PM cutoff time
+
+  // Function to check if the file has been received (to be implemented based on your actual logic)
+  def isFileReceived(): Boolean = {
+    // Implement logic to check if the file exists or is received
+    checkForFile() // Placeholder method for checking file existence
+  }
+
+  // Placeholder function to check file existence (to be replaced with actual logic)
+  def checkForFile(): Boolean = {
+    // Add your logic here to check if the file exists in a directory or database
+    true // Return true if the file exists, false otherwise
+  }
+
+  // Main code logic to handle file checks based on frequency
+  def processAlerts(currentDateTime: LocalDateTime, alertCode: String, emailAddress: String, business: String, frequency: String): Unit = {
+    if (frequency == "W") {
+      // Get the current day of the week
+      val currentDay = currentDateTime.getDayOfWeek
+
+      // Loop through all days of the week to check if today matches the required day
+      for (day <- DayOfWeek.values()) {
+        // Check if today is the expected day for file processing
+        if (currentDay == day) {
+          // If today is the day and current time is after the cutoff time and file hasn't been received
+          if (currentDateTime.toLocalTime.isAfter(cutoffTime) && !isFileReceived()) {
+            val message = s"AlertCode $alertCode with frequency 'W' was not processed by the cutoff time (16:30 PM) on $day. The file has not been received."
+
+
+  
 
 // Check for 'D' frequency and process within the cutoff time
       if (frequency == "D") {
