@@ -83,6 +83,30 @@ object EmailNotificationApp {
     val format = new SimpleDateFormat("yyyyMMddHHmmss")
     format.format(Calendar.getInstance().getTime)
   }
+
+def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
+    frequency.toLowerCase match {
+      case "d" => s"$bteqLocation/DAILY" // Files arriving daily go to "DAILY" folder
+      case "w" =>
+        // For weekly, check which day of the week it is and run the corresponding folder (Monday-Sunday)
+        val dayOfWeek = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime).toUpperCase
+        dayOfWeek match {
+          case "MONDAY"    => s"$bteqLocation/MON"
+          case "TUESDAY"   => s"$bteqLocation/TUE"
+          case "WEDNESDAY" => s"$bteqLocation/WED"
+          case "THURSDAY"  => s"$bteqLocation/THU"
+          case "FRIDAY"    => s"$bteqLocation/FRI"
+          case "SATURDAY"  => s"$bteqLocation/SAT"
+          case "SUNDAY"    => s"$bteqLocation/SUN"
+          case _           => throw new Exception(s"Unknown weekday: $dayOfWeek")
+        }
+
+      case "m" => s"$bteqLocation/MONTHLY"   // For monthly files
+      case "q" => s"$bteqLocation/QUARTERLY" // For quarterly files
+      case _   => throw new Exception(s"Unknown frequency: $frequency")
+    }
+  }
+
  // Function to generate the formatted folder name
   def getFormattedFolderName(): String = {
     val currentDateTime = LocalDateTime.now
