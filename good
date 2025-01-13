@@ -306,6 +306,18 @@ val folderPath = getSqlFolderPath(frequency, bteqLocation)
         }
       }
     }
+
+if (frequency == "M") {
+      // Check if today is the 10th of the month or later
+      val currentDate = LocalDate.now()
+      val cutoffDate = currentDate.withDayOfMonth(10)
+      val currentTime = LocalTime.now()
+
+      if ((currentDate.isAfter(cutoffDate) || (currentDate.isEqual(cutoffDate) && currentTime.isAfter(cutoffTime))) && dtCount == 0) {
+        val message = s"AlertCode $alertCode with frequency 'M' (expected by the 10th of each month) was not processed by the cutoff time ($cutoffTime). The alerts have not been received for this month."
+        sendEmailNotification(alertCode, message, emailAddress, business)
+        println(message)
+      }
             val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
             
             val sourceTableCountDF = spark.read
