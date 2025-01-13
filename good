@@ -319,6 +319,19 @@ if (frequency == "M") {
         sendEmailNotification(alertCode, message, emailAddress, business)
         println(message)
       }
+  // Check for quarterly frequency ('Q')
+  if (frequency == "Q") {
+    // Check if today is the 1st day of a quarter
+    val isFirstDayOfQuarter = List(1, 4, 7, 10).contains(currentDate.getMonthValue) && currentDate.getDayOfMonth == 1
+
+    // Check if today is the 1st day of the quarter or after the cutoff time
+    if (isFirstDayOfQuarter && currentTime.isAfter(cutoffTime)) {
+      val message = s"AlertCode $alertCode with frequency 'Q' (expected on the 1st day of each quarter) was not processed by the cutoff time ($cutoffTime). The alerts have not been received for this quarter."
+      sendEmailNotification(alertCode, message, emailAddress, business)
+      println(message)
+    }
+  }
+}
             val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
             
             val sourceTableCountDF = spark.read
