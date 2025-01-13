@@ -298,9 +298,10 @@ val folderPath = getSqlFolderPath(frequency, bteqLocation)
       // Get the current day of the week
       val currentDay = currentDateTime.getDayOfWeek
 
-      if (currentDay == DayOfWeek.MONDAY) {
+     for(dayOfweek <- DayOfWeek.values())
+{
         // Check if folder exists for Monday (or corresponding weekday folder)
-        if (currentDateTime.toLocalTime.isAfter(cutoffTime) && !Files.exists(Paths.get(folderPath))) {
+        if (currentDateTime.isAfter(cutoffTime)|| currentDateTime.toLocalTime.isEqual(cutoffTime) && !Files.exists(Paths.get(folderPath))) {
           val message = s"AlertCode $alertCode with frequency 'W' (expected on Monday) was not processed by the cutoff time (16:30 PM). The file has not been received from folder $folderPath."
           sendEmailNotification(alertCode, message, emailAddress, business)
         }
@@ -313,7 +314,7 @@ if (frequency == "M") {
       val cutoffDate = currentDate.withDayOfMonth(10)
       val currentTime = LocalTime.now()
 
-      if ((currentDate.isAfter(cutoffDate) || (currentDate.isEqual(cutoffDate) && currentTime.isAfter(cutoffTime))) && dtCount == 0) {
+      if ((currentDate.isAfter(cutoffDate) || (currentDate.isEqual(cutoffDate) && currentTime.isAfter(cutoffTime)))) {
         val message = s"AlertCode $alertCode with frequency 'M' (expected by the 10th of each month) was not processed by the cutoff time ($cutoffTime). The alerts have not been received for this month."
         sendEmailNotification(alertCode, message, emailAddress, business)
         println(message)
