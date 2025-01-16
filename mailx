@@ -54,9 +54,28 @@ BODY="<html><body><h1>Alert Code: $ALERT_CODE</h1><p>$MESSAGE</p><p><strong>Busi
 remove_footer() {
   local email_body="$1"
   local footer_start_pattern="^\*\*IMPORTANT MESSAGE"
-  # Remove everything starting from the footer pattern if it exists
-  echo "$email_body" | sed "/$footer_start_pattern/,$d"
+  
+  # Check if footer start pattern exists, then remove everything from it
+  if echo "$email_body" | grep -q "$footer_start_pattern"; then
+    # Only remove content after the footer pattern
+    email_body=$(echo "$email_body" | sed "/$footer_start_pattern/,\$d")
+  fi
+
+  echo "$email_body"
 }
+
+# Debugging step before removing footer
+echo "Original body before footer removal:"
+echo "$BODY"
+
+# Apply footer removal
+BODY=$(remove_footer "$BODY")
+
+# Debug: Output body content after footer removal
+echo "Body after footer removal:"
+echo "$BODY"
+
+ 
 
 # Apply footer removal
 BODY=$(remove_footer "$BODY")
