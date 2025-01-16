@@ -1,104 +1,46 @@
 #!/bin/bash
 
-# mail_notification.sh
+# Variables for email configuration
+TO_ADDRESS="recipient@example.com"       # Replace with the recipient's email address
+SUBJECT="Your Email Notification"        # Email subject
+BODY="This is the main body of your email."  # Main body content
+MESSAGE="Additional message content goes here."  # Additional message content
 
-# Load SMTP configuration from properties file
-PROPERTIES_FILE="/path/to/smtp_config.properties"
+# Disclaimer keywords (start and end)
+DISCLAIMER_START="IMPORTANT MESSAGE"
+DISCLAIMER_END="commercial electronic messages from us"
 
-# Function to load property from properties file
-get_property() {
-  key=$1
-  value=$(grep -m 1 "^$key=" "$PROPERTIES_FILE" | cut -d'=' -f2-)
-  echo "$value"
-}
+# Build the email content
+EMAIL_CONTENT=$(cat <<EOF
+To: $TO_ADDRESS
+Subject: $SUBJECT
 
-# Check if properties file exists
-if [ ! -f "$PROPERTIES_FILE" ]; then
-  echo "Error: Properties file not found at $PROPERTIES_FILE"
-  exit 1
-fi
+$BODY
 
-# Read properties from the configuration file
-SMTP_HOST=$(get_property "smtp_host")
-SMTP_PORT=$(get_property "smtp_port")
-SMTP_USERNAME=$(get_property "smtp_username")
-SMTP_PASSWORD=$(get_property "smtp_password")
-FROM_EMAIL=$(get_property "from_email")
+$MESSAGE
 
-# Validate SMTP configuration
-if [[ -z "$SMTP_HOST" || -z "$SMTP_PORT" || -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" || -z "$FROM_EMAIL" ]]; then
-  echo "Error: Missing SMTP configuration in properties file"
-  exit 1
-fi
+************ IMPORTANT MESSAGE ************
+This e-mail message is intended only for the addressee(s) and contains information which may be confidential.
+If you are not the intended recipient please advise the sender by return email, do not use or disclose the contents,
+and delete the message and any attachments from your system.
+EOF
+)
 
-# Read arguments passed from the Scala application
-ALERT_CODE="$1"
-MESSAGE="$2"
-TO_EMAIL="$3"
-CC_EMAIL="$4"
-BUSINESS="$5"
+# Remove the disclaimer from the email content
+PROCESSED_CONTENT=$(echo "$EMAIL_CONTENT" | awk -v start="$DISCLAIMER_START" -v end="$DISCLAIMER_END" '
+{
+    if (index($0, start)) {
+        remove = 1;  # Start removing disclaimer
+    }
+    if (!remove) {
+        print $0;  # Print lines not part of the disclaimer
+    }
+    if (remove && index($0, end)) {
+        remove = 0;  # Stop removing disclaimer
+    }
+}')
 
-# Validate required arguments
-if [[ -z "$ALERT_CODE" || -z "$MESSAGE" || -z "$TO_EMAIL" || -z "$BUSINESS" ]]; then
-  echo "Error: Missing required arguments"
-  exit 1
-fi
+# Send the processed email
+echo "$PROCESSED_CONTENT" | sendmail -t
 
-# Create the email subject
-SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
-
-# Create the email body dynamically
-BODY="<html><body><h1>Alert Code: $ALERT_CODE</h1><p>$MESSAGE</p><p><strong>Business:</strong> $BUSINESS</p></body></html>"
-
-# Function to remove unwanted footer dynamically if it exists
-remove_footer() {
-  local email_body="$1"
-  local footer_start_pattern="^\*\*IMPORTANT MESSAGE"
-  
-  # Check if footer start pattern exists, then remove everything from it
-  if echo "$email_body" | grep -q "$footer_start_pattern"; then
-    # Only remove content after the footer pattern
-    email_body=$(echo "$email_body" | sed "/$footer_start_pattern/,\$d")
-  fi
-
-  echo "$email_body"
-}
-
-# Debugging step before removing footer
-echo "Original body before footer removal:"
-echo "$BODY"
-
-# Apply footer removal
-BODY=$(remove_footer "$BODY")
-
-# Debug: Output body content after footer removal
-echo "Body after footer removal:"
-echo "$BODY"
-
-
-# Function to send email
-send_email() {
-  (
-    echo "From: $FROM_EMAIL"
-    echo "To: $TO_EMAIL"
-    if [ -n "$CC_EMAIL" ]; then
-      echo "Cc: $CC_EMAIL"
-    fi
-    echo "Subject: $SUBJECT"
-    echo "Content-Type: text/html; charset=UTF-8"
-    echo ""
-    echo "$BODY"
-  ) | sendmail -S "$SMTP_HOST:$SMTP_PORT" -au"$SMTP_USERNAME" -ap"$SMTP_PASSWORD" -f"$FROM_EMAIL" "$TO_EMAIL"
-
-  # Check if the email was sent successfully
-  if [ $? -eq 0 ]; then
-    echo "Email sent to $TO_EMAIL"
-    [ -n "$CC_EMAIL" ] && echo "CC: $CC_EMAIL"
-  else
-    echo "Error: Failed to send email"
-    exit 1
-  fi
-}
-
-# Send the email
-send_email
+echo "Email processed and sent without disclaimer."
