@@ -1,22 +1,34 @@
 import java.io.{BufferedReader, InputStreamReader}
 
-def transferFilesUsingScp(sourcePath: String, targetPath: String): Unit = {
+def transferFilesUsingScp(sourcePath: String, targetPath: String, password: String): Unit = {
   try {
-    // Define the SCP command
-    val scpCommand = Seq("scp", "-r", sourcePath, s"user@remote-server:$targetPath") // Update `user@remote-server`
+    // Define the SCP command with bash for proper interpretation of wildcards
+    val scpCommand = Seq(
+      "bash", "-c", 
+      s"sshpass -p '$password' scp -r $sourcePath user@remote-server:$targetPath"
+    )
+
+    // Log the command being executed
+    println(s"Executing command: ${scpCommand.mkString(" ")}")
 
     // Start the process
     val processBuilder = new ProcessBuilder(scpCommand: _*)
     val process = processBuilder.start()
 
-    // Capture the output (if any)
-    val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+    // Capture and print the standard output
+    val outputReader = new BufferedReader(new InputStreamReader(process.getInputStream))
     var line: String = null
-    while ({ line = reader.readLine(); line != null }) {
-      println(line)
+    while ({ line = outputReader.readLine(); line != null }) {
+      println(s"OUTPUT: $line")
     }
 
-    // Wait for the process to complete and get the exit code
+    // Capture and print the error output
+    val errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream))
+    while ({ line = errorReader.readLine(); line != null }) {
+      println(s"ERROR: $line")
+    }
+
+    // Wait for the process to complete
     val exitCode = process.waitFor()
     if (exitCode == 0) {
       println(s"Files successfully transferred from $sourcePath to $targetPath")
@@ -30,16 +42,10 @@ def transferFilesUsingScp(sourcePath: String, targetPath: String): Unit = {
   }
 }
 
-// Integrate the logic after successful validation
-if (masterTableCount == dtCount && masterFileCount == dtCount) {
-  println("Validation between masterTable1DF and MasterFile1csvDF successful.")
+// Example usage
+val sourcePath = "/disk1/bigdata/dev/source/ramp/_RBSCC_*"
+val targetPath = "/etl/inbound"
+val password = "your_password"
 
-  // Trigger the SCP command
-  val sourcePath = "/disk1/source"
-  val targetPath = "/etl/inbound"
-  transferFilesUsingScp(sourcePath, targetPath)
-} else {
-  val message = s"Validation failed: Master table or file counts do not match dt_count."
-  sendEmailNotification(alertCode, message, emailAddress, business)
-  throw new Exception(message)
-}
+// Call the transfer function
+transferFilesUsingScp(sourcePath, targetPath, password)
