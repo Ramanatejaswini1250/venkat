@@ -27,35 +27,51 @@ if [ -z "$TO_EMAIL" ]; then
   exit 1
 fi
 
-FOOTER_PATTERN="\\*+ IMPORTANT MESSAGE"
-CLEANED_MESSAGE=$(echo "$MESSAGE" | sed "/$FOOTER_PATTERN/,\$d")
+# Define the subject and body of the email
+TO_ADDRESS="$TO_EMAIL"
+SUBJECT="Alert Code: $ALERT_CODE"
+BODY="Business: $BUSINESS"
 
-# Prepare email subject and body
-SUBJECT="Alert: $ALERT_CODE - $BUSINESS"
-BODY="Alert Code: $ALERT_CODE\nMessage: $CLEANED_MESSAGE\nBusiness: $BUSINESS\n\nThanks and Regards,\nCDAO Team"
+# Define the email content
+EMAIL_CONTENT=$(cat <<EOF
+To: $TO_ADDRESS
+Subject: $SUBJECT
+CC: $CC_EMAIL
 
+$BODY
 
-# Send the email using msmtp
-send_email() {
-  # Use msmtp to send the email via the configured SMTP server
-  (
-    echo "From: $FROM_EMAIL"
-    echo "To: $TO_EMAIL"
-    if [ -n "$CC_EMAIL" ]; then
-      echo "Cc: $CC_EMAIL"
-    fi
-    echo "Subject: $SUBJECT"
-    echo ""
-    echo -e "$BODY"
-  ) | msmtp --host=$SMTP_HOST --port=$SMTP_PORT --auth=on --user=$SMTP_USERNAME --passwordeval="echo $SMTP_PASSWORD" --from=$FROM_EMAIL $TO_EMAIL
-  
-  # Check if msmtp ran successfully
-  if [ $? -eq 0 ]; then
-    echo "Email sent to $TO_EMAIL and CC: $CC_EMAIL"
-  else
-    echo "Failed to send email"
-  fi
-}
+$MESSAGE
 
-# Call the send_email function
-send_email
+************ IMPORTANT MESSAGE ************
+This e-mail message is intended only for the addressee(s) and contains information which may be confidential.
+If you are not the intended recipient please advise the sender by return email, do not use or disclose the contents,
+and delete the message and any attachments from your system.
+EOF
+)
+
+# Remove the disclaimer from the email content
+DISCLAIMER_START="************ IMPORTANT MESSAGE ************"
+DISCLAIMER_END="************ END OF MESSAGE ************"
+
+PROCESSED_CONTENT=$(echo "$EMAIL_CONTENT" | awk -v start="$DISCLAIMER_START" -v end="$DISCLAIMER_END" '
+{
+    if (index($0, start)) {
+        remove = 1;  # Start removing disclaimer
+    }
+    if (!remove) {
+        print $0;  # Print lines not part of the disclaimer
+    }
+    if (remove && index($0, end)) {
+        remove = 0;  # Stop removing disclaimer
+    }
+}')
+
+# Send the processed email using msmtp
+echo "$PROCESSED_CONTENT" | msmtp --host=$SMTP_HOST --port=$SMTP_PORT --auth=on --user=$SMTP_USERNAME --password=$SMTP_PASSWORD --from=$FROM_EMAIL $TO_EMAIL
+
+# Check if msmtp ran successfully
+if [ $? -eq 0 ]; then
+  echo "Email sent to $TO_EMAIL and CC: $CC_EMAIL"
+else
+  echo "Failed to send email"
+fi
