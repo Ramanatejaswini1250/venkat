@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# Define cutoff time (5:00 PM)
+CUTOFF_TIME="17:00"
+
+# Get current time in HH:mm format
+CURRENT_TIME=$(date +"%H:%M")
+echo "Current Time: $CURRENT_TIME"
+
+# Compare current time with the cutoff time
+if [[ "$CURRENT_TIME" > "$CUTOFF_TIME" ]]; then
+  echo "Current time is after 5:00 PM. Skipping email sending."
+  exit 0
+fi
+
+# Check if the SMTP configuration file exists
+SMTP_CONFIG_FILE="smtp_config.properties"
+if [ ! -f "$SMTP_CONFIG_FILE" ]; then
+  echo "SMTP configuration file not found!"
+  exit 1
+fi
+
+# Read SMTP configuration from properties file
+SMTP_HOST=$(grep -i 'smtp_host' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+SMTP_PORT=$(grep -i 'smtp_port' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+SMTP_USERNAME=$(grep -i 'smtp_username' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+SMTP_PASSWORD=$(grep -i 'smtp_password' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+FROM_EMAIL=$(grep -i 'from_email' $SMTP_CONFIG_FILE | cut -d '=' -f2)
+
+# Print SMTP configuration for debugging
+echo "SMTP Host: $SMTP_HOST"
+echo "SMTP Port: $SMTP_PORT"
+echo "SMTP Username: $SMTP_USERNAME"
+echo "FROM Email: $FROM_EMAIL"
+
+# Define email details (hardcoded for simplicity)
+TO_EMAIL="recipient@example.com"
+CC_EMAIL="cc@example.com"
+ALERT_CODE="ALERT001"
+BUSINESS="Business Name"
+MESSAGE="This is a test message."
+SUBJECT="Alert: $ALERT_CODE"
+
+# Validate TO_EMAIL parameter
+if [ -z "$TO_EMAIL" ]; then
+  echo "Error: No recipient email provided."
+  exit 1
+fi
+
+# Construct email content
+EMAIL_CONTENT=$(cat <<EOF
+To: $TO_EMAIL
+Subject: $SUBJECT
+CC: $CC_EMAIL
+Content-Type: text/plain; charset="UTF-8"
+
+Business: $BUSINESS
+
+$MESSAGE
+
+************ IMPORTANT MESSAGE ************
+This e-mail message is intended only for the addressee(s) and contains information which may be confidential.
+If you are not the intended recipient please advise the sender by return email, do not use or disclose the contents,
+and delete the message and any attachments from your system.
+EOF
+)
+
+# Print email content for debugging
+echo "Email Content: $EMAIL_CONTENT"
+
+# Remove unwanted disclaimer section using 'sed'
+# This assumes the unwanted part begins with "************ IMPORTANT MESSAGE" and ends with the disclaimer text.
+PROCESSED_CONTENT=$(echo "$EMAIL_CONTENT" | sed '/IMPORTANT MESSAGE/,$d')
+
+# Print processed content for debugging
+echo "Processed Email Content: $PROCESSED_CONTENT"
+
+# Send email using msmtp with processed content
+echo "$PROCESSED_CONTENT" | msmtp --host=$SMTP_HOST --port=$SMTP_PORT --auth=on --user=$SMTP_USERNAME --password=$SMTP_PASSWORD --from=$FROM_EMAIL $TO_EMAIL
+
+# Check if msmtp ran successfully
+if [ $? -eq 0 ]; then
+  echo "Email sent successfully to $TO_EMAIL"
+else
+  echo "Failed to send email"
+  exit 2
+fi
