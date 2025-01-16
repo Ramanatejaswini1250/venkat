@@ -75,14 +75,6 @@ BODY=$(remove_footer "$BODY")
 echo "Body after footer removal:"
 echo "$BODY"
 
- 
-
-# Apply footer removal
-BODY=$(remove_footer "$BODY")
-
-# Debug: Output body content after footer removal (optional)
-echo "Body after footer removal:"
-echo "$BODY"
 
 # Function to send email
 send_email() {
