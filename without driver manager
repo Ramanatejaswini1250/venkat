@@ -1,70 +1,69 @@
-import javax.sql.DataSource
-import org.apache.commons.dbcp2.BasicDataSource
 import org.apache.spark.sql.{SparkSession, DataFrame}
 import scala.util.{Try, Success, Failure}
 import java.nio.file.{Files, Paths}
 import java.text.SimpleDateFormat
-import java.util.Calendar
+import java.util.{Calendar, Properties}
+import java.io.FileInputStream
+import java.sql.{Connection, DriverManager, Driver}
 
 object EmailNotificationApp {
-  
+
   // Initialize Spark session
   val spark: SparkSession = SparkSession.builder()
     .appName("EmailNotificationApp")
     .master("local[*]") // Adjust for your environment
     .getOrCreate()
 
-  // JDBC connection parameters
-  val jdbcUrl: String = "jdbc:your_database_url"
-  val jdbcUser: String = "your_user"
-  val jdbcPassword: String = "your_password"
-  val jdbcDriver: String = "com.jdbc.Driver" // Use your database driver class
-
-  // Configure DataSource for connection pooling
-  def createDataSource(): DataSource = {
-    val dataSource = new BasicDataSource()
-    dataSource.setUrl(jdbcUrl)
-    dataSource.setUsername(jdbcUser)
-    dataSource.setPassword(jdbcPassword)
-    dataSource.setDriverClassName(jdbcDriver)
-    dataSource.setInitialSize(5) // Initial connections in the pool
-    dataSource.setMaxTotal(20)  // Max connections in the pool
-    dataSource
+  // Load properties from file
+  def loadProperties(filePath: String): Properties = {
+    val properties = new Properties()
+    Try {
+      val inputStream = new FileInputStream(filePath)
+      properties.load(inputStream)
+      inputStream.close()
+    } match {
+      case Success(_) => println(s"Properties loaded from $filePath")
+      case Failure(ex) => 
+        println(s"Failed to load properties: ${ex.getMessage}")
+        throw ex
+    }
+    properties
   }
 
-
-  // Function to send email notifications via a shell script
-  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
-    val shellScriptPath = "/path/to/email_notification.sh"
-    val emailList = emailAddresses.split(",").map(_.trim)
-
-    if (emailList.nonEmpty) {
-      val toEmail = emailList(0)
-      val ccEmails = emailList.drop(1).mkString(",")
-
-      Try {
-        val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
-        process.waitFor()
-        val exitCode = process.exitValue()
-        if (exitCode != 0) throw new Exception(s"Shell script failed with exit code: $exitCode")
-        else println(s"Notification sent to: $toEmail and CC: $ccEmails")
-      } match {
-        case Success(_) => println(s"Notification sent for alertCode: $alertCode")
-        case Failure(ex) => println(s"Failed to send email: ${ex.getMessage}")
-      }
-    } else {
-      println("No email addresses found.")
+  // Explicitly register a driver at runtime
+  def registerDriver(driverClassName: String): Unit = {
+    Try {
+      val driverClass = Class.forName(driverClassName)
+      val driver = driverClass.getDeclaredConstructor().newInstance().asInstanceOf[Driver]
+      DriverManager.registerDriver(driver)
+    } match {
+      case Success(_) => println(s"Driver $driverClassName successfully registered.")
+      case Failure(ex) => println(s"Failed to register driver $driverClassName: ${ex.getMessage}")
     }
   }
 
+  // Get a connection using the properties
+  def getConnection(properties: Properties): Connection = {
+    val jdbcUrl = properties.getProperty("jdbc.url")
+    val jdbcUser = properties.getProperty("jdbc.user")
+    val jdbcPassword = properties.getProperty("jdbc.password")
+    val driverClassName = properties.getProperty("jdbc.driver")
+
+    // Register the driver before using it
+    registerDriver(driverClassName)
+
+    // Get connection
+    DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+  }
+
   // Function to run SQL scripts
-  def runSqlScript(scriptPath: String, dataSource: DataSource): Unit = {
+  def runSqlScript(scriptPath: String, properties: Properties): Unit = {
     println(s"Running SQL script from: $scriptPath")
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
     val logBuffer = new StringBuilder
 
     Try {
-      val connection = dataSource.getConnection
+      val connection = getConnection(properties)
       val statement = connection.createStatement()
 
       val script = new String(Files.readAllBytes(Paths.get(scriptPath)))
@@ -106,14 +105,12 @@ object EmailNotificationApp {
   }
 
   def main(args: Array[String]): Unit = {
-    // Create DataSource instance
-    val dataSource = createDataSource()
+    // Load properties file
+    val propertiesFilePath = "/path/to/db.properties"
+    val properties = loadProperties(propertiesFilePath)
 
     // Example usage of `runSqlScript`
     val sqlFilePath = "/path/to/your/sql/script.sql"
-    runSqlScript(sqlFilePath, dataSource)
-
-    // Clean up DataSource when done
-    dataSource.asInstanceOf[BasicDataSource].close()
+    runSqlScript(sqlFilePath, properties)
   }
 }
