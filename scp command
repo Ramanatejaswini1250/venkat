@@ -1,51 +1,17 @@
-import java.io.{BufferedReader, InputStreamReader}
+#!/bin/bash
 
-def transferFilesUsingScp(sourcePath: String, targetPath: String, password: String): Unit = {
-  try {
-    // Define the SCP command with bash for proper interpretation of wildcards
-    val scpCommand = Seq(
-      "bash", "-c", 
-      s"sshpass -p '$password' scp -r $sourcePath user@remote-server:$targetPath"
-    )
+# Define the source, target, and password variables directly
+SOURCE_PATH="/disk1/bigdata/dev/source/ramp/_RBSCC_*"
+TARGET_PATH="/etl/inbound"
+PASSWORD="your_password"
 
-    // Log the command being executed
-    println(s"Executing command: ${scpCommand.mkString(" ")}")
+# Run the SCP command using sshpass
+sshpass -p "$PASSWORD" scp -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
 
-    // Start the process
-    val processBuilder = new ProcessBuilder(scpCommand: _*)
-    val process = processBuilder.start()
-
-    // Capture and print the standard output
-    val outputReader = new BufferedReader(new InputStreamReader(process.getInputStream))
-    var line: String = null
-    while ({ line = outputReader.readLine(); line != null }) {
-      println(s"OUTPUT: $line")
-    }
-
-    // Capture and print the error output
-    val errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream))
-    while ({ line = errorReader.readLine(); line != null }) {
-      println(s"ERROR: $line")
-    }
-
-    // Wait for the process to complete
-    val exitCode = process.waitFor()
-    if (exitCode == 0) {
-      println(s"Files successfully transferred from $sourcePath to $targetPath")
-    } else {
-      throw new Exception(s"SCP command failed with exit code $exitCode")
-    }
-  } catch {
-    case ex: Exception =>
-      println(s"Error during file transfer: ${ex.getMessage}")
-      throw new Exception("SCP transfer failed", ex)
-  }
-}
-
-// Example usage
-val sourcePath = "/disk1/bigdata/dev/source/ramp/_RBSCC_*"
-val targetPath = "/etl/inbound"
-val password = "your_password"
-
-// Call the transfer function
-transferFilesUsingScp(sourcePath, targetPath, password)
+# Check if the SCP command was successful
+if [ $? -eq 0 ]; then
+  echo "Files transferred successfully"
+else
+  echo "SCP command failed"
+  exit 1
+fi
