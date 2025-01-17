@@ -7,7 +7,7 @@ SPARK_HOME="/path/to/spark"
 JAR_PATH="/path/to/your/scala-application.jar"
 
 # Define the application arguments if any (e.g., input/output paths, parameters)
-#MASTER_URL="spark://your-spark-master-url:7077"  # Change to your Spark master URL, or use "local[*]" for local mode
+MASTER_URL="spark://your-spark-master-url:7077"  # Change to your Spark master URL, or use "local[*]" for local mode
 EXECUTOR_MEMORY="4g"  # Memory for each executor
 DRIVER_MEMORY="2g"  # Memory for the driver
 NUM_EXECUTORS="4"    # Number of executors
@@ -16,13 +16,45 @@ EXECUTOR_CORES="2"   # Number of cores per executor
 # Additional Spark configurations (optional)
 SPARK_CONF="--conf spark.sql.shuffle.partitions=10"
 
-# Run the Spark job using spark-submit
+# Define the source, target, and password for the file transfer
+SOURCE_PATH="/disk1/bigdata/dev/source/ramp/_RBSCC_*"
+TARGET_PATH="/etl/inbound"
+PASSWORD="your_password"
+
+# Step 1: Run the Spark job using spark-submit
 $SPARK_HOME/bin/spark-submit \
   --class com.yourpackage.YourAppClass \  # Replace with your application's main class name
-  --master ${SPARK_MASTER} \
+  --master ${MASTER_URL} \  # Specify the Spark master URL
   --executor-memory $EXECUTOR_MEMORY \
   --driver-memory $DRIVER_MEMORY \
   --num-executors $NUM_EXECUTORS \
   --executor-cores $EXECUTOR_CORES \
   $SPARK_CONF \
   $JAR_PATH  # Path to your compiled JAR file
+
+# Check if Spark job was successful
+if [ $? -eq 0 ]; then
+  echo "Spark job completed successfully"
+  
+  # Step 2: Check if files exist in the source path before proceeding with SCP transfer
+  if [ -e "$SOURCE_PATH" ]; then
+    echo "Files found in the source path. Proceeding with file transfer..."
+
+    # Run the SCP command using sshpass to transfer files to the remote server
+    sshpass -p "$PASSWORD" scp -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
+    
+    # Check if the SCP command was successful
+    if [ $? -eq 0 ]; then
+      echo "Files transferred successfully"
+    else
+      echo "SCP command failed"
+      exit 1
+    fi
+  else
+    echo "No files found in the source path. Skipping file transfer."
+    exit 1
+  fi
+else
+  echo "Spark job failed. Exiting the script."
+  exit 1
+fi
