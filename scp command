@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Define the source, target, and password variables directly
+# Define the source, target, and password variables
 SOURCE_PATH="/disk1/bigdata/dev/source/ramp/_RBSCC_*"
 TARGET_PATH="/etl/inbound"
 PASSWORD="your_password"
@@ -11,6 +11,15 @@ sshpass -p "$PASSWORD" scp -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
 # Check if the SCP command was successful
 if [ $? -eq 0 ]; then
   echo "Files transferred successfully"
+
+  # Remove the files from the source location
+  rm -rf $SOURCE_PATH
+  if [ $? -eq 0 ]; then
+    echo "Source files cleaned successfully"
+  else
+    echo "Failed to clean source files"
+    exit 1
+  fi
 else
   echo "SCP command failed"
   exit 1
