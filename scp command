@@ -1,26 +1,51 @@
 #!/bin/bash
 
-# Define the source, target, and password variables
-SOURCE_PATH="/disk1/bigdata/dev/source/ramp/_RBSCC_*"
-TARGET_PATH="/etl/inbound"
+# Load the configuration from the properties file
+source ./config.properties
+
+# Check if the configuration variables are loaded
+if [ -z "$SOURCE_PATH" ]; then
+  echo "SOURCE_PATH is not defined in config.properties. Exiting."
+  exit 1
+fi
+if [ -z "$TARGET_PATH_1" ] || [ -z "$TARGET_PATH_2" ]; then
+  echo "TARGET_PATH(s) are not defined in config.properties. Exiting."
+  exit 1
+fi
+
+# Define the password for SCP transfer
 PASSWORD="your_password"
 
-# Run the SCP command using sshpass
-sshpass -p "$PASSWORD" scp -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
+# Array of target paths
+TARGET_PATHS=($TARGET_PATH_1 $TARGET_PATH_2)
 
-# Check if the SCP command was successful
-if [ $? -eq 0 ]; then
-  echo "Files transferred successfully"
+# Step 2: Check if files exist in the source path before proceeding with SCP transfer
+if [ -e "$SOURCE_PATH" ]; then
+  echo "Files found in the source path. Proceeding with file transfer..."
 
-  # Remove the files from the source location
+  # Loop through each target path and transfer files
+  for TARGET_PATH in "${TARGET_PATHS[@]}"; do
+    echo "Transferring files to $TARGET_PATH..."
+    sshpass -p "$PASSWORD" scp -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
+    
+    # Check if the SCP command was successful for each target
+    if [ $? -eq 0 ]; then
+      echo "Files successfully transferred to $TARGET_PATH"
+    else
+      echo "Failed to transfer files to $TARGET_PATH"
+      exit 1
+    fi
+  done
+
+  # Step 3: Clean up the source files after successful transfer
   rm -rf $SOURCE_PATH
   if [ $? -eq 0 ]; then
-    echo "Source files cleaned successfully"
+    echo "Source files cleaned up successfully"
   else
-    echo "Failed to clean source files"
+    echo "Failed to clean up source files"
     exit 1
   fi
 else
-  echo "SCP command failed"
+  echo "No files found in the source path. Skipping file transfer."
   exit 1
 fi
