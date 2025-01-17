@@ -1,232 +1,54 @@
-import org.apache.spark.sql.{SparkSession, DataFrame}
-import java.io.{BufferedReader, InputStreamReader}
-import java.text.SimpleDateFormat
-import java.util.{Calendar, Date}
-import java.time.{LocalDate, LocalDateTime, LocalTime, DayOfWeek}
-import java.time.format.DateTimeFormatter
-import java.util.concurrent.TimeUnit
-import scala.util.{Try, Success, Failure}
-import scala.io.Source
-import java.nio.file.{Files, Paths}
-import java.sql.{Connection, DriverManager, Statement}
+def sendConsolidatedEmail(allSuccess: Seq[String], allFailures: Seq[String], currentDate: String): Unit = {
+  val subject = s"Consolidated Alert Report for $currentDate"
 
-object EmailNotificationApp {
+  val message =
+    s"""
+      |<html>
+      |<head>
+      |  <style>
+      |    table {
+      |      width: 100%;
+      |      border-collapse: collapse;
+      |    }
+      |    th, td {
+      |      border: 1px solid black;
+      |      padding: 8px;
+      |      text-align: left;
+      |    }
+      |    th {
+      |      background-color: #4CAF50;
+      |      color: white;
+      |    }
+      |    .success {
+      |      background-color: #d4edda;
+      |      color: #155724;
+      |    }
+      |    .failure {
+      |      background-color: #f8d7da;
+      |      color: #721c24;
+      |    }
+      |  </style>
+      |</head>
+      |<body>
+      |  <h2>Consolidated Alert Report for $currentDate</h2>
+      |  <h3>Success Alerts</h3>
+      |  <table>
+      |    <tr>
+      |      <th>Alert</th>
+      |    </tr>
+      |    ${allSuccess.map(alert => s"<tr class='success'><td>$alert</td></tr>").mkString("\n")}
+      |  </table>
+      |
+      |  <h3>Failure Alerts</h3>
+      |  <table>
+      |    <tr>
+      |      <th>Alert</th>
+      |    </tr>
+      |    ${allFailures.map(alert => s"<tr class='failure'><td>$alert</td></tr>").mkString("\n")}
+      |  </table>
+      |</body>
+      |</html>
+      |""".stripMargin
 
-  // Define Spark session (initialize the Spark context)
-  val spark: SparkSession = SparkSession.builder()
-    .appName("EmailNotificationApp")
-    .master("local[*]") // Adjust as needed for your environment
-    .getOrCreate()
-
-  // JDBC connection parameters (to be set with actual values)
-  val jdbcUrl: String = "jdbc:your_database_url"
-  val jdbcUser: String = "your_user"
-  val jdbcPassword: String = "your_password"
-  val jdbcDriver: String = "com.jdbc.Driver"  // Specify the correct JDBC driver class
-
-  // Lists to track success and failure alerts
-  var successAlerts: List[String] = List()
-  var failureAlerts: List[String] = List()
-
-  // Function to send email notifications
-  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
-    val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
-    val emailList = emailAddresses.split(",").map(_.trim)
-
-    if (emailList.nonEmpty) {
-      val toEmail = emailList(0)
-      val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
-
-      Try {
-        val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
-
-        val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
-        var line: String = null
-        while ({ line = reader.readLine(); line != null }) {
-          println(line)
-        }
-
-        val exitCode = process.waitFor()
-        if (exitCode != 0) {
-          throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
-        } else {
-          println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
-        }
-      } match {
-        case Success(_) => 
-          successAlerts = successAlerts :+ alertCode  // Add to success list
-          println(s"Notification sent for alertCode: $alertCode")
-        case Failure(ex) =>
-          failureAlerts = failureAlerts :+ alertCode  // Add to failure list
-          println(s"Failed to send email notification: ${ex.getMessage}")
-      }
-    } else {
-      println("No email addresses found to send the notification.")
-    }
-  }
-
-  // Function to generate the formatted folder name
-  def getFormattedFolderName(): String = {
-    val currentDateTime = LocalDateTime.now
-    val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-    val formattedDate = currentDateTime.format(dateFormatter)
-
-    // Get the current day of the week (e.g., MON, TUE, etc.)
-    val currentDay = currentDateTime.getDayOfWeek match {
-      case DayOfWeek.MONDAY    => "MON"
-      case DayOfWeek.TUESDAY   => "TUE"
-      case DayOfWeek.WEDNESDAY => "WED"
-      case DayOfWeek.THURSDAY  => "THU"
-      case DayOfWeek.FRIDAY    => "FRI"
-      case DayOfWeek.SATURDAY  => "SAT"
-      case DayOfWeek.SUNDAY    => "SUN"
-    }
-
-    // Construct the folder name
-    s"${formattedDate}_RBSCC_$currentDay"
-  }
-
-  // Function to run SQL script and halt execution if it fails
-  def runSqlScript(scriptPath: String): Unit = {
-    try {
-      // Read the SQL script file content
-      val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
-
-      // Execute the SQL query using Spark (or another method if needed)
-      val result = spark.sql(sqlContent)  // For Spark SQL execution
-
-      // Check for specific success criteria, or handle failure
-      val status = result.count()  // This could be any check based on your query result
-      if (status == 0) {
-        println(s"SQL script executed successfully: $scriptPath")
-      } else {
-        println(s"SQL script failed, halting execution for: $scriptPath")
-        throw new Exception(s"SQL execution failed, halting further execution.")
-      }
-    } catch {
-      case ex: Exception =>
-        println(s"Error executing SQL script: ${ex.getMessage}")
-        throw new Exception(s"SQL script failed: ${ex.getMessage}, halting process.")
-    }
-  }
-
-  // Function to execute the SQL script
-  def executeSqlQuery(query: String): DataFrame = {
-    spark.sql(query) // Execute the query using Spark SQL
-  }
-
-  // Function to handle the SQL execution logic
-  def processAlerts(): Unit = {
-    val currentDateTime = LocalDateTime.now()
-    val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
-
-    // Query to fetch alerts from a database
-    val alertQuery = """
-      SELECT alert_code, dt_count, date_to_load, bteq_location, email_address, business, source_table_name, frequency, filter_column
-      FROM alert_table
-      WHERE date_to_load <= CURRENT_DATE
-    """
-
-    val alertDF = executeSqlQuery(alertQuery)
-
-    alertDF.collect().foreach { row =>
-      val alertCode = row.getAs[String]("alert_code")
-      val dtCount = row.getAs[Int]("dt_count")
-      val dateToLoad = row.getAs[String]("date_to_load")
-      val bteqLocation = row.getAs[String]("bteq_location")
-      val emailAddress = row.getAs[String]("email_address")
-      val business = row.getAs[String]("business")
-
-      val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-        sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-        throw new Exception("Missing source_table_name")
-      }
-
-      val frequency = row.getAs[String]("frequency").getOrElse {
-        sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-        throw new Exception("Missing frequency")
-      }
-
-      val filterColumn = row.getAs[String]("filter_column").getOrElse {
-        sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-        throw new Exception("Missing filter_column")
-      }
-
-      try {
-        if (dtCount > 0) {
-          val folderPath = getFormattedFolderName()  // Get folder for saving the SQL files
-          val sqlFilePath = s"$folderPath/${alertCode}.sql"
-
-          // Check if the folder exists and proceed with further checks
-          if (Files.exists(Paths.get(folderPath))) {
-            // Check the source table and perform the necessary actions
-            val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
-            val sourceTableCountDF = spark.read
-              .format("jdbc")
-              .option("url", jdbcUrl)
-              .option("dbtable", jdbcQuery)
-              .option("user", jdbcUser)
-              .option("password", jdbcPassword)
-              .option("driver", jdbcDriver)
-              .load()
-
-            val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-
-            if (sourceTableCount == dtCount) {
-              // Run the SQL script if the source table count matches
-              if (Files.exists(Paths.get(sqlFilePath))) {
-                runSqlScript(sqlFilePath)  // Run the SQL script using Spark
-                sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
-              } else {
-                sendEmailNotification(alertCode, s"SQL file not found for alertCode: $alertCode", emailAddress, business)
-              }
-            } else {
-              sendEmailNotification(alertCode, s"Source table count does not match DT_COUNT", emailAddress, business)
-            }
-          } else {
-            sendEmailNotification(alertCode, s"Folder not found for alertCode: $alertCode", emailAddress, business)
-          }
-        } else {
-          sendEmailNotification(alertCode, s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode", emailAddress, business)
-        }
-      } catch {
-        case ex: Exception =>
-          val errorMessage = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
-          sendEmailNotification(alertCode, errorMessage, emailAddress, business)
-      }
-    }
-  }
-
-  // Function to send a consolidated success/failure report email at 20:00
-  def sendConsolidatedEmail(): Unit = {
-    if (LocalDateTime.now().getHour == 20 && LocalDateTime.now().getMinute == 0) {
-      val allSuccess = successAlerts.mkString("\n")
-      val allFailures = failureAlerts.mkString("\n")
-      val subject = "Daily Alert Report"
-
-      val message = s"""
-        |Here is the consolidated alert report for today:
-        |
-        |Success Alerts:
-        |$allSuccess
-        |
-        |Failure Alerts:
-        |$allFailures
-      """.stripMargin
-
-      // Send the email
-      sendEmailNotification("ConsolidatedAlertReport", message, "admin@example.com", "Business Unit")
-    }
-  }
-
-  // Main function to initiate the alert processing
-  def main(args: Array[String]): Unit = {
-    try {
-      processAlerts()  // Start the alert processing logic
-      sendConsolidatedEmail()  // Send the consolidated report at 20:00
-    } catch {
-      case ex: Exception =>
-        println(s"Error in processing: ${ex.getMessage}")
-    }
-  }
+  EmailService.sendEmail(subject, message)
 }
