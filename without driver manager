@@ -1,0 +1,119 @@
+import javax.sql.DataSource
+import org.apache.commons.dbcp2.BasicDataSource
+import org.apache.spark.sql.{SparkSession, DataFrame}
+import scala.util.{Try, Success, Failure}
+import java.nio.file.{Files, Paths}
+import java.text.SimpleDateFormat
+import java.util.Calendar
+
+object EmailNotificationApp {
+  
+  // Initialize Spark session
+  val spark: SparkSession = SparkSession.builder()
+    .appName("EmailNotificationApp")
+    .master("local[*]") // Adjust for your environment
+    .getOrCreate()
+
+  // JDBC connection parameters
+  val jdbcUrl: String = "jdbc:your_database_url"
+  val jdbcUser: String = "your_user"
+  val jdbcPassword: String = "your_password"
+  val jdbcDriver: String = "com.jdbc.Driver" // Use your database driver class
+
+  // Configure DataSource for connection pooling
+  def createDataSource(): DataSource = {
+    val dataSource = new BasicDataSource()
+    dataSource.setUrl(jdbcUrl)
+    dataSource.setUsername(jdbcUser)
+    dataSource.setPassword(jdbcPassword)
+    dataSource.setDriverClassName(jdbcDriver)
+    dataSource.setInitialSize(5) // Initial connections in the pool
+    dataSource.setMaxTotal(20)  // Max connections in the pool
+    dataSource
+  }
+
+
+  // Function to send email notifications via a shell script
+  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
+    val shellScriptPath = "/path/to/email_notification.sh"
+    val emailList = emailAddresses.split(",").map(_.trim)
+
+    if (emailList.nonEmpty) {
+      val toEmail = emailList(0)
+      val ccEmails = emailList.drop(1).mkString(",")
+
+      Try {
+        val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
+        process.waitFor()
+        val exitCode = process.exitValue()
+        if (exitCode != 0) throw new Exception(s"Shell script failed with exit code: $exitCode")
+        else println(s"Notification sent to: $toEmail and CC: $ccEmails")
+      } match {
+        case Success(_) => println(s"Notification sent for alertCode: $alertCode")
+        case Failure(ex) => println(s"Failed to send email: ${ex.getMessage}")
+      }
+    } else {
+      println("No email addresses found.")
+    }
+  }
+
+  // Function to run SQL scripts
+  def runSqlScript(scriptPath: String, dataSource: DataSource): Unit = {
+    println(s"Running SQL script from: $scriptPath")
+    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
+    val logBuffer = new StringBuilder
+
+    Try {
+      val connection = dataSource.getConnection
+      val statement = connection.createStatement()
+
+      val script = new String(Files.readAllBytes(Paths.get(scriptPath)))
+      val commands = script.split(";").map(_.trim).filter(_.nonEmpty)
+
+      commands.foreach { command =>
+        try {
+          statement.execute(command)
+          val successMsg = s"[SUCCESS] Executed: $command"
+          println(successMsg)
+          logBuffer.append(successMsg).append("\n")
+        } catch {
+          case ex: Exception =>
+            val errorMsg = s"[ERROR] Failed: $command\nMessage: ${ex.getMessage}"
+            println(errorMsg)
+            logBuffer.append(errorMsg).append("\n")
+        }
+      }
+
+      statement.close()
+      connection.close()
+
+      // Save execution log
+      Files.write(Paths.get(logPath), logBuffer.toString().getBytes())
+      println(s"Execution log saved to: $logPath")
+    } catch {
+      case ex: Exception =>
+        val errorMsg = s"[FATAL] Error: ${ex.getMessage}"
+        println(errorMsg)
+        logBuffer.append(errorMsg).append("\n")
+        Files.write(Paths.get(logPath), logBuffer.toString().getBytes())
+    }
+  }
+
+  // Utility function to get the current timestamp
+  def getCurrentTimestamp: String = {
+    val format = new SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(Calendar.getInstance().getTime)
+  }
+
+  def main(args: Array[String]): Unit = {
+    // Create DataSource instance
+    val dataSource = createDataSource()
+
+    // Example usage of `runSqlScript`
+    val sqlFilePath = "/path/to/your/sql/script.sql"
+    runSqlScript(sqlFilePath, dataSource)
+
+    // Clean up DataSource when done
+    dataSource.asInstanceOf[BasicDataSource].close()
+  }
+}
