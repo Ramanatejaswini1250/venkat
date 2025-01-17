@@ -216,6 +216,30 @@ def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
       // Combine valid lines into SQL commands and execute them
       val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
 
+} catch {
+  case ex: Exception =>
+    // Extract the table name from the SQL command
+    val tableName = extractTableName(command)
+    val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
+    
+    println(errorMsg) // Print error to console
+    logBuffer.append(errorMsg + "\n") // Append error to log buffer
+}
+
+// Function to extract table name
+def extractTableName(command: String): String = {
+  // Regex to capture table names after 'FROM' or 'JOIN' (case insensitive)
+  val tableRegex = "(?i)(?:from|join)\\s+([\\w\\.]+)".r
+
+  // Find the first match in the SQL command
+  tableRegex.findFirstMatchIn(command) match {
+    case Some(matched) => matched.group(1) // Return the captured group (table name)
+    case None => "Unknown Table" // Default if no table is found
+  }
+}
+
+
+
       commands.foreach { command =>
         try {
           // Check if the command is an insert without columns
