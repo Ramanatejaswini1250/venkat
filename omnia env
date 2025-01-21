@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# Check if OMNIA_ENVIRONMENT is set. If not, default to "dev".
+if [ -z "$OMNIA_ENVIRONMENT" ]; then
+  export OMNIA_ENVIRONMENT="dev"
+fi
+
+# Set JDBC_PROPERTIES_PATH based on the OMNIA_ENVIRONMENT
+case "$OMNIA_ENVIRONMENT" in
+  "dev")
+    export JDBC_PROPERTIES_PATH="/usr/local/omnia/datascience-dev/run/jdbc.properties"
+    ;;
+  "test")
+    export JDBC_PROPERTIES_PATH="/usr/local/omnia/datascience-test/run/jdbc.properties"
+    ;;
+  "prod")
+    export JDBC_PROPERTIES_PATH="/usr/local/omnia/datascience-prod/run/jdbc.properties"
+    ;;
+  *)
+    echo "Error: Unknown environment: $OMNIA_ENVIRONMENT"
+    exit 1
+    ;;
+esac
+
+# Print environment details for verification
+echo "Running Spark job in $OMNIA_ENVIRONMENT environment"
+echo "Using JDBC properties file: $JDBC_PROPERTIES_PATH"
+
+# Run the Spark job with the environment variables
+spark-submit \
+  --class DynamicJdbcConfig \
+  --conf "spark.executorEnv.OMNIA_ENVIRONMENT=$OMNIA_ENVIRONMENT" \
+  --conf "spark.executorEnv.JDBC_PROPERTIES_PATH=$JDBC_PROPERTIES_PATH" \
+  --master yarn \
+  --deploy-mode cluster \
+  your_spark_application.jar
