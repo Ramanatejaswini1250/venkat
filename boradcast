@@ -1,1 +1,104 @@
+import java.nio.file.{Files, Paths}
+import org.apache.spark.broadcast.Broadcast
+
+// Extract the unique bteq_location from the DataFrame
+val uniqueBteqLocations = df.select("bteq_location").distinct().collect()
+
+// Ensure there's only one unique bteq_location
+if (uniqueBteqLocations.length != 1) {
+  throw new Exception("Multiple or missing bteq_location values found in the DataFrame!")
+}
+
+val bteqLocation = uniqueBteqLocations.head.getString(0)
+
+// Broadcast the bteq_location
+val bteqLocationBroadcast: Broadcast[String] = spark.sparkContext.broadcast(bteqLocation)
+
+// Use the broadcast variable in the processing logic
+df.foreachPartition { partition =>
+  partition.foreach { row =>
+    val alertCode = row.getAs[String]("alert_code")
+    val dtCount = row.getAs[Int]("dt_count")
+    val dateToLoad = row.getAs[String]("date_to_load")
+    val emailAddress = row.getAs[String]("email_address")
+    val business = row.getAs[String]("business")
+
+    val sourceTableName = Option(row.getAs[String]("source_table_name")).getOrElse {
+      sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
+      throw new Exception("Missing source_table_name")
+    }
+
+    val frequency = Option(row.getAs[String]("frequency")).getOrElse {
+      sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
+      throw new Exception("Missing frequency")
+    }
+
+    val filterColumn = Option(row.getAs[String]("filter_column")).getOrElse {
+      sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
+      throw new Exception("Missing filter_column")
+    }
+
+    try {
+      if (dtCount > 0) {
+        // Use the broadcasted bteq_location
+        val folderPath = getSqlFolderPath(frequency, bteqLocationBroadcast.value)
+
+        // Check if the folder exists
+        val folderExists = Files.exists(Paths.get(folderPath))
+
+        if (frequency == "W" && !folderExists) {
+          val message = s"AlertCode $alertCode with frequency 'W' was not processed by the cutoff time. File missing from folder $folderPath."
+          sendEmailNotification(alertCode, message, emailAddress, business)
+        }
+
+        if (frequency == "M") {
+          val cutoffDate = LocalDate.now().withDayOfMonth(10)
+          if (LocalDate.now().isAfter(cutoffDate)) {
+            val message = s"AlertCode $alertCode with frequency 'M' was not processed by the cutoff time."
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+        }
+
+        if (frequency == "Q") {
+          val currentDate = LocalDate.now()
+          val isFirstDayOfQuarter = List(1, 4, 7, 10).contains(currentDate.getMonthValue) && currentDate.getDayOfMonth == 1
+          if (isFirstDayOfQuarter) {
+            val message = s"AlertCode $alertCode with frequency 'Q' was not processed by the cutoff time."
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+        }
+
+        // JDBC Query Execution
+        val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+        val sourceTableCountDF = spark.read
+          .format("jdbc")
+          .option("url", jdbcUrl)
+          .option("dbtable", jdbcQuery)
+          .option("user", jdbcUser)
+          .option("password", jdbcPassword)
+          .option("driver", jdbcDriver)
+          .load()
+
+        val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+
+        if (sourceTableCount == dtCount) {
+          val sqlFilePath = s"$folderPath/$alertCode.sql"
+          val fileExists = Files.exists(Paths.get(sqlFilePath))
+
+          if (fileExists) {
+            runSqlScript(sqlFilePath) // Run the SQL script
+            sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+          } else {
+            val message = s"SQL file not found for alertCode: $alertCode at $sqlFilePath."
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+        }
+      }
+    } catch {
+      case ex: Exception =>
+        val message = s"An error occurred for alertCode: $alertCode - ${ex.getMessage}"
+        sendEmailNotification(alertCode, message, emailAddress, business)
+    }
+  }
+}
 
