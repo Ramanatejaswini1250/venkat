@@ -1,54 +1,36 @@
-// Step 1: Broadcast JDBC properties
-val jdbcProps = Map(
-  "url" -> props.getProperty("jdbc.url"),
-  "user" -> props.getProperty("jdbc.user"),
-  "password" -> props.getProperty("jdbc.password")
-)
+import org.apache.commons.dbcp2.BasicDataSource
 
-val broadcastJdbcProps = sc.broadcast(jdbcProps)
+// 1. Create a connection pool (this happens in the driver)
+val dataSource = new BasicDataSource()
+dataSource.setUrl("jdbc:mysql://localhost:3306/db")
+dataSource.setUsername("user")
+dataSource.setPassword("password")
+dataSource.setMaxTotal(10)  // Maximum number of connections in the pool
 
-// Step 2: Use rdd.foreachPartition to create a connection and apply methods
-rdd.foreachPartition(partition => {
-  // Get JDBC properties from broadcast variable
-  val jdbcUrl = broadcastJdbcProps.value("url")
-  val jdbcUser = broadcastJdbcProps.value("user")
-  val jdbcPassword = broadcastJdbcProps.value("password")
-
-  // Create a JDBC connection for this partition
-  val conn_rss = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-
+// 2. Access the pool inside the foreachPartition
+df.foreachPartition { partition =>
+  // Get a connection from the pool
+  val conn_rss = dataSource.getConnection()
+  
   try {
-    // Define methods locally
-    def insertRecord(record: String): Unit = {
-      val statement = conn_rss.prepareStatement("INSERT INTO some_table (column_name) VALUES (?)")
-      statement.setString(1, record)
-      statement.executeUpdate()
-      statement.close()
+    partition.foreach { row =>
+      val stmt_rss = conn_rss.prepareStatement("INSERT INTO my_table (column1, column2) VALUES (?, ?)")
+      stmt_rss.setString(1, row.getAs[String]("column1"))
+      stmt_rss.setInt(2, row.getAs[Int]("column2"))
+      stmt_rss.executeUpdate()
     }
-
-    def updateRecord(record: String): Unit = {
-      val statement = conn_rss.prepareStatement("UPDATE some_table SET column_name = ? WHERE id = ?")
-      statement.setString(1, record)
-      statement.setInt(2, 1) // Example value for id
-      statement.executeUpdate()
-      statement.close()
-    }
-
-    def performOtherOperations(record: String): Unit = {
-      // Add your custom logic here
-      println(s"Processing record: $record")
-    }
-
-    // Step 3: Iterate through the partition and apply methods
-    partition.foreach(record => {
-      // Call the methods as needed
-      insertRecord(record.toString)
-      updateRecord(record.toString)
-      performOtherOperations(record.toString)
-    })
-
   } finally {
-    // Step 4: Close the connection to release resources
+    // Make sure to return the connection to the pool
     conn_rss.close()
   }
-})
+}
+
+// 3. Access the pool outside of foreachPartition
+val conn_test = dataSource.getConnection()
+try {
+  // Do some other operations with the connection if needed
+  val stmt_test = conn_test.createStatement()
+  // Your query here...
+} finally {
+  conn_test.close()  // Close when done
+}
