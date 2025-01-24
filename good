@@ -315,6 +315,343 @@ df.foreachPartition { partition =>
     // Process each row in the partition
     partition.foreach { row =>
       val stmt = con_rss.createStatement()
+import org.apache.spark.sql.{SparkSession, DataFrame}
+import java.io.{BufferedReader, InputStreamReader}
+import java.text.SimpleDateFormat
+import java.util.{Calendar, Date}
+import scala.util.{Try, Success, Failure}
+import scala.io.Source
+import java.nio.file.{Files, Paths}
+import java.sql.{Connection, DriverManager, Statement}
+
+object EmailNotificationApp {
+  
+  // Define Spark session (initialize the Spark context)
+  val spark: SparkSession = SparkSession.builder()
+    .appName("EmailNotificationApp")
+    .master("local[*]") // Adjust as needed for your environment
+    .getOrCreate()
+
+  // JDBC connection parameters (to be set with actual values)
+  val jdbcUrl: String = "jdbc:your_database_url"
+  val jdbcUser: String = "your_user"
+  val jdbcPassword: String = "your_password"
+  val jdbcDriver: String = "com.jdbc.Driver"  // Specify the correct JDBC driver class
+
+  // Function to send email notifications via a shell script with first email in To and others in CC
+  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
+    val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
+    val emailList = emailAddresses.split(",").map(_.trim)
+
+    if (emailList.nonEmpty) {
+      val toEmail = emailList(0)
+      val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
+
+      Try {
+        val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
+
+        val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+        var line: String = null
+        while ({ line = reader.readLine(); line != null }) {
+          println(line)
+        }
+
+        val exitCode = process.waitFor()
+        if (exitCode != 0) {
+          throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
+        } else {
+          println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
+        }
+      } match {
+        case Success(_) => println(s"Notification sent for alertCode: $alertCode")
+        case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
+      }
+    } else {
+      println("No email addresses found to send the notification.")
+    }
+  }
+
+  // Function to run SQL script and halt execution if it fails
+  def runSqlScript(scriptPath: String): Unit = {
+    try {
+      // Read the SQL script file content
+      val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
+
+      // Execute the SQL query using Spark (or another method if needed)
+      val result = spark.sql(sqlContent)  // For Spark SQL execution
+
+      // Check for specific success criteria, or handle failure
+      val status = result.count()  // This could be any check based on your query result
+      if (status == 0) {
+        println(s"SQL script executed successfully: $scriptPath")
+      } else {
+        println(s"SQL script failed, halting execution for: $scriptPath")
+        throw new Exception(s"SQL execution failed, halting further execution.")
+      }
+    } catch {
+      case ex: Exception =>
+        println(s"Error executing SQL script: ${ex.getMessage}")
+        throw new Exception(s"SQL script failed: ${ex.getMessage}, halting process.")
+    }
+  }
+
+  // Function to generate a timestamped file name
+  def getCurrentTimestamp: String = {
+    val format = new SimpleDateFormat("yyyyMMddHHmmss")
+    format.format(Calendar.getInstance().getTime)
+  }
+
+def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
+    frequency.toLowerCase match {
+      case "d" => s"$bteqLocation/DAILY" // Files arriving daily go to "DAILY" folder
+      case "w" =>
+        // For weekly, check which day of the week it is and run the corresponding folder (Monday-Sunday)
+        val dayOfWeek = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime).toUpperCase
+        dayOfWeek match {
+          case "MONDAY"    => s"$bteqLocation/MON"
+          case "TUESDAY"   => s"$bteqLocation/TUE"
+          case "WEDNESDAY" => s"$bteqLocation/WED"
+          case "THURSDAY"  => s"$bteqLocation/THU"
+          case "FRIDAY"    => s"$bteqLocation/FRI"
+          case "SATURDAY"  => s"$bteqLocation/SAT"
+          case "SUNDAY"    => s"$bteqLocation/SUN"
+          case _           => throw new Exception(s"Unknown weekday: $dayOfWeek")
+        }
+
+      case "m" => s"$bteqLocation/MONTHLY"   // For monthly files
+      case "q" => s"$bteqLocation/QUARTERLY" // For quarterly files
+      case _   => throw new Exception(s"Unknown frequency: $frequency")
+    }
+  }
+
+ // Function to generate the formatted folder name
+  def getFormattedFolderName(): String = {
+    val currentDateTime = LocalDateTime.now
+    val dateFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+    val formattedDate = currentDateTime.format(dateFormatter)
+
+    // Get the current day of the week (e.g., MON, TUE, etc.)
+    val currentDay = currentDateTime.getDayOfWeek match {
+      case DayOfWeek.MONDAY    => "MON"
+      case DayOfWeek.TUESDAY   => "TUE"
+      case DayOfWeek.WEDNESDAY => "WED"
+      case DayOfWeek.THURSDAY  => "THU"
+      case DayOfWeek.FRIDAY    => "FRI"
+      case DayOfWeek.SATURDAY  => "SAT"
+      case DayOfWeek.SUNDAY    => "SUN"
+    }
+
+    // Construct the folder name
+    s"${formattedDate}_RBSCC_$currentDay"
+  }
+
+  // Function to create the folder hierarchy
+  def createFolderHierarchy(folderPath: String): Unit = {
+    try {
+      val folder = new File(folderPath)
+
+      if (!folder.exists()) {
+        if (folder.mkdirs()) {
+          println(s"Successfully created folder: $folderPath")
+        } else {
+          throw new Exception(s"Failed to create folder: $folderPath")
+        }
+      } else {
+        println(s"Folder already exists: $folderPath")
+      }
+    } catch {
+      case ex: Exception =>
+        println(s"Error while creating folder: ${ex.getMessage}")
+    }
+  }
+// Function to remove block comments (/* ... */)
+  def removeBlockComments(script: String): String = {
+    val blockCommentPattern = """(?s)/\*.*?\*/""".r
+    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
+  }
+
+  // Function to handle inline comments (--) while preserving SQL before them
+  def removeInlineComments(line: String): String = {
+    val singleLineCommentPattern = """--.*""".r
+    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+  }
+
+  // Function to delete log files older than 24 hours
+  def cleanOldLogFiles(logDirectory: String): Unit = {
+    println(s"Cleaning up old log files from: $logDirectory")
+
+    val logFiles = Files.list(Paths.get(logDirectory)).iterator().asScala
+    val currentTime = System.currentTimeMillis()
+
+    logFiles.foreach { logFile =>
+      try {
+        val fileTime: FileTime = Files.getLastModifiedTime(logFile)
+        val fileAge = currentTime - fileTime.toMillis
+
+        // Check if file is older than 24 hours (24 hours * 60 minutes * 60 seconds * 1000 ms)
+        if (fileAge > TimeUnit.HOURS.toMillis(24)) {
+          println(s"Deleting old log file: ${logFile.getFileName}")
+          Files.delete(logFile) // Delete the log file
+        }
+      } catch {
+        case e: IOException => println(s"Error checking file $logFile: ${e.getMessage}")
+      }
+    }
+  }
+
+  // Execute the SQL script
+  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+    println(s"Running SQL script from: $scriptPath")
+    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
+    val logBuffer = new StringBuilder
+
+    try {
+      // Register JDBC driver
+      println("Registering JDBC driver...")
+      Class.forName(jdbcDriver)
+
+      // Establish connection
+      println(s"Connecting to database at: $jdbcUrl")
+      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
+
+      // Read the SQL script
+      println("Reading SQL script...")
+      val script = java.nio.file.Files.readString(java.nio.file.Paths.get(scriptPath), java.nio.charset.StandardCharsets.UTF_8)
+
+      // Process the script: remove block comments and split into lines
+      val scriptWithoutComments = removeBlockComments(script)
+      val lines = scriptWithoutComments.split("\n").toSeq
+
+      // Prepare and filter valid lines
+      val validLines = lines
+        .drop(4) // Skip the first 4 lines
+        .dropRight(3) // Skip the last 3 lines
+        .map(removeInlineComments) // Remove inline comments (-- ...)
+        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+
+      // Combine valid lines into SQL commands and execute them
+      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+} catch {
+  case ex: Exception =>
+    // Extract the table name from the SQL command
+    val tableName = extractTableName(command)
+    val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
+    
+    println(errorMsg) // Print error to console
+    logBuffer.append(errorMsg + "\n") // Append error to log buffer
+}
+
+// Function to extract table name
+def extractTableName(command: String): String = {
+  // Regex to capture table names after 'FROM' or 'JOIN' (case insensitive)
+  val tableRegex = "(?i)(?:from|join)\\s+([\\w\\.]+)".r
+
+  // Find the first match in the SQL command
+  tableRegex.findFirstMatchIn(command) match {
+    case Some(matched) => matched.group(1) // Return the captured group (table name)
+    case None => "Unknown Table" // Default if no table is found
+  }
+}
+
+
+
+      commands.foreach { command =>
+        try {
+          // Check if the command is an insert without columns
+          if (command.toLowerCase.startsWith("insert into")) {
+            val tableName = command.split(" ")(2) // Extract table name from the insert statement
+            val commandWithColumns = SqlUtils.handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
+            println(s"Executing command: $commandWithColumns")
+            statement.execute(commandWithColumns)
+            val successMsg = s"[SUCCESS] Executed: $commandWithColumns"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          } else {
+            println(s"Executing command: $command")
+            statement.execute(command)
+            val successMsg = s"[SUCCESS] Executed: $command"
+            println(successMsg)
+            logBuffer.append(successMsg + "\n")
+          }
+        } catch {
+          case ex: Exception =>
+            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
+            println(errorMsg)
+            logBuffer.append(errorMsg + "\n")
+        }
+      }
+
+      // Save execution log to a file
+      println(s"Execution log saved to: $logPath")
+      java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+      // Close resources
+      statement.close()
+      connection.close()
+    } catch {
+      case ex: Exception =>
+        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
+        println(fatalErrorMsg)
+        logBuffer.append(fatalErrorMsg + "\n")
+        java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    }
+
+    // Clean old log files after execution
+    cleanOldLogFiles("path/to/logs") // Specify your log directory path
+  }
+ // Process the DataFrame directly
+  val currentDateTime = LocalDateTime.now()
+  val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
+val aert_query=spark.sql("")
+val df=alert_query.toDF("alert_code","dt_count".....)
+
+import java.sql.{Connection, DriverManager}
+
+// Method to establish a connection
+def getConnection(jdbcUrl: String, jdbcUser: String, jdbcPassword: String): Connection = {
+  DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+}
+
+df.foreachPartition { partition =>
+  // Extract JDBC properties from the broadcast variable
+  val jdbcUrl_rss = broadcastJdbcProps.value("jdbcUrl_rss")
+  val jdbcUser_rss = broadcastJdbcProps.value("jdbcUser_rss")
+  val jdbcPassword_rss = broadcastJdbcProps.value("jdbcPassword_rss")
+  val jdbcDriver_rss = broadcastJdbcProps.value("jdbcDriver_rss")
+
+  // Load JDBC driver
+  Class.forName(jdbcDriver_rss)
+
+  // Initialize a connection for the partition
+  var con_rss: Connection = null
+  try {
+    con_rss = getConnection(jdbcUrl_rss, jdbcUser_rss, jdbcPassword_rss)
+
+    // Process each row in the partition
+    partition.foreach { row =>
+      val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val dateToLoad = row.getAs[String]("date_to_load")
+        val bteqLocation = row.getAs[String]("bteq_location")
+        val emailAddress = row.getAs[String]("email_address")
+        val business = row.getAs[String]("business")
+
+        val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
+          sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
+          throw new Exception("Missing source_table_name")
+        }
+
+        val frequency = row.getAs[String]("frequency").getOrElse {
+          sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
+          throw new Exception("Missing frequency")
+        }
+
+        val filterColumn = row.getAs[String]("filter_column").getOrElse {
+          sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
+          throw new Exception("Missing filter_column")
+        }
       try {
         // Example operation: Insert into a table
         stmt.executeUpdate(s"INSERT INTO your_table (col1, col2) VALUES (${row(0)}, ${row(1)})")
@@ -334,6 +671,27 @@ df.foreachPartition { partition =>
     }
   }
 }
+      try {
+        // Example operation: Insert into a table
+        stmt.executeUpdate(s"INSERT INTO your_table (col1, col2) VALUES (${row(0)}, ${row(1)})")
+      } finally {
+        stmt.close()
+      }
+    }
+  } catch {
+    case e: Exception => e.printStackTrace()
+  } finally {
+    if (con_rss != null) {
+      try {
+        con_rss.close()
+      } catch {
+        case e: Exception => e.printStackTrace()
+      }
+    }
+  }
+}
+
+        
 
         val alertCode = row.getAs[String]("alert_code")
         val dtCount = row.getAs[Int]("dt_count")
