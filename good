@@ -290,7 +290,8 @@ def extractTableName(command: String): String = {
 val aert_query=spark.sql("")
 val df=alert_query.toDF("alert_code","dt_count".....)
 
-df.collect().foreach { row =>
+df.foreachPartition { partition =>
+partition.foreach { row =>
         val alertCode = row.getAs[String]("alert_code")
         val dtCount = row.getAs[Int]("dt_count")
         val dateToLoad = row.getAs[String]("date_to_load")
