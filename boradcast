@@ -1,34 +1,44 @@
-import java.util.Properties
-import java.io.FileInputStream
-import org.apache.spark.broadcast.Broadcast
+import java.sql.{Connection, DriverManager}
 
-// Load the properties file
-val propertiesFilePath = "path/to/jdbc.properties" // Update with the correct path
-val connectionProperties = new Properties()
-connectionProperties.load(new FileInputStream(propertiesFilePath))
+// Method to establish a connection
+def getConnection(jdbcUrl: String, jdbcUser: String, jdbcPassword: String): Connection = {
+  DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+}
 
-// Broadcast the properties
-val broadcastProperties: Broadcast[Properties] = sc.broadcast(connectionProperties)
-
-// Use the broadcasted properties inside foreachPartition
 df.foreachPartition { partition =>
-  // Access the properties from the broadcast variable
-  val connProps = broadcastProperties.value
-  val url = connProps.getProperty("url")
-  val username = connProps.getProperty("username")
-  val password = connProps.getProperty("password")
+  // Extract JDBC properties from the broadcast variable
+  val jdbcUrl_rss = broadcastJdbcProps.value("jdbcUrl_rss")
+  val jdbcUser_rss = broadcastJdbcProps.value("jdbcUser_rss")
+  val jdbcPassword_rss = broadcastJdbcProps.value("jdbcPassword_rss")
+  val jdbcDriver_rss = broadcastJdbcProps.value("jdbcDriver_rss")
 
-  // Create a connection
-  val conn_rss = DriverManager.getConnection(url, username, password)
+  // Load JDBC driver
+  Class.forName(jdbcDriver_rss)
 
-  // Process each row in the partition
-  partition.foreach { row =>
-    val stmt_rss = conn_rss.prepareStatement("INSERT INTO my_table (column1, column2) VALUES (?, ?)")
-    stmt_rss.setString(1, row.getAs[String]("column1"))
-    stmt_rss.setInt(2, row.getAs[Int]("column2"))
-    stmt_rss.executeUpdate()
+  // Initialize a connection for the partition
+  var con_rss: Connection = null
+  try {
+    con_rss = getConnection(jdbcUrl_rss, jdbcUser_rss, jdbcPassword_rss)
+
+    // Process each row in the partition
+    partition.foreach { row =>
+      val stmt = con_rss.createStatement()
+      try {
+        // Example operation: Insert into a table
+        stmt.executeUpdate(s"INSERT INTO your_table (col1, col2) VALUES (${row(0)}, ${row(1)})")
+      } finally {
+        stmt.close()
+      }
+    }
+  } catch {
+    case e: Exception => e.printStackTrace()
+  } finally {
+    if (con_rss != null) {
+      try {
+        con_rss.close()
+      } catch {
+        case e: Exception => e.printStackTrace()
+      }
+    }
   }
-
-  // Close the connection
-  conn_rss.close()
 }
