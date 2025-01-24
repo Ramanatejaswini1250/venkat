@@ -1,15 +1,20 @@
+import java.util.Properties
 import org.apache.commons.dbcp2.BasicDataSource
+import java.io.FileInputStream
 
-// 1. Create a connection pool (this happens in the driver)
+// 1. Load properties from the file
+val properties = new Properties()
+properties.load(new FileInputStream("path/to/db.properties"))
+
+// 2. Configure the DataSource using the loaded properties
 val dataSource = new BasicDataSource()
-dataSource.setUrl("jdbc:mysql://localhost:3306/db")
-dataSource.setUsername("user")
-dataSource.setPassword("password")
-dataSource.setMaxTotal(10)  // Maximum number of connections in the pool
+dataSource.setUrl(properties.getProperty("db.url"))
+dataSource.setUsername(properties.getProperty("db.username"))
+dataSource.setPassword(properties.getProperty("db.password"))
+dataSource.setMaxTotal(properties.getProperty("db.maxTotal").toInt)
 
-// 2. Access the pool inside the foreachPartition
+// 3. Use the DataSource inside foreachPartition
 df.foreachPartition { partition =>
-  // Get a connection from the pool
   val conn_rss = dataSource.getConnection()
   
   try {
@@ -20,17 +25,15 @@ df.foreachPartition { partition =>
       stmt_rss.executeUpdate()
     }
   } finally {
-    // Make sure to return the connection to the pool
-    conn_rss.close()
+    conn_rss.close() // Make sure to return the connection to the pool
   }
 }
 
-// 3. Access the pool outside of foreachPartition
+// 4. Access the pool outside of foreachPartition
 val conn_test = dataSource.getConnection()
 try {
-  // Do some other operations with the connection if needed
   val stmt_test = conn_test.createStatement()
-  // Your query here...
+  // Perform additional queries or operations
 } finally {
-  conn_test.close()  // Close when done
+  conn_test.close()
 }
