@@ -1,21 +1,27 @@
-import org.apache.spark.broadcast.Broadcast
 import java.util.Properties
+import java.io.FileInputStream
+import org.apache.spark.broadcast.Broadcast
 
-// Broadcasting the properties (not the connection itself)
+// Load the properties file
+val propertiesFilePath = "path/to/jdbc.properties" // Update with the correct path
 val connectionProperties = new Properties()
-connectionProperties.setProperty("url", "jdbc:mysql://localhost:3306/db")
-connectionProperties.setProperty("username", "user")
-connectionProperties.setProperty("password", "password")
+connectionProperties.load(new FileInputStream(propertiesFilePath))
 
+// Broadcast the properties
 val broadcastProperties: Broadcast[Properties] = sc.broadcast(connectionProperties)
 
-// Inside the foreachPartition block
+// Use the broadcasted properties inside foreachPartition
 df.foreachPartition { partition =>
+  // Access the properties from the broadcast variable
   val connProps = broadcastProperties.value
-  val conn_rss = DriverManager.getConnection(connProps.getProperty("url"),
-                                              connProps.getProperty("username"),
-                                              connProps.getProperty("password"))
+  val url = connProps.getProperty("url")
+  val username = connProps.getProperty("username")
+  val password = connProps.getProperty("password")
 
+  // Create a connection
+  val conn_rss = DriverManager.getConnection(url, username, password)
+
+  // Process each row in the partition
   partition.foreach { row =>
     val stmt_rss = conn_rss.prepareStatement("INSERT INTO my_table (column1, column2) VALUES (?, ?)")
     stmt_rss.setString(1, row.getAs[String]("column1"))
@@ -23,5 +29,6 @@ df.foreachPartition { partition =>
     stmt_rss.executeUpdate()
   }
 
+  // Close the connection
   conn_rss.close()
 }
