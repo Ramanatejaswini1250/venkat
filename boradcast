@@ -1,44 +1,72 @@
 import java.sql.{Connection, DriverManager}
+import org.apache.spark.sql.{SparkSession, Row}
 
-// Method to establish a connection
-def getConnection(jdbcUrl: String, jdbcUser: String, jdbcPassword: String): Connection = {
-  DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-}
+val spark = SparkSession.builder()
+  .appName("Spark JDBC Example")
+  .master("local[*]")
+  .getOrCreate()
 
-df.foreachPartition { partition =>
-  // Extract JDBC properties from the broadcast variable
-  val jdbcUrl_rss = broadcastJdbcProps.value("jdbcUrl_rss")
-  val jdbcUser_rss = broadcastJdbcProps.value("jdbcUser_rss")
-  val jdbcPassword_rss = broadcastJdbcProps.value("jdbcPassword_rss")
-  val jdbcDriver_rss = broadcastJdbcProps.value("jdbcDriver_rss")
+// Example JDBC properties (ensure these are serializable)
+val jdbcProps = Map(
+  "jdbcUrl_rss" -> "jdbc:mysql://localhost:3306/mydb",
+  "jdbcUser_rss" -> "root",
+  "jdbcPassword_rss" -> "password",
+  "jdbcDriver_rss" -> "com.mysql.cj.jdbc.Driver"
+)
 
-  // Load JDBC driver
-  Class.forName(jdbcDriver_rss)
+// Broadcast JDBC properties (only serializable properties)
+val broadcastJdbcProps = spark.sparkContext.broadcast(jdbcProps)
 
-  // Initialize a connection for the partition
-  var con_rss: Connection = null
+// Create a sample DataFrame
+val df = spark.read.option("header", "true").csv("path_to_your_file.csv")
+
+// Refactor the custom method to not directly use non-serializable resources
+def processData(row: Row, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+  // Load JDBC driver inside the method
+  Class.forName(jdbcDriver)
+  
+  // Create connection inside the method to avoid serialization issues
+  var conn_rss: Connection = null
   try {
-    con_rss = getConnection(jdbcUrl_rss, jdbcUser_rss, jdbcPassword_rss)
+    // Create the connection inside the method
+    conn_rss = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    
+    // Extract row data and process
+    val alertCode = row.getAs[String]("alert_code")
+    val alertCount = row.getAs[Int]("alert_count")
+    val dateToLoad = row.getAs[String]("date_to_load")
+    val business = row.getAs[String]("business")
+    val emailAddress = row.getAs[String]("email_address").split(",")
 
-    // Process each row in the partition
-    partition.foreach { row =>
-      val stmt = con_rss.createStatement()
-      try {
-        // Example operation: Insert into a table
-        stmt.executeUpdate(s"INSERT INTO your_table (col1, col2) VALUES (${row(0)}, ${row(1)})")
-      } finally {
-        stmt.close()
-      }
+    // Execute the SQL query inside the method
+    val stmt_rss = conn_rss.createStatement()
+    try {
+      val query = s"INSERT INTO alerts_table (alert_code, alert_count, date_to_load, business, email_address) VALUES ('$alertCode', $alertCount, '$dateToLoad', '$business', '${emailAddress.mkString(",")}')"
+      stmt_rss.executeUpdate(query)
+    } finally {
+      stmt_rss.close()
     }
   } catch {
-    case e: Exception => e.printStackTrace()
+    case e: Exception =>
+      println(s"Error occurred while processing row: ${e.getMessage}")
+      e.printStackTrace()
   } finally {
-    if (con_rss != null) {
-      try {
-        con_rss.close()
-      } catch {
-        case e: Exception => e.printStackTrace()
-      }
+    if (conn_rss != null) {
+      conn_rss.close() // Ensure the connection is closed after use
     }
+  }
+}
+
+// Now, use the custom method inside foreachPartition
+df.foreachPartition { partition =>
+  // Access the broadcasted JDBC properties inside the closure
+  val jdbcUrl = broadcastJdbcProps.value("jdbcUrl_rss")
+  val jdbcUser = broadcastJdbcProps.value("jdbcUser_rss")
+  val jdbcPassword = broadcastJdbcProps.value("jdbcPassword_rss")
+  val jdbcDriver = broadcastJdbcProps.value("jdbcDriver_rss")
+
+  // Process each row using the custom method
+  partition.foreach { row =>
+    processData(row, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
   }
 }
