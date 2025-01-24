@@ -290,8 +290,51 @@ def extractTableName(command: String): String = {
 val aert_query=spark.sql("")
 val df=alert_query.toDF("alert_code","dt_count".....)
 
+import java.sql.{Connection, DriverManager}
+
+// Method to establish a connection
+def getConnection(jdbcUrl: String, jdbcUser: String, jdbcPassword: String): Connection = {
+  DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+}
+
 df.foreachPartition { partition =>
-partition.foreach { row =>
+  // Extract JDBC properties from the broadcast variable
+  val jdbcUrl_rss = broadcastJdbcProps.value("jdbcUrl_rss")
+  val jdbcUser_rss = broadcastJdbcProps.value("jdbcUser_rss")
+  val jdbcPassword_rss = broadcastJdbcProps.value("jdbcPassword_rss")
+  val jdbcDriver_rss = broadcastJdbcProps.value("jdbcDriver_rss")
+
+  // Load JDBC driver
+  Class.forName(jdbcDriver_rss)
+
+  // Initialize a connection for the partition
+  var con_rss: Connection = null
+  try {
+    con_rss = getConnection(jdbcUrl_rss, jdbcUser_rss, jdbcPassword_rss)
+
+    // Process each row in the partition
+    partition.foreach { row =>
+      val stmt = con_rss.createStatement()
+      try {
+        // Example operation: Insert into a table
+        stmt.executeUpdate(s"INSERT INTO your_table (col1, col2) VALUES (${row(0)}, ${row(1)})")
+      } finally {
+        stmt.close()
+      }
+    }
+  } catch {
+    case e: Exception => e.printStackTrace()
+  } finally {
+    if (con_rss != null) {
+      try {
+        con_rss.close()
+      } catch {
+        case e: Exception => e.printStackTrace()
+      }
+    }
+  }
+}
+
         val alertCode = row.getAs[String]("alert_code")
         val dtCount = row.getAs[Int]("dt_count")
         val dateToLoad = row.getAs[String]("date_to_load")
