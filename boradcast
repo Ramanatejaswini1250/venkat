@@ -1,39 +1,27 @@
+import org.apache.spark.broadcast.Broadcast
 import java.util.Properties
-import org.apache.commons.dbcp2.BasicDataSource
-import java.io.FileInputStream
 
-// 1. Load properties from the file
-val properties = new Properties()
-properties.load(new FileInputStream("path/to/db.properties"))
+// Broadcasting the properties (not the connection itself)
+val connectionProperties = new Properties()
+connectionProperties.setProperty("url", "jdbc:mysql://localhost:3306/db")
+connectionProperties.setProperty("username", "user")
+connectionProperties.setProperty("password", "password")
 
-// 2. Configure the DataSource using the loaded properties
-val dataSource = new BasicDataSource()
-dataSource.setUrl(properties.getProperty("db.url"))
-dataSource.setUsername(properties.getProperty("db.username"))
-dataSource.setPassword(properties.getProperty("db.password"))
-dataSource.setMaxTotal(properties.getProperty("db.maxTotal").toInt)
+val broadcastProperties: Broadcast[Properties] = sc.broadcast(connectionProperties)
 
-// 3. Use the DataSource inside foreachPartition
+// Inside the foreachPartition block
 df.foreachPartition { partition =>
-  val conn_rss = dataSource.getConnection()
-  
-  try {
-    partition.foreach { row =>
-      val stmt_rss = conn_rss.prepareStatement("INSERT INTO my_table (column1, column2) VALUES (?, ?)")
-      stmt_rss.setString(1, row.getAs[String]("column1"))
-      stmt_rss.setInt(2, row.getAs[Int]("column2"))
-      stmt_rss.executeUpdate()
-    }
-  } finally {
-    conn_rss.close() // Make sure to return the connection to the pool
-  }
-}
+  val connProps = broadcastProperties.value
+  val conn_rss = DriverManager.getConnection(connProps.getProperty("url"),
+                                              connProps.getProperty("username"),
+                                              connProps.getProperty("password"))
 
-// 4. Access the pool outside of foreachPartition
-val conn_test = dataSource.getConnection()
-try {
-  val stmt_test = conn_test.createStatement()
-  // Perform additional queries or operations
-} finally {
-  conn_test.close()
+  partition.foreach { row =>
+    val stmt_rss = conn_rss.prepareStatement("INSERT INTO my_table (column1, column2) VALUES (?, ?)")
+    stmt_rss.setString(1, row.getAs[String]("column1"))
+    stmt_rss.setInt(2, row.getAs[Int]("column2"))
+    stmt_rss.executeUpdate()
+  }
+
+  conn_rss.close()
 }
