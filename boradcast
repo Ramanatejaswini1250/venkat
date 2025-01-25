@@ -1,72 +1,38 @@
-import java.sql.{Connection, DriverManager}
-import org.apache.spark.sql.{SparkSession, Row}
-
-val spark = SparkSession.builder()
-  .appName("Spark JDBC Example")
-  .master("local[*]")
-  .getOrCreate()
-
-// Example JDBC properties (ensure these are serializable)
-val jdbcProps = Map(
-  "jdbcUrl_rss" -> "jdbc:mysql://localhost:3306/mydb",
-  "jdbcUser_rss" -> "root",
-  "jdbcPassword_rss" -> "password",
-  "jdbcDriver_rss" -> "com.mysql.cj.jdbc.Driver"
-)
-
-// Broadcast JDBC properties (only serializable properties)
-val broadcastJdbcProps = spark.sparkContext.broadcast(jdbcProps)
-
-// Create a sample DataFrame
-val df = spark.read.option("header", "true").csv("path_to_your_file.csv")
-
-// Refactor the custom method to not directly use non-serializable resources
-def processData(row: Row, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
-  // Load JDBC driver inside the method
-  Class.forName(jdbcDriver)
-  
-  // Create connection inside the method to avoid serialization issues
-  var conn_rss: Connection = null
-  try {
-    // Create the connection inside the method
-    conn_rss = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    
-    // Extract row data and process
-    val alertCode = row.getAs[String]("alert_code")
-    val alertCount = row.getAs[Int]("alert_count")
-    val dateToLoad = row.getAs[String]("date_to_load")
-    val business = row.getAs[String]("business")
-    val emailAddress = row.getAs[String]("email_address").split(",")
-
-    // Execute the SQL query inside the method
-    val stmt_rss = conn_rss.createStatement()
-    try {
-      val query = s"INSERT INTO alerts_table (alert_code, alert_count, date_to_load, business, email_address) VALUES ('$alertCode', $alertCount, '$dateToLoad', '$business', '${emailAddress.mkString(",")}')"
-      stmt_rss.executeUpdate(query)
-    } finally {
-      stmt_rss.close()
-    }
-  } catch {
-    case e: Exception =>
-      println(s"Error occurred while processing row: ${e.getMessage}")
-      e.printStackTrace()
-  } finally {
-    if (conn_rss != null) {
-      conn_rss.close() // Ensure the connection is closed after use
-    }
-  }
+// Define the function
+def getSqlFolderPath(frequency: String, bteqlocation: String): String = {
+  s"$bteqlocation/$frequency/sql"
 }
 
-// Now, use the custom method inside foreachPartition
-df.foreachPartition { partition =>
-  // Access the broadcasted JDBC properties inside the closure
-  val jdbcUrl = broadcastJdbcProps.value("jdbcUrl_rss")
-  val jdbcUser = broadcastJdbcProps.value("jdbcUser_rss")
-  val jdbcPassword = broadcastJdbcProps.value("jdbcPassword_rss")
-  val jdbcDriver = broadcastJdbcProps.value("jdbcDriver_rss")
+// Assume the DataFrame has the columns `frequency` and `bteqlocation`
+val bteqlocation = df.select("bteqlocation").distinct().collect().head.getString(0)  // bteqlocation is constant across all rows
 
-  // Process each row using the custom method
+// Create a set of unique frequencies (if needed)
+val uniqueFrequencies = df.select("frequency").distinct().collect().map(_.getString(0))
+
+// Create a map of frequency to folder path
+val frequencyToPathMap = uniqueFrequencies.map { frequency =>
+  (frequency, getSqlFolderPath(frequency, bteqlocation))
+}.toMap
+
+// Broadcast the map of paths
+val broadcastPathMap = spark.sparkContext.broadcast(frequencyToPathMap)
+
+// Process the DataFrame
+df.foreachPartition { partition =>
   partition.foreach { row =>
-    processData(row, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
+    val frequency = row.getAs[String]("frequency")  // Get frequency from the current row
+    
+    // Get the path from the broadcasted map
+    val path = broadcastPathMap.value.getOrElse(frequency, s"Default path for $frequency")
+    
+    // Print or use the path
+    println(s"Using path for frequency '$frequency' and bteqlocation '$bteqlocation': $path")
+
+    // Example: Check if the folder exists
+    if (Files.exists(Paths.get(path))) {
+      println(s"Folder exists: $path")
+    } else {
+      println(s"Folder not found: $path")
+    }
   }
 }
