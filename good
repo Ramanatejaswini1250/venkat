@@ -371,6 +371,34 @@ object EmailNotificationApp {
     }
   }
 
+import java.nio.file.{Paths, Files}
+import java.io.IOException
+import java.nio.charset.StandardCharsets
+
+def readFileAsString(path: String): Option[String] = {
+  if (path == null || path.isEmpty) {
+    println(s"Path is null or empty: $path")
+    return None
+  }
+  
+  try {
+    val filePath = Paths.get(path)
+    
+    // Check if the file exists before reading
+    if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
+      val bytes = Files.readAllBytes(filePath)
+      Some(new String(bytes, StandardCharsets.UTF_8))
+    } else {
+      println(s"File does not exist or is not a regular file: $path")
+      None
+    }
+  } catch {
+    case e: IOException =>
+      println(s"Error reading file at $path: ${e.getMessage}")
+      None  // Return None in case of an error
+  }
+}
+
   // Function to run SQL script and halt execution if it fails
   def runSqlScript(scriptPath: String): Unit = {
     try {
