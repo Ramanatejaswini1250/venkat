@@ -375,18 +375,24 @@ import java.nio.file.{Paths, Files}
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 
+import java.nio.file.{Paths, Files}
+import java.io.IOException
+import java.nio.charset.StandardCharsets
+
 def readFileAsString(path: String): Option[String] = {
   if (path == null || path.isEmpty) {
     println(s"Path is null or empty: $path")
     return None
   }
-  
+
   try {
     val filePath = Paths.get(path)
-    
-    // Check if the file exists before reading
+
+    // Check if the file exists and is a regular file
     if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
+      // Read all bytes from the file
       val bytes = Files.readAllBytes(filePath)
+      // Convert bytes to String using UTF-8 encoding
       Some(new String(bytes, StandardCharsets.UTF_8))
     } else {
       println(s"File does not exist or is not a regular file: $path")
@@ -394,6 +400,7 @@ def readFileAsString(path: String): Option[String] = {
     }
   } catch {
     case e: IOException =>
+      // Print detailed error if an exception occurs
       println(s"Error reading file at $path: ${e.getMessage}")
       None  // Return None in case of an error
   }
