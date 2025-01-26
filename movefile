@@ -9,29 +9,50 @@ object RampAutomationExecution {
     movePartFile(tempDir, finalPath)
   }
 
-  def movePartFile(tempDir: String, finalPath: String): Unit = {
-    // Find the part file
-    val partFile: Option[File] = Option(new File(tempDir).listFiles())
-      .flatMap(_.find(_.getName.startsWith("part")))
+ import java.io.File
+import java.nio.file.{Files, Path, Paths, StandardCopyOption}
+import scala.util.{Failure, Success, Try}
 
-    partFile match {
-      case Some(file) =>
-        val sourcePath: Path = file.toPath
-        val destinationPath: Path = Paths.get(finalPath, file.getName) // Ensure correct path
+def movePartFile(tempDir: String, finalPath: String): Unit = {
+  // Find the part file
+  val partFile: Option[File] = Option(new File(tempDir).listFiles())
+    .flatMap(_.find(_.getName.startsWith("part")))
 
-        Try {
-          // Move the file
-          Files.move(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING)
-        } match {
-          case Success(_) =>
-            println(s"File successfully moved to: $finalPath")
-          case Failure(e) =>
-            println(s"Error moving file: ${e.getMessage}")
-            e.printStackTrace()
+  partFile match {
+    case Some(file) =>
+      val sourcePath: Path = file.toPath
+      val destinationDir: File = new File(finalPath)
+      val destinationPath: Path = Paths.get(finalPath, file.getName)
+
+      // Ensure the destination directory exists
+      if (!destinationDir.exists()) {
+        destinationDir.mkdirs()
+        println(s"Created directory: $finalPath")
+      }
+
+      // Ensure the destination directory is writable
+      if (!destinationDir.canWrite) {
+        if (destinationDir.setWritable(true)) {
+          println(s"Made directory writable: $finalPath")
+        } else {
+          throw new Exception(s"Failed to make directory writable: $finalPath")
         }
+      }
 
-      case None =>
-        throw new Exception(s"No part file found in directory: $tempDir")
-    }
+      // Try moving the file
+      Try {
+        Files.move(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING)
+      } match {
+        case Success(_) =>
+          println(s"File successfully moved to: $destinationPath")
+        case Failure(e) =>
+          println(s"Error moving file: ${e.getMessage}")
+          e.printStackTrace()
+      }
+
+    case None =>
+      throw new Exception(s"No part file found in directory: $tempDir")
   }
+}
+
 }
