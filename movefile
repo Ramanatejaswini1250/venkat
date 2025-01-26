@@ -13,45 +13,77 @@ object RampAutomationExecution {
 import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 import scala.util.{Failure, Success, Try}
 
+import java.io.File
+import java.nio.file.{Files, Path, Paths, StandardCopyOption}
+import scala.util.{Failure, Success, Try}
+
+// Create a temporary folder in the source directory if it does not exist
+def createTempFolderIfNeeded(sourceDir: String): File = {
+  val tempDir = new File(sourceDir, "tmp") // Define the tmp folder inside the source directory
+  if (!tempDir.exists()) {
+    if (tempDir.mkdirs()) {
+      println(s"Temporary directory created: ${tempDir.getAbsolutePath}")
+    } else {
+      println(s"Failed to create temporary directory: ${tempDir.getAbsolutePath}")
+    }
+  }
+  tempDir
+}
+
+// Move .csv files from the part file to the destination
+def moveCsvFilesToDestination(partFile: File, destinationDir: String): Unit = {
+  val sourcePath = partFile.toPath
+  val destinationPath = Paths.get(destinationDir)
+
+  // Ensure the destination directory exists
+  if (!Files.exists(destinationPath)) {
+    Files.createDirectories(destinationPath)
+    println(s"Created destination directory: $destinationDir")
+  }
+
+  // Move .csv files from the part file to the destination
+  partFile.listFiles().filter(_.getName.endsWith(".csv")).foreach { csvFile =>
+    val csvDestination = Paths.get(destinationDir, csvFile.getName)
+    Try {
+      Files.move(csvFile.toPath, csvDestination, StandardCopyOption.REPLACE_EXISTING)
+    } match {
+      case Success(_) =>
+        println(s"Moved file: ${csvFile.getName} to $destinationDir")
+      case Failure(e) =>
+        println(s"Error moving file: ${csvFile.getName}, ${e.getMessage}")
+        e.printStackTrace()
+    }
+  }
+}
+
+// Main function to move the part file and clean up
 def movePartFile(tempDir: String, finalPath: String): Unit = {
-  // Find the part file
-  val partFile: Option[File] = Option(new File(tempDir).listFiles())
+  val partFileOption: Option[File] = Option(new File(tempDir).listFiles())
     .flatMap(_.find(_.getName.startsWith("part")))
 
-  partFile match {
-    case Some(file) =>
-      val sourcePath: Path = file.toPath
-      val destinationDir: File = new File(finalPath)
-      val destinationPath: Path = Paths.get(finalPath, file.getName)
+  partFileOption match {
+    case Some(partFile) =>
+      // Create a temporary folder inside the source directory if it doesn't exist
+      val tempDirCreated = createTempFolderIfNeeded(tempDir)
 
-      // Ensure the destination directory exists
-      if (!destinationDir.exists()) {
-        destinationDir.mkdirs()
-        println(s"Created directory: $finalPath")
-      }
+      // Move the .csv files from the part file to the destination directory
+      moveCsvFilesToDestination(partFile, finalPath)
 
-      // Ensure the destination directory is writable
-      if (!destinationDir.canWrite) {
-        if (destinationDir.setWritable(true)) {
-          println(s"Made directory writable: $finalPath")
-        } else {
-          throw new Exception(s"Failed to make directory writable: $finalPath")
-        }
-      }
-
-      // Try moving the file
+      // Clean up the temporary folder (if needed)
       Try {
-        Files.move(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING)
+        partFile.listFiles().foreach(_.delete()) // Delete .csv files inside the part file folder
+        partFile.delete() // Delete the part file folder itself
+        println(s"Cleaned up the part file: ${partFile.getAbsolutePath}")
       } match {
         case Success(_) =>
-          println(s"File successfully moved to: $destinationPath")
+          println(s"Temporary part file cleaned up successfully.")
         case Failure(e) =>
-          println(s"Error moving file: ${e.getMessage}")
+          println(s"Error during cleanup: ${e.getMessage}")
           e.printStackTrace()
       }
 
     case None =>
-      throw new Exception(s"No part file found in directory: $tempDir")
+      println(s"Warning: No part file found in directory: $tempDir")
   }
 }
 
