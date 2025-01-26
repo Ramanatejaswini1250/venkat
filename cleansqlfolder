@@ -1,9 +1,9 @@
 if (sourceTableCount == dtCount) {
   var sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
 
-  // Clean the sqlFolderPath by removing unwanted control characters (excluding path separators)
+  // Clean the sqlFolderPath by removing unwanted control characters (including newlines and tabs)
   if (sqlFolderPath != null && sqlFolderPath.nonEmpty) {
-    sqlFolderPath = sqlFolderPath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\]]", "") // Removing control characters but keeping path separators
+    sqlFolderPath = sqlFolderPath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\:.-]]", "") // Removing control characters but keeping valid path characters
 
     // Check if the folder exists
     if (Files.exists(Paths.get(sqlFolderPath))) {
