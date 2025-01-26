@@ -1,81 +1,99 @@
-import java.nio.file.{Files, Paths, Path, StandardCopyOption}
-import scala.util.{Try, Success, Failure}
 import java.io.File
+import java.nio.file.{Files, Paths, Path, StandardCopyOption}
+import scala.util.{Failure, Success, Try}
 
 object RampAutomationExecution {
   def main(args: Array[String]): Unit = {
-import java.io.File
-import java.nio.file.{Files, Path, Paths, StandardCopyOption}
-import scala.util.{Failure, Success, Try}
+    // Example directory paths
+    val sourceDir = "/path/to/source"  // Update with actual source directory
+    val finalPath = "/path/to/destination"  // Update with final destination path
 
-// Create a temporary folder in the source directory if it does not exist
-def createTempFolderIfNeeded(sourceDir: String): File = {
-  val tempDir = new File(sourceDir, "tmp") // Define the tmp folder inside the source directory
-  if (!tempDir.exists()) {
-    if (tempDir.mkdirs()) {
-      println(s"Temporary directory created: ${tempDir.getAbsolutePath}")
-    } else {
-      println(s"Failed to create temporary directory: ${tempDir.getAbsolutePath}")
+    // Call movePartFileAndClean method
+    movePartFileAndClean(sourceDir, finalPath)
+  }
+
+  // Create a temporary folder inside the source directory if it does not exist
+  def createTempFolderIfNeeded(sourceDir: String): File = {
+    val tempDir = new File(sourceDir, "tmp") // Define the tmp folder inside the source directory
+    if (!tempDir.exists()) {
+      if (tempDir.mkdirs()) {
+        println(s"Temporary directory created: ${tempDir.getAbsolutePath}")
+      } else {
+        println(s"Failed to create temporary directory: ${tempDir.getAbsolutePath}")
+      }
+    }
+    // Check if the directory is readable and writable
+    ensureWritable(tempDir)
+    tempDir
+  }
+
+  // Ensure the directory is readable and writable for all users
+  def ensureWritable(dir: File): Unit = {
+    if (!dir.canRead || !dir.canWrite) {
+      if (dir.setReadable(true) && dir.setWritable(true)) {
+        println(s"Directory ${dir.getAbsolutePath} is now readable and writable.")
+      } else {
+        println(s"Failed to set read/write permissions for directory ${dir.getAbsolutePath}.")
+      }
     }
   }
-  tempDir
-}
 
-// Move .csv files from the part file in the tmp folder to the destination
-def moveCsvFilesFromPartFile(tempDir: String, finalPath: String): Unit = {
-  val partDir = new File(tempDir, "tmp")
-  val partFileOption: Option[File] = Option(partDir.listFiles())
-    .flatMap(_.find(_.getName.startsWith("part")))
+  // Move .csv files from part files in the tmp folder to the destination
+  def moveCsvFilesFromPartFile(tempDir: String, finalPath: String): Unit = {
+    val partDir = new File(tempDir, "tmp")  // Temporary part directory inside sourceDir
+    val partFileOption: Option[File] = Option(partDir.listFiles())
+      .flatMap(_.find(_.getName.startsWith("part"))) // Find the part file
 
-  partFileOption match {
-    case Some(partFile) =>
-      // Ensure the destination directory exists
-      val destinationDir = new File(finalPath)
-      if (!destinationDir.exists()) {
-        destinationDir.mkdirs()
-        println(s"Created destination directory: $finalPath")
-      }
+    partFileOption match {
+      case Some(partFile) =>
+        // Ensure the destination directory exists
+        val destinationDir = new File(finalPath)
+        if (!destinationDir.exists()) {
+          destinationDir.mkdirs() // Create if it doesn't exist
+          println(s"Created destination directory: $finalPath")
+        }
 
-      // Move .csv files from the part file to the destination directory
-      partFile.listFiles().filter(_.getName.endsWith(".csv")).foreach { csvFile =>
-        val csvDestination = Paths.get(finalPath, csvFile.getName)
+        // Ensure destination directory is writable
+        ensureWritable(destinationDir)
+
+        // Move .csv files from part file to destination directory
+        partFile.listFiles().filter(_.getName.endsWith(".csv")).foreach { csvFile =>
+          val csvDestination = Paths.get(finalPath, csvFile.getName)
+          Try {
+            Files.move(csvFile.toPath, csvDestination, StandardCopyOption.REPLACE_EXISTING)
+          } match {
+            case Success(_) =>
+              println(s"Moved file: ${csvFile.getName} to $finalPath")
+            case Failure(e) =>
+              println(s"Error moving file: ${csvFile.getName}, ${e.getMessage}")
+              e.printStackTrace()
+          }
+        }
+
+        // Clean up the part file (delete .csv files and the part folder)
         Try {
-          Files.move(csvFile.toPath, csvDestination, StandardCopyOption.REPLACE_EXISTING)
+          partFile.listFiles().foreach(_.delete()) // Delete .csv files inside the part file folder
+          partFile.delete() // Delete the part file folder itself
+          println(s"Cleaned up the part file: ${partFile.getAbsolutePath}")
         } match {
           case Success(_) =>
-            println(s"Moved file: ${csvFile.getName} to $finalPath")
+            println(s"Temporary part file cleaned up successfully.")
           case Failure(e) =>
-            println(s"Error moving file: ${csvFile.getName}, ${e.getMessage}")
+            println(s"Error during cleanup: ${e.getMessage}")
             e.printStackTrace()
         }
-      }
 
-      // Clean up the part file (delete .csv files and the part folder)
-      Try {
-        partFile.listFiles().foreach(_.delete()) // Delete .csv files inside the part file folder
-        partFile.delete() // Delete the part file folder itself
-        println(s"Cleaned up the part file: ${partFile.getAbsolutePath}")
-      } match {
-        case Success(_) =>
-          println(s"Temporary part file cleaned up successfully.")
-        case Failure(e) =>
-          println(s"Error during cleanup: ${e.getMessage}")
-          e.printStackTrace()
-      }
-
-    case None =>
-      println(s"Warning: No part file found in directory: $tempDir/tmp")
+      case None =>
+        println(s"Warning: No part file found in directory: $tempDir/tmp")
+    }
   }
-}
 
-// Main function to ensure the tmp folder exists, move .csv files, and clean up
-def movePartFileAndClean(tempDir: String, finalPath: String): Unit = {
-  // Create tmp folder if it doesn't exist
-  createTempFolderIfNeeded(tempDir)
+  // Main function to ensure the tmp folder exists, move .csv files, and clean up
+  def movePartFileAndClean(tempDir: String, finalPath: String): Unit = {
+    // Create tmp folder if it doesn't exist
+    createTempFolderIfNeeded(tempDir)
 
-  // Move .csv files from part file in tmp to final destination and clean up
-  moveCsvFilesFromPartFile(tempDir, finalPath)
-}
-
-
+    // Move .csv files from part file in tmp to final destination and clean up
+    moveCsvFilesFromPartFile(tempDir, finalPath)
+  }
 }
