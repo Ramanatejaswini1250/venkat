@@ -50,3 +50,29 @@ if (sourceTableCount == dtCount) {
   sendEmailNotification(alertCode, message, emailAddress, business)
   println(message)
 }
+
+
+
+
+
+
+
+// Clean the folder path by removing unwanted control characters (excluding valid path characters)
+var cleanFolderPath = sqlFolderPath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\a-zA-Z0-9.-_]]", "").trim()
+
+// Remove any unwanted period at the end of the folder path (if necessary)
+cleanFolderPath = cleanFolderPath.replaceAll("\\.$", "")
+
+// Ensure the folder path ends with a slash (optional, depending on how your system handles folder paths)
+if (!cleanFolderPath.endsWith("/")) {
+  cleanFolderPath = s"$cleanFolderPath/"
+}
+
+// Clean the sqlFilePath by appending the alertCode and the .sql extension
+var cleanSqlFilePath = s"$cleanFolderPath${alertCode}.sql"
+
+// Remove any invisible period after .sql, ensuring that the final file path is correctly formatted
+cleanSqlFilePath = cleanSqlFilePath.replaceAll("\\.sql\\.$", ".sql")
+
+println(s"Sanitized Folder Path: $cleanFolderPath")
+println(s"Sanitized SQL File Path: $cleanSqlFilePath")
