@@ -1,0 +1,52 @@
+if (sourceTableCount == dtCount) {
+  var sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+
+  // Clean the sqlFolderPath by removing unwanted control characters (excluding path separators)
+  if (sqlFolderPath != null && sqlFolderPath.nonEmpty) {
+    sqlFolderPath = sqlFolderPath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\]]", "") // Removing control characters but keeping path separators
+
+    // Check if the folder exists
+    if (Files.exists(Paths.get(sqlFolderPath))) {
+      val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+
+      // Clean the sqlFilePath by removing unwanted control characters (excluding . and /)
+      val cleanSqlFilePath = sqlFilePath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\.]!]", "") // Allow dots and slashes in path
+
+      // Check if the cleaned sqlFilePath exists
+      if (Files.exists(Paths.get(cleanSqlFilePath))) {
+        
+        // Read the SQL file and clean up hidden/newline characters
+        val sqlContent = new String(Files.readAllBytes(Paths.get(cleanSqlFilePath)), StandardCharsets.UTF_8)
+
+        // Remove hidden characters and newlines from SQL content
+        val cleanedSqlContent = sqlContent.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
+                                            .replaceAll("\r?\n", " ")  // Replace newlines with a space, or use "" to remove them entirely
+
+        // Optionally, you can log or check the cleaned content
+        // println(cleanedSqlContent)
+
+        // Now execute the cleaned SQL script
+        runSqlScript(cleanedSqlContent)  // Assuming runSqlScript can take cleaned content as a string
+        
+        // Send success email notification
+        sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+      } else {
+        val message = s"SQL file not found for alertCode: $alertCode at path: $cleanSqlFilePath"
+        sendEmailNotification(alertCode, message, emailAddress, business)
+        println(message)
+      }
+    } else {
+      val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+      sendEmailNotification(alertCode, message, emailAddress, business)
+      println(message)
+    }
+  } else {
+    val message = s"SQL folder path is empty or null for frequency: $frequency"
+    sendEmailNotification(alertCode, message, emailAddress, business)
+    println(message)
+  }
+} else {
+  val message = s"Source table count does not match DT_COUNT"
+  sendEmailNotification(alertCode, message, emailAddress, business)
+  println(message)
+}
