@@ -1,112 +1,118 @@
-if (sourceTableCount == dtCount) {
-  var sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+import java.io.IOException
 
-  // Clean the sqlFolderPath by removing unwanted control characters (including newlines and tabs)
-  if (sqlFolderPath != null && sqlFolderPath.nonEmpty) {
-    sqlFolderPath = sqlFolderPath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\:.-]]", "") // Removing control characters but keeping valid path characters
+// Function to read file content as a String
+def readFileAsString(path: String): String = {
+  try {
+    val bytes = Files.readAllBytes(Paths.get(path))
+    new String(bytes, StandardCharsets.UTF_8)
+  } catch {
+    case e: IOException =>
+      println(s"Error in reading file: ${e.getMessage}")
+      throw e
+  }
+}
 
-    // Check if the folder exists
-    if (Files.exists(Paths.get(sqlFolderPath))) {
-      val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+// Function to handle the SQL execution logic
+def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+  println(s"Running SQL script from: $scriptPath")
 
-      // Clean the sqlFilePath by removing unwanted control characters (excluding . and /)
-      val cleanSqlFilePath = sqlFilePath.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\.]!]", "") // Allow dots and slashes in path
+  try {
+    // Register JDBC driver
+    println("Registering JDBC driver...")
+    Class.forName(jdbcDriver)
 
-      // Check if the cleaned sqlFilePath exists
-      if (Files.exists(Paths.get(cleanSqlFilePath))) {
-        
-        // Read the SQL file and clean up hidden/newline characters
-        val sqlContent = new String(Files.readAllBytes(Paths.get(cleanSqlFilePath)), StandardCharsets.UTF_8)
+    // Establish connection
+    println(s"Connecting to database at: $jdbcUrl")
+    val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+    val statement = connection.createStatement()
 
-        // Remove hidden characters and newlines from SQL content
-        val cleanedSqlContent = sqlContent.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
-                                            .replaceAll("\r?\n", " ")  // Replace newlines with a space, or use "" to remove them entirely
+    // Read and clean SQL script content
+    val scriptContent = readFileAsString(scriptPath)
+    println(scriptContent) // Optionally log the content
 
-        // Optionally, you can log or check the cleaned content
-        // println(cleanedSqlContent)
+    // Execute the cleaned SQL commands
+    val commands = cleanAndSplitSqlContent(scriptContent)
 
-        // Now execute the cleaned SQL script
-        runSqlScript(cleanedSqlContent)  // Assuming runSqlScript can take cleaned content as a string
-        
-        // Send success email notification
-        sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+    commands.foreach { command =>
+      try {
+        statement.execute(command) // Execute each SQL command
+        println(s"Executed command: $command")
+      } catch {
+        case ex: Exception =>
+          val tableName = extractTableName(command)
+          val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
+          println(errorMsg)
+      }
+    }
+  } catch {
+    case ex: Exception =>
+      println(s"[ERROR] Execution failed: ${ex.getMessage}")
+  }
+}
+
+// Function to clean and split SQL content
+def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
+  val cleanedContent = scriptContent.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
+                                    .replaceAll("\r?\n", " ") // Replace newlines with a space
+  cleanedContent.split(";").map(_.trim).filter(_.nonEmpty)
+}
+
+// Extract table name from SQL command (simple logic based on 'FROM' keyword)
+def extractTableName(command: String): String = {
+  val tableNamePattern = "(?i)from\\s+([\\w_]+)".r
+  tableNamePattern.findFirstMatchIn(command) match {
+    case Some(matched) => matched.group(1)
+    case None => "Unknown"
+  }
+}
+
+def mainProcess(sourceTableCount: Int, dtCount: Int, frequency: String, bteqLocation: String, alertCode: String, emailAddress: String, business: String): Unit = {
+  if (sourceTableCount == dtCount) {
+    val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+
+    if (sqlFolderPath != null && sqlFolderPath.nonEmpty) {
+      val cleanedSqlFolderPath = cleanFolderPath(sqlFolderPath)
+
+      if (Files.exists(Paths.get(cleanedSqlFolderPath))) {
+        val sqlFilePath = s"$cleanedSqlFolderPath/$alertCode.sql"
+        val cleanSqlFilePath = cleanFolderPath(sqlFilePath)
+
+        if (Files.exists(Paths.get(cleanSqlFilePath))) {
+          // Now call the function to run the SQL script
+          runSqlScript(cleanSqlFilePath, "jdbcUrl", "jdbcUser", "jdbcPassword", "jdbcDriver")
+
+          // Send success email notification
+          sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+        } else {
+          val message = s"SQL file not found for alertCode: $alertCode at path: $cleanSqlFilePath"
+          sendEmailNotification(alertCode, message, emailAddress, business)
+          println(message)
+        }
       } else {
-        val message = s"SQL file not found for alertCode: $alertCode at path: $cleanSqlFilePath"
+        val message = s"Folder not found for frequency: $frequency at path: $cleanedSqlFolderPath"
         sendEmailNotification(alertCode, message, emailAddress, business)
         println(message)
       }
     } else {
-      val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+      val message = s"SQL folder path is empty or null for frequency: $frequency"
       sendEmailNotification(alertCode, message, emailAddress, business)
       println(message)
     }
   } else {
-    val message = s"SQL folder path is empty or null for frequency: $frequency"
+    val message = s"Source table count does not match DT_COUNT"
     sendEmailNotification(alertCode, message, emailAddress, business)
     println(message)
   }
-} else {
-  val message = s"Source table count does not match DT_COUNT"
-  sendEmailNotification(alertCode, message, emailAddress, business)
-  println(message)
 }
 
-def readFileAsString(path: String): String= {
-try
-{
-new String(byte,StandardCharsets.UTF_8)
-val bytes = files.readAllByte(Paths.get(path))
-   }
-catch{
-case e:IOException =>
-println(s"Error in reading file:${e.getmessage}")
-throw e
+// Function to clean folder paths
+def cleanFolderPath(path: String): String = {
+  path.replaceAll("[\\p{Cntrl}&&[^\r\n\t/\\:.-]]", "")  // Remove unwanted control characters
+      .replaceAll("\\s+", "")                            // Remove unwanted spaces
+      .replaceAll("\\$", "")                             // Remove dollar signs
+      .replaceAll("\\.$", "")                            // Remove trailing dots
+      .replaceAll("[^/a-zA-Z0-9._-]", "")                // Keep valid path characters
 }
-}
-
-// Execute the SQL script
-  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
-    println(s"Running SQL script from: $scriptPath")
-    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
-    val logBuffer = new StringBuilder
-
-    try {
-      // Register JDBC driver
-      println("Registering JDBC driver...")
-      Class.forName(jdbcDriver)
-
-      // Establish connection
-      println(s"Connecting to database at: $jdbcUrl")
-      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement = connection.createStatement()
-
-      // Read the SQL script
-      println("Reading SQL script...")
-    new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)
-println(scriptContent)
-
-      // Process the script: remove block comments and split into lines
-      val scriptWithoutComments = removeBlockComments(script)
-      val lines = scriptWithoutComments.split("\n").toSeq
-
-      // Prepare and filter valid lines
-      val validLines = lines
-        .drop(4) // Skip the first 4 lines
-        .dropRight(3) // Skip the last 3 lines
-        .map(removeInlineComments) // Remove inline comments (-- ...)
-        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
-
-      // Combine valid lines into SQL commands and execute them
-      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
-
-} catch {
-  case ex: Exception =>
-    // Extract the table name from the SQL command
-    val tableName = extractTableName(command)
-    val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
-    
-    println(errorMsg) // Print error to console
-    logBuffer.append(errorMsg + "\n") // Append error to log buffer
-}
-
 
