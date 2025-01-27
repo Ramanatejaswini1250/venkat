@@ -1,27 +1,73 @@
-#!/bin/bash
+import java.util.Properties
+import javax.mail._
+import javax.mail.internet._
+import java.io.FileInputStream
+import java.util.Properties
 
-# Parameters
-ALERT_CODE=$1        # Alert code
-MESSAGE=$2           # Email message
-TO_EMAIL=$3          # Hardcoded to "cdao_risk@example.com"
-CC_EMAILS=$4         # Comma-separated CC email addresses
-BUSINESS=$5          # Business information
+object EmailSender {
 
-# Email Subject and Body
-SUBJECT="Alert Notification: $ALERT_CODE"
-BODY="Business Unit: $BUSINESS\n\n$MESSAGE"
+  // Function to read SMTP properties from the file
+  def readSMTPProperties(filePath: String): Properties = {
+    val properties = new Properties()
+    try {
+      val inputStream = new FileInputStream(filePath)
+      properties.load(inputStream)
+    } catch {
+      case e: Exception => println(s"Error reading properties file: ${e.getMessage}")
+    }
+    properties
+  }
 
-# Send email using mailx or sendmail (update if necessary)
-if [ -z "$CC_EMAILS" ]; then
-  echo -e "$BODY" | mail -s "$SUBJECT" "$TO_EMAIL"
-else
-  echo -e "$BODY" | mail -s "$SUBJECT" -c "$CC_EMAILS" "$TO_EMAIL"
-fi
+  // Function to send email using the SMTP properties
+  def sendEmail(properties: Properties, toEmail: String, subject: String, messageText: String): Unit = {
+    val host = properties.getProperty("smtp.host")
+    val port = properties.getProperty("smtp.port")
+    val user = properties.getProperty("smtp.user")
+    val password = properties.getProperty("smtp.password")
+    val from = properties.getProperty("smtp.from")
 
-# Logging
-if [ $? -eq 0 ]; then
-  echo "Email sent successfully to $TO_EMAIL with CC: $CC_EMAILS"
-else
-  echo "Failed to send email to $TO_EMAIL with CC: $CC_EMAILS"
-  exit 1
-fi
+    // Set SMTP properties
+    val props = new Properties()
+    props.put("mail.smtp.host", host)
+    props.put("mail.smtp.port", port)
+    props.put("mail.smtp.auth", "true")
+    props.put("mail.smtp.starttls.enable", "true") // for TLS
+
+    // Create a session with the SMTP properties and authenticator
+    val session = Session.getInstance(props, new Authenticator() {
+      override def getPasswordAuthentication: PasswordAuthentication = {
+        new PasswordAuthentication(user, password)
+      }
+    })
+
+    try {
+      // Create a MimeMessage
+      val message = new MimeMessage(session)
+      message.setFrom(new InternetAddress(from))
+      message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
+      message.setSubject(subject)
+      message.setText(messageText)
+
+      // Send the message
+      Transport.send(message)
+      println(s"Email sent successfully to $toEmail")
+    } catch {
+      case e: MessagingException => e.printStackTrace()
+    }
+  }
+
+  def main(args: Array[String]): Unit = {
+    // Path to the properties file
+    val propertiesFilePath = "/path/to/email_config.properties"
+
+    // Read properties
+    val smtpProperties = readSMTPProperties(propertiesFilePath)
+
+    // Example: sending email
+    val toEmail = "recipient@example.com"
+    val subject = smtpProperties.getProperty("smtp.subject", "Test Email from Scala")
+    val messageText = "This is a test email sent using JavaMail API from Scala."
+
+    sendEmail(smtpProperties, toEmail, subject, messageText)
+  }
+}
