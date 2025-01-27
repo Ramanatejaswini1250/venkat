@@ -1,5 +1,5 @@
 import java.io.File
-import java.nio.file.{Files, Paths, Path, StandardCopyOption}
+import java.nio.file.{Files, Paths, StandardCopyOption}
 import scala.util.{Failure, Success, Try}
 
 object RampAutomationExecution {
@@ -41,16 +41,18 @@ object RampAutomationExecution {
   // Move .csv files from part files in the tmp folder to the destination
   def moveCsvFilesFromPartFile(tempDir: String, finalPath: String): Unit = {
     val partDir = new File(tempDir, "tmp")  // Temporary part directory inside sourceDir
-    val partFileOption: Option[File] = Option(partDir.listFiles())
-      .flatMap(_.find(_.getName.startsWith("part"))) // Find the part file
+    val partFileOption: Option[File] = Option(partDir.listFiles()).flatMap(_.find(_.getName.startsWith("part"))) // Find the part file
 
     partFileOption match {
       case Some(partFile) =>
         // Ensure the destination directory exists
         val destinationDir = new File(finalPath)
         if (!destinationDir.exists()) {
-          destinationDir.mkdirs() // Create if it doesn't exist
-          println(s"Created destination directory: $finalPath")
+          if (destinationDir.mkdirs()) {
+            println(s"Created destination directory: $finalPath")
+          } else {
+            println(s"Failed to create destination directory: $finalPath")
+          }
         }
 
         // Ensure destination directory is writable
@@ -91,9 +93,9 @@ object RampAutomationExecution {
   // Main function to ensure the tmp folder exists, move .csv files, and clean up
   def movePartFileAndClean(tempDir: String, finalPath: String): Unit = {
     // Create tmp folder if it doesn't exist
-    createTempFolderIfNeeded(tempDir)
+    val tempFolder = createTempFolderIfNeeded(tempDir)
 
     // Move .csv files from part file in tmp to final destination and clean up
-    moveCsvFilesFromPartFile(tempDir, finalPath)
+    moveCsvFilesFromPartFile(tempFolder.getAbsolutePath, finalPath)
   }
 }
