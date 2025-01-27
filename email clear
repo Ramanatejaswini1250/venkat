@@ -55,6 +55,7 @@ object EmailSender {
     }
   }
 
+
   def main(args: Array[String]): Unit = {
     // Path to the properties file
     val propertiesFilePath = "conf/email_config.properties"  // Update path as necessary
