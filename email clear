@@ -5,7 +5,7 @@ import java.io.FileInputStream
 
 object EmailSender {
 
-  // Function to read SMTP properties from the file
+  // Function to read SMTP properties from the properties file
   def readSMTPProperties(filePath: String): Properties = {
     val properties = new Properties()
     try {
@@ -57,13 +57,13 @@ object EmailSender {
 
   def main(args: Array[String]): Unit = {
     // Path to the properties file
-    val propertiesFilePath = "/path/to/email_config.properties" // Ensure this path is correct
+    val propertiesFilePath = "conf/email_config.properties"  // Update path as necessary
 
-    // Read properties
+    // Read properties from the file
     val smtpProperties = readSMTPProperties(propertiesFilePath)
 
     // Example: sending email
-    val toEmail = "recipient@example.com"
+    val toEmail = "recipient@example.com"  // Specify the recipient email address
     val subject = smtpProperties.getProperty("smtp.subject", "Test Email from Scala")
     val messageText = "This is a test email sent using JavaMail API from Scala."
 
