@@ -32,12 +32,11 @@ object EmailSender {
     props.put("mail.smtp.auth", "true")
     props.put("mail.smtp.starttls.enable", "true") // for TLS
 
-    // Create a session with the SMTP properties and authenticator
-    val session = Session.getInstance(props, new Authenticator() {
-      override def getPasswordAuthentication: PasswordAuthentication = {
-        new PasswordAuthentication(user, password)
-      }
-    })
+class MyAuthenticator(username: String, password: String) extends Authenticator {
+  override def getPasswordAuthentication: PasswordAuthentication = {
+    new PasswordAuthentication(username, password)
+  }
+}
 
     try {
       // Create a MimeMessage
