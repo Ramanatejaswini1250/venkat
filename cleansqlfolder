@@ -1,6 +1,7 @@
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 import java.io.IOException
+import java.sql.SQLException
 
 // Function to read file content as a String
 def readFileAsString(path: String): String = {
@@ -13,19 +14,38 @@ def readFileAsString(path: String): String = {
       throw e
   }
 }
-  def removeBlockComments(script: String): String = {
-    val blockCommentPattern = """(?s)/\*.*?\*/""".r
-    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
-  }
 
-  // Function to handle inline comments (--) while preserving SQL before them
-  def removeInlineComments(line: String): String = {
-    val singleLineCommentPattern = """--.*""".r
-    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
-  }
+// Function to remove block comments from SQL script
+def removeBlockComments(script: String): String = {
+  val blockCommentPattern = """(?s)/\*.*?\*/""".r
+  blockCommentPattern.replaceAllIn(script, "") // Remove block comments
+}
 
+// Function to handle inline comments (--) while preserving SQL before them
+def removeInlineComments(line: String): String = {
+  val singleLineCommentPattern = """--.*""".r
+  singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+}
 
-// Function to handle the SQL execution logic
+// Function to clean and split SQL content into individual commands
+def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
+  // Remove block comments first
+  val scriptWithoutBlockComments = removeBlockComments(scriptContent)
+  
+  // Split the script into lines, then remove inline comments
+  val cleanedContent = scriptWithoutBlockComments.split("\n")
+    .map(removeInlineComments)  // Remove inline comments from each line
+    .mkString("\n")  // Reassemble the script into a single string
+
+  // Remove unwanted control characters and split into SQL commands
+  cleanedContent.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
+    .replaceAll("\r?\n", " ")  // Replace newlines with a space
+    .split(";") // Split by semicolons to get individual SQL commands
+    .map(_.trim) // Trim each command
+    .filter(_.nonEmpty) // Filter out empty commands
+}
+
+// Function to handle SQL execution logic
 def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
   println(s"Running SQL script from: $scriptPath")
 
@@ -41,17 +61,18 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
 
     // Read and clean SQL script content
     val scriptContent = readFileAsString(scriptPath)
-    println(scriptContent) // Optionally log the content
+    println("Script content fetched successfully.")
 
     // Execute the cleaned SQL commands
     val commands = cleanAndSplitSqlContent(scriptContent)
-
     commands.foreach { command =>
       try {
-        statement.execute(command) // Execute each SQL command
-        println(s"Executed command: $command")
+        if (command.nonEmpty) {
+          statement.execute(command) // Execute each SQL command
+          println(s"Executed command: $command")
+        }
       } catch {
-        case ex: Exception =>
+        case ex: SQLException =>
           val tableName = extractTableName(command)
           val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
           println(errorMsg)
@@ -61,13 +82,6 @@ def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPass
     case ex: Exception =>
       println(s"[ERROR] Execution failed: ${ex.getMessage}")
   }
-}
-
-// Function to clean and split SQL content
-def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
-  val cleanedContent = scriptContent.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
-                                    .replaceAll("\r?\n", " ") // Replace newlines with a space
-  cleanedContent.split(";").map(_.trim).filter(_.nonEmpty)
 }
 
 // Extract table name from SQL command (simple logic based on 'FROM' keyword)
@@ -126,4 +140,3 @@ def cleanFolderPath(path: String): String = {
       .replaceAll("\\.$", "")                            // Remove trailing dots
       .replaceAll("[^/a-zA-Z0-9._-]", "")                // Keep valid path characters
 }
-
