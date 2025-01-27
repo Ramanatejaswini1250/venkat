@@ -2,7 +2,6 @@ import java.util.Properties
 import javax.mail._
 import javax.mail.internet._
 import java.io.FileInputStream
-import java.util.Properties
 
 object EmailSender {
 
@@ -58,7 +57,7 @@ object EmailSender {
 
   def main(args: Array[String]): Unit = {
     // Path to the properties file
-    val propertiesFilePath = "/path/to/email_config.properties"
+    val propertiesFilePath = "/path/to/email_config.properties" // Ensure this path is correct
 
     // Read properties
     val smtpProperties = readSMTPProperties(propertiesFilePath)
