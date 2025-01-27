@@ -64,5 +64,49 @@ throw e
 }
 }
 
+// Execute the SQL script
+  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
+    println(s"Running SQL script from: $scriptPath")
+    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
+    val logBuffer = new StringBuilder
+
+    try {
+      // Register JDBC driver
+      println("Registering JDBC driver...")
+      Class.forName(jdbcDriver)
+
+      // Establish connection
+      println(s"Connecting to database at: $jdbcUrl")
+      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      val statement = connection.createStatement()
+
+      // Read the SQL script
+      println("Reading SQL script...")
+    new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)
+println(scriptContent)
+
+      // Process the script: remove block comments and split into lines
+      val scriptWithoutComments = removeBlockComments(script)
+      val lines = scriptWithoutComments.split("\n").toSeq
+
+      // Prepare and filter valid lines
+      val validLines = lines
+        .drop(4) // Skip the first 4 lines
+        .dropRight(3) // Skip the last 3 lines
+        .map(removeInlineComments) // Remove inline comments (-- ...)
+        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+
+      // Combine valid lines into SQL commands and execute them
+      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+} catch {
+  case ex: Exception =>
+    // Extract the table name from the SQL command
+    val tableName = extractTableName(command)
+    val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
+    
+    println(errorMsg) // Print error to console
+    logBuffer.append(errorMsg + "\n") // Append error to log buffer
+}
 
 
