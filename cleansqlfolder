@@ -27,7 +27,6 @@ def removeInlineComments(line: String): String = {
   singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
 }
 
-// Function to clean and split SQL content into individual commands
 def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
   // Remove block comments first
   val scriptWithoutBlockComments = removeBlockComments(scriptContent)
@@ -37,8 +36,16 @@ def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
     .map(removeInlineComments)  // Remove inline comments from each line
     .mkString("\n")  // Reassemble the script into a single string
 
-  // Remove unwanted control characters and split into SQL commands
-  cleanedContent.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
+  // Prepare and filter valid lines
+  val validLines = cleanedContent.split("\n")
+    .drop(4) // Skip the first 4 lines
+    .dropRight(3) // Skip the last 3 lines
+    .map(removeInlineComments) // Remove inline comments (-- ...)
+    .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+
+  // Further clean the lines (remove control characters, replace newlines with spaces) and split by semicolon
+  validLines.mkString("\n")
+    .replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "") // Remove control characters except for newlines and tabs
     .replaceAll("\r?\n", " ")  // Replace newlines with a space
     .split(";") // Split by semicolons to get individual SQL commands
     .map(_.trim) // Trim each command
