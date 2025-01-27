@@ -3,8 +3,25 @@ import javax.mail._
 import javax.mail.internet._
 import javax.activation._
 
-// Assuming failureAlerts are being tracked globally
+// Global variables to track failure alerts
 var failureAlerts = Seq[String]()
+
+// Method to process alert status and track failure alerts
+def processAlert(alert: AlertStatus): Unit = {
+  alert match {
+    case Success(alertCode) =>
+      // Do nothing for successful alerts
+      println(s"Success alert: $alertCode - no action required.")
+      
+    case Failure(alertCode) =>
+      // Track failure alerts
+      failureAlerts = failureAlerts :+ alertCode
+      println(s"Failure alert $alertCode added to failure list.")
+      
+    case _ =>
+      println("Unknown alert status.")
+  }
+}
 
 // Method to send an email using javax.mail (with multiple CCs)
 def sendEmail(properties: Properties, toEmail: String, ccEmails: Seq[String], subject: String, messageText: String): Unit = {
@@ -56,24 +73,18 @@ def sendEmail(properties: Properties, toEmail: String, ccEmails: Seq[String], su
   }
 }
 
-// Method to process alert status and track failure alerts
-def processAlert(alert: AlertStatus): Unit = {
-  alert match {
-    case Success(_) =>
-      // Do nothing for successful alerts
-      println("Success alert: no action required.")
-      
-    case Failure(alertCode) =>
-      // Track failure alerts
-      failureAlerts = failureAlerts :+ alertCode
-      println(s"Failure alert $alertCode added to failure list.")
-      
-    case _ =>
-      println("Unknown alert status.")
+// Method to generate a dynamic subject based on the failure message
+def generateSubjectBasedOnMessage(message: String, alertCode: String): String = {
+  message match {
+    case m if m.contains("not found")   => s"File Missing for Alert: $alertCode"
+    case m if m.contains("Folder not found") => s"Folder Missing for Frequency"
+    case m if m.contains("empty or null") => s"Invalid Folder Path for Frequency"
+    case m if m.contains("mismatch") => s"Source Table Count Mismatch"
+    case _ => s"Failure Alert: $alertCode"
   }
 }
 
-// Method to send individual email notification based on failure content
+// Method to send an individual failure notification email
 def sendEmailNotification(alertCode: String, message: String, toEmail: String, ccEmails: Seq[String], business: String, html: Boolean): Unit = {
   // Only track failures and send failure alerts
   if (!message.contains("successfully")) {
@@ -90,136 +101,8 @@ def sendEmailNotification(alertCode: String, message: String, toEmail: String, c
   }
 }
 
-// Method to generate a dynamic subject based on the failure message
-def generateSubjectBasedOnMessage(message: String, alertCode: String): String = {
-  message match {
-    case m if m.contains("not found")   => s"File Missing for Alert: $alertCode"
-    case m if m.contains("Folder not found") => s"Folder Missing for Frequency"
-    case m if m.contains("empty or null") => s"Invalid Folder Path for Frequency"
-    case m if m.contains("mismatch") => s"Source Table Count Mismatch"
-    case _ => s"Failure Alert: $alertCode"
-  }
-}
-
 // Method to send a consolidated email with all failure alerts
 def sendConsolidatedEmail(allFailures: Seq[String], currentDate: String, toEmail: String, ccEmails: Seq[String]): Unit = {
-  val subject = s"Consolidated Alert Report for $currentDate"
-
-  val message =
-    s"""
-      |<html>
-      |<head>
-      |  <style>
-      |    table {
-      |      width: 100%;
-      |      border-collapse: collapse;
-      |    }
-      |    th, td {
-      |      border: 1px solid black;
-      |      padding: 8px;
-      |      text-align: left;
-      |    }
-      |    th {
-      |      background
-import java.util.Properties
-import javax.mail._
-import javax.mail.internet._
-
-var failureAlerts = Seq[String]() // Only track failure alerts
-
-// Method to send an email using the given properties and message details
-def sendEmail(properties: Properties, toEmail: String, subject: String, messageText: String): Unit = {
-  val host = properties.getProperty("smtp.host")
-  val port = properties.getProperty("smtp.port")
-  val user = properties.getProperty("smtp.user")
-  val password = properties.getProperty("smtp.password")
-  val from = properties.getProperty("smtp.from")
-
-  // Set SMTP properties
-  val props = new Properties()
-  props.put("mail.smtp.host", host)
-  props.put("mail.smtp.port", port)
-  props.put("mail.smtp.auth", "true")
-  props.put("mail.smtp.starttls.enable", "true") // Enable TLS
-
-  // Create an authenticator to handle login credentials
-  val authenticator = new MyAuthenticator(user, password)
-
-  // Create a session with the properties and authenticator
-  val session = Session.getInstance(props, authenticator)
-
-  try {
-    // Create a MimeMessage
-    val message = new MimeMessage(session)
-    message.setFrom(new InternetAddress(from))
-    message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
-    message.setSubject(subject)
-    message.setText(messageText)
-
-    // Send the email
-    Transport.send(message)
-    println(s"Email sent successfully to $toEmail")
-  } catch {
-    case e: MessagingException =>
-      e.printStackTrace()
-      println("Failed to send email.")
-  }
-}
-
-// Authenticator to provide username and password for SMTP authentication
-class MyAuthenticator(username: String, password: String) extends Authenticator {
-  override def getPasswordAuthentication: PasswordAuthentication = {
-    new PasswordAuthentication(username, password)
-  }
-}
-
-// Method to process alert status and track failure alerts
-def processAlert(alert: AlertStatus): Unit = {
-  alert match {
-    case Success(_) =>
-      // Do nothing for successful alerts, don't track them
-      println("Success alert: no action required.")
-      
-    case Failure(alertCode) =>
-      // Track failure alerts
-      failureAlerts = failureAlerts :+ alertCode
-      println(s"Failure alert $alertCode added to failure list.")
-      
-    case _ =>
-      println("Unknown alert status.")
-  }
-}
-
-// Method to send individual email notification based on failure content
-def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String, html: Boolean): Unit = {
-  // Only track failures and send failure alerts
-  if (!message.contains("successfully")) {
-    failureAlerts = failureAlerts :+ alertCode
-  }
-
-  // Generate subject based on failure message
-  val subject = generateSubjectBasedOnMessage(message, alertCode)
-
-  // Send email for failure alerts
-  if (!message.contains("successfully")) {
-    val messageText = s"Failure Alert for $alertCode: $message"
-    sendEmail(emailAddress, subject, messageText)
-  }
-}
-
-// Method to generate a dynamic subject based on the failure message
-def generateSubjectBasedOnMessage(message: String, alertCode: String): String = {
-  message match {
-    case m if m.contains("not found")   => s"File Missing for Alert: $alertCode"
-    case m if m.contains("Folder not found") => s"Folder Missing for Frequency"
-    case m if m.contains("empty or null") => s"Invalid Folder Path for Frequency"
-    case m if m.contains("mismatch") => s"Source Table Count Mismatch"
-    case _ => s"Failure Alert: $alertCode"
-  }
-}
-
-// Method to send a consolidated email with all failure alerts
-def sendConsolidatedEmail(allFailures: Seq[String], currentDate: String, emailAddress: String): Unit = {
   val subject = s"Consolidated Alert Report for $currentDate"
 
   val message =
@@ -260,20 +143,41 @@ def sendConsolidatedEmail(allFailures: Seq[String], currentDate: String, emailAd
       |""".stripMargin
 
   // Send consolidated failure report email
-  sendEmail(emailAddress, subject, message)
+  sendEmail(toEmail, ccEmails, subject, message)
 }
 
 // Example of how these methods can be used in the application
-def main(): Unit = {
-  // Example alert processing (success alerts will not be tracked, only failure alerts)
-  processAlert(Success("ALERT_001"))
-  processAlert(Failure("ALERT_002"))
-  processAlert(Success("ALERT_003"))
+def handleAlertsAndSendNotifications(alerts: Seq[AlertStatus], toEmail: String, ccEmails: Seq[String], business: String): Unit = {
+  // Process all alerts (this could be part of your alert handling logic)
+  alerts.foreach(processAlert)
 
-  // Send individual failure notifications (only if the message indicates failure)
-  sendEmailNotification("ALERT_002", "SQL file not found", "recipient@example.com", "BusinessUnit1", html = true)
+  // Send individual failure notifications for each failure
+  alerts.collect { case Failure(alertCode) => alertCode }.foreach { alertCode =>
+    // Assuming message content is available for each failure alert
+    val message = "An error occurred during the process."
+    sendEmailNotification(alertCode, message, toEmail, ccEmails, business, html = true)
+  }
 
-  // Send consolidated email at 5pm cutoff (simulate with a static date)
+  // Send consolidated failure email
   val currentDate = "2025-01-27"
-  sendConsolidatedEmail(failureAlerts, currentDate, "recipient@example.com")
+  sendConsolidatedEmail(failureAlerts, currentDate, toEmail, ccEmails)
+}
+
+// Example main method or use case
+def main(): Unit = {
+  // Sample alerts
+  val sampleAlerts = Seq(
+    Success("ALERT_001"),
+    Failure("ALERT_002"),
+    Success("ALERT_003"),
+    Failure("ALERT_004")
+  )
+
+  // Sample email parameters
+  val toEmail = "recipient@example.com"
+  val ccEmails = Seq("cc1@example.com", "cc2@example.com") // Multiple CC recipients
+  val business = "BusinessUnit1"
+
+  // Handle alerts and send email notifications
+  handleAlertsAndSendNotifications(sampleAlerts, toEmail, ccEmails, business)
 }
