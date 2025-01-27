@@ -1,6 +1,129 @@
 import java.util.Properties
 import javax.mail._
 import javax.mail.internet._
+import javax.activation._
+
+// Assuming failureAlerts are being tracked globally
+var failureAlerts = Seq[String]()
+
+// Method to send an email using javax.mail (with multiple CCs)
+def sendEmail(properties: Properties, toEmail: String, ccEmails: Seq[String], subject: String, messageText: String): Unit = {
+  val host = properties.getProperty("smtp.host")
+  val port = properties.getProperty("smtp.port")
+  val user = properties.getProperty("smtp.user")
+  val password = properties.getProperty("smtp.password")
+  val from = properties.getProperty("smtp.from")
+
+  // Set SMTP properties
+  val props = new Properties()
+  props.put("mail.smtp.host", host)
+  props.put("mail.smtp.port", port)
+  props.put("mail.smtp.auth", "true")
+  props.put("mail.smtp.starttls.enable", "true") // Enable TLS
+
+  // Create an authenticator to handle login credentials
+  val authenticator = new Authenticator {
+    override def getPasswordAuthentication: PasswordAuthentication = {
+      new PasswordAuthentication(user, password)
+    }
+  }
+
+  // Create a session with the properties and authenticator
+  val session = Session.getInstance(props, authenticator)
+
+  try {
+    // Create a MimeMessage
+    val message = new MimeMessage(session)
+    message.setFrom(new InternetAddress(from))
+    message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
+    
+    // Add multiple CC recipients
+    if (ccEmails.nonEmpty) {
+      val ccAddresses = ccEmails.map(new InternetAddress(_))
+      message.addRecipients(Message.RecipientType.CC, ccAddresses.mkString(","))
+    }
+
+    message.setSubject(subject)
+    message.setText(messageText)
+
+    // Send the email
+    Transport.send(message)
+    println(s"Email sent successfully to $toEmail with CCs to ${ccEmails.mkString(",")}")
+  } catch {
+    case e: MessagingException =>
+      e.printStackTrace()
+      println("Failed to send email.")
+  }
+}
+
+// Method to process alert status and track failure alerts
+def processAlert(alert: AlertStatus): Unit = {
+  alert match {
+    case Success(_) =>
+      // Do nothing for successful alerts
+      println("Success alert: no action required.")
+      
+    case Failure(alertCode) =>
+      // Track failure alerts
+      failureAlerts = failureAlerts :+ alertCode
+      println(s"Failure alert $alertCode added to failure list.")
+      
+    case _ =>
+      println("Unknown alert status.")
+  }
+}
+
+// Method to send individual email notification based on failure content
+def sendEmailNotification(alertCode: String, message: String, toEmail: String, ccEmails: Seq[String], business: String, html: Boolean): Unit = {
+  // Only track failures and send failure alerts
+  if (!message.contains("successfully")) {
+    failureAlerts = failureAlerts :+ alertCode
+  }
+
+  // Generate subject based on failure message
+  val subject = generateSubjectBasedOnMessage(message, alertCode)
+
+  // Send email for failure alerts
+  if (!message.contains("successfully")) {
+    val messageText = s"Failure Alert for $alertCode: $message"
+    sendEmail(toEmail, ccEmails, subject, messageText)
+  }
+}
+
+// Method to generate a dynamic subject based on the failure message
+def generateSubjectBasedOnMessage(message: String, alertCode: String): String = {
+  message match {
+    case m if m.contains("not found")   => s"File Missing for Alert: $alertCode"
+    case m if m.contains("Folder not found") => s"Folder Missing for Frequency"
+    case m if m.contains("empty or null") => s"Invalid Folder Path for Frequency"
+    case m if m.contains("mismatch") => s"Source Table Count Mismatch"
+    case _ => s"Failure Alert: $alertCode"
+  }
+}
+
+// Method to send a consolidated email with all failure alerts
+def sendConsolidatedEmail(allFailures: Seq[String], currentDate: String, toEmail: String, ccEmails: Seq[String]): Unit = {
+  val subject = s"Consolidated Alert Report for $currentDate"
+
+  val message =
+    s"""
+      |<html>
+      |<head>
+      |  <style>
+      |    table {
+      |      width: 100%;
+      |      border-collapse: collapse;
+      |    }
+      |    th, td {
+      |      border: 1px solid black;
+      |      padding: 8px;
+      |      text-align: left;
+      |    }
+      |    th {
+      |      background
+import java.util.Properties
+import javax.mail._
+import javax.mail.internet._
 
 var failureAlerts = Seq[String]() // Only track failure alerts
 
