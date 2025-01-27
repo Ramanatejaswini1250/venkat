@@ -1,113 +1,156 @@
 import java.util.Properties
 import javax.mail._
 import javax.mail.internet._
-import java.io.FileInputStream
 
-object EmailSender {
+var failureAlerts = Seq[String]() // Only track failure alerts
 
-  // Function to read SMTP properties from the properties file
-  def readSMTPProperties(filePath: String): Properties = {
-    val properties = new Properties()
-    try {
-      val inputStream = new FileInputStream(filePath)
-      properties.load(inputStream)
-    } catch {
-      case e: Exception => println(s"Error reading properties file: ${e.getMessage}")
-    }
-    properties
+// Method to send an email using the given properties and message details
+def sendEmail(properties: Properties, toEmail: String, subject: String, messageText: String): Unit = {
+  val host = properties.getProperty("smtp.host")
+  val port = properties.getProperty("smtp.port")
+  val user = properties.getProperty("smtp.user")
+  val password = properties.getProperty("smtp.password")
+  val from = properties.getProperty("smtp.from")
+
+  // Set SMTP properties
+  val props = new Properties()
+  props.put("mail.smtp.host", host)
+  props.put("mail.smtp.port", port)
+  props.put("mail.smtp.auth", "true")
+  props.put("mail.smtp.starttls.enable", "true") // Enable TLS
+
+  // Create an authenticator to handle login credentials
+  val authenticator = new MyAuthenticator(user, password)
+
+  // Create a session with the properties and authenticator
+  val session = Session.getInstance(props, authenticator)
+
+  try {
+    // Create a MimeMessage
+    val message = new MimeMessage(session)
+    message.setFrom(new InternetAddress(from))
+    message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
+    message.setSubject(subject)
+    message.setText(messageText)
+
+    // Send the email
+    Transport.send(message)
+    println(s"Email sent successfully to $toEmail")
+  } catch {
+    case e: MessagingException =>
+      e.printStackTrace()
+      println("Failed to send email.")
   }
+}
 
-  // Function to send email using the SMTP properties
-  def sendEmail(properties: Properties, toEmail: String, subject: String, messageText: String): Unit = {
-    val host = properties.getProperty("smtp.host")
-    val port = properties.getProperty("smtp.port")
-    val user = properties.getProperty("smtp.user")
-    val password = properties.getProperty("smtp.password")
-    val from = properties.getProperty("smtp.from")
-
-    // Set SMTP properties
-    val props = new Properties()
-    props.put("mail.smtp.host", host)
-    props.put("mail.smtp.port", port)
-    props.put("mail.smtp.auth", "true")
-    props.put("mail.smtp.starttls.enable", "true") // for TLS
-
+// Authenticator to provide username and password for SMTP authentication
 class MyAuthenticator(username: String, password: String) extends Authenticator {
   override def getPasswordAuthentication: PasswordAuthentication = {
     new PasswordAuthentication(username, password)
   }
 }
 
-    try {
-      // Create a MimeMessage
-      val message = new MimeMessage(session)
-      message.setFrom(new InternetAddress(from))
-      message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
-      message.setSubject(subject)
-      message.setText(messageText)
-
-      // Send the message
-      Transport.send(message)
-      println(s"Email sent successfully to $toEmail")
-    } catch {
-      case e: MessagingException => e.printStackTrace()
-    }
-  }
-
-
-  def main(args: Array[String]): Unit = {
-    // Path to the properties file
-    val propertiesFilePath = "conf/email_config.properties"  // Update path as necessary
-
-    // Read properties from the file
-    val smtpProperties = readSMTPProperties(propertiesFilePath)
-
-    // Example: sending email
-    val toEmail = "recipient@example.com"  // Specify the recipient email address
-    val subject = smtpProperties.getProperty("smtp.subject", "Test Email from Scala")
-    val messageText = "This is a test email sent using JavaMail API from Scala."
-
-    sendEmail(smtpProperties, toEmail, subject, messageText)
+// Method to process alert status and track failure alerts
+def processAlert(alert: AlertStatus): Unit = {
+  alert match {
+    case Success(_) =>
+      // Do nothing for successful alerts, don't track them
+      println("Success alert: no action required.")
+      
+    case Failure(alertCode) =>
+      // Track failure alerts
+      failureAlerts = failureAlerts :+ alertCode
+      println(s"Failure alert $alertCode added to failure list.")
+      
+    case _ =>
+      println("Unknown alert status.")
   }
 }
 
-
-object AlertProcessor {
-
-  // Sealed trait and case classes for success and failure
-  sealed trait AlertStatus
-  case class Success(alertCode: String) extends AlertStatus
-  case class Failure(alertCode: String) extends AlertStatus
-
-  // List to track success alerts
-  var successAlerts: List[String] = List()
-
-  // Function to process alert based on its status (success or failure)
-  def processAlert(alert: AlertStatus): Unit = {
-    alert match {
-      case Success(alertCode) =>
-        // Add alert code to the success list
-        successAlerts = successAlerts :+ alertCode
-        println(s"Alert $alertCode added to success list.")
-        
-      case Failure(alertCode) =>
-        // Handle failure alert (you can add it to a failure list or take any other action)
-        println(s"Alert $alertCode added to failure list.")
-        
-      case _ =>
-        println("Unknown alert status.")
-    }
+// Method to send individual email notification based on failure content
+def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String, html: Boolean): Unit = {
+  // Only track failures and send failure alerts
+  if (!message.contains("successfully")) {
+    failureAlerts = failureAlerts :+ alertCode
   }
 
-  // Main function to simulate alert processing
-  def main(args: Array[String]): Unit = {
-    // Simulate a list of alerts (some successes and some failures)
-    val alerts = List(Success("alert001"), Failure("alert002"), Success("alert003"))
+  // Generate subject based on failure message
+  val subject = generateSubjectBasedOnMessage(message, alertCode)
 
-    // Process each alert and add to the appropriate list
-    alerts.foreach(processAlert)
-
-    // Print the success alerts
-    println(s"Success Alerts: ${successAlerts.mkString(", ")}")
+  // Send email for failure alerts
+  if (!message.contains("successfully")) {
+    val messageText = s"Failure Alert for $alertCode: $message"
+    sendEmail(emailAddress, subject, messageText)
   }
+}
+
+// Method to generate a dynamic subject based on the failure message
+def generateSubjectBasedOnMessage(message: String, alertCode: String): String = {
+  message match {
+    case m if m.contains("not found")   => s"File Missing for Alert: $alertCode"
+    case m if m.contains("Folder not found") => s"Folder Missing for Frequency"
+    case m if m.contains("empty or null") => s"Invalid Folder Path for Frequency"
+    case m if m.contains("mismatch") => s"Source Table Count Mismatch"
+    case _ => s"Failure Alert: $alertCode"
+  }
+}
+
+// Method to send a consolidated email with all failure alerts
+def sendConsolidatedEmail(allFailures: Seq[String], currentDate: String, emailAddress: String): Unit = {
+  val subject = s"Consolidated Alert Report for $currentDate"
+
+  val message =
+    s"""
+      |<html>
+      |<head>
+      |  <style>
+      |    table {
+      |      width: 100%;
+      |      border-collapse: collapse;
+      |    }
+      |    th, td {
+      |      border: 1px solid black;
+      |      padding: 8px;
+      |      text-align: left;
+      |    }
+      |    th {
+      |      background-color: #4CAF50;
+      |      color: white;
+      |    }
+      |    .failure {
+      |      background-color: #f8d7da;
+      |      color: #721c24;
+      |    }
+      |  </style>
+      |</head>
+      |<body>
+      |  <h2>Consolidated Failure Report for $currentDate</h2>
+      |  <h3>Failure Alerts</h3>
+      |  <table>
+      |    <tr>
+      |      <th>Alert</th>
+      |    </tr>
+      |    ${allFailures.map(alert => s"<tr class='failure'><td>$alert</td></tr>").mkString("\n")}
+      |  </table>
+      |</body>
+      |</html>
+      |""".stripMargin
+
+  // Send consolidated failure report email
+  sendEmail(emailAddress, subject, message)
+}
+
+// Example of how these methods can be used in the application
+def main(): Unit = {
+  // Example alert processing (success alerts will not be tracked, only failure alerts)
+  processAlert(Success("ALERT_001"))
+  processAlert(Failure("ALERT_002"))
+  processAlert(Success("ALERT_003"))
+
+  // Send individual failure notifications (only if the message indicates failure)
+  sendEmailNotification("ALERT_002", "SQL file not found", "recipient@example.com", "BusinessUnit1", html = true)
+
+  // Send consolidated email at 5pm cutoff (simulate with a static date)
+  val currentDate = "2025-01-27"
+  sendConsolidatedEmail(failureAlerts, currentDate, "recipient@example.com")
 }
