@@ -55,28 +55,7 @@ object EmailNotificationApp {
   }
 
   // Function to run SQL script and halt execution if it fails
-  def runSqlScript(scriptPath: String): Unit = {
-    try {
-      // Read the SQL script file content
-      val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
 
-      // Execute the SQL query using Spark (or another method if needed)
-      val result = spark.sql(sqlContent)  // For Spark SQL execution
-
-      // Check for specific success criteria, or handle failure
-      val status = result.count()  // This could be any check based on your query result
-      if (status == 0) {
-        println(s"SQL script executed successfully: $scriptPath")
-      } else {
-        println(s"SQL script failed, halting execution for: $scriptPath")
-        throw new Exception(s"SQL execution failed, halting further execution.")
-      }
-    } catch {
-      case ex: Exception =>
-        println(s"Error executing SQL script: ${ex.getMessage}")
-        throw new Exception(s"SQL script failed: ${ex.getMessage}, halting process.")
-    }
-  }
 
   // Function to generate a timestamped file name
   def getCurrentTimestamp: String = {
