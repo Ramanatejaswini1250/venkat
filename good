@@ -200,7 +200,8 @@ def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
 
       // Read the SQL script
       println("Reading SQL script...")
-      val script = java.nio.file.Files.readString(java.nio.file.Paths.get(scriptPath), java.nio.charset.StandardCharsets.UTF_8)
+    new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)
+println(scriptContent)
 
       // Process the script: remove block comments and split into lines
       val scriptWithoutComments = removeBlockComments(script)
