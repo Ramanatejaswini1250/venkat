@@ -13,6 +13,17 @@ def readFileAsString(path: String): String = {
       throw e
   }
 }
+  def removeBlockComments(script: String): String = {
+    val blockCommentPattern = """(?s)/\*.*?\*/""".r
+    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
+  }
+
+  // Function to handle inline comments (--) while preserving SQL before them
+  def removeInlineComments(line: String): String = {
+    val singleLineCommentPattern = """--.*""".r
+    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+  }
+
 
 // Function to handle the SQL execution logic
 def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
