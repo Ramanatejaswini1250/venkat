@@ -13,6 +13,13 @@ def readFileAsString(path: String): String = {
       println(s"Error reading file: ${e.getMessage}")
       throw e
   }
+  // Log permissions if needed (POSIX-specific systems only)
+  Try(Files.getPosixFilePermissions(filePath)) match {
+    case Success(permissions) =>
+      println(s"File permissions for $path: ${PosixFilePermissions.toString(permissions)}")
+    case Failure(_) =>
+      println(s"Could not retrieve file permissions for: $path (may not be a POSIX file system)")
+  }
 }
 
 // Function to remove block comments from SQL script
