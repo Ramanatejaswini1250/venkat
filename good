@@ -295,70 +295,6 @@ df.foreachPartition { partition =>
     // Process each row in the partition
     partition.foreach { row =>
       val stmt = con_rss.createStatement()
-import org.apache.spark.sql.{SparkSession, DataFrame}
-import java.io.{BufferedReader, InputStreamReader}
-import java.text.SimpleDateFormat
-import java.util.{Calendar, Date}
-import scala.util.{Try, Success, Failure}
-import scala.io.Source
-import java.nio.file.{Files, Paths}
-import java.sql.{Connection, DriverManager, Statement}
-
-object EmailNotificationApp {
-  
-  // Define Spark session (initialize the Spark context)
-  val spark: SparkSession = SparkSession.builder()
-    .appName("EmailNotificationApp")
-    .master("local[*]") // Adjust as needed for your environment
-    .getOrCreate()
-
-  // JDBC connection parameters (to be set with actual values)
-  val jdbcUrl: String = "jdbc:your_database_url"
-  val jdbcUser: String = "your_user"
-  val jdbcPassword: String = "your_password"
-  val jdbcDriver: String = "com.jdbc.Driver"  // Specify the correct JDBC driver class
-
-  // Function to send email notifications via a shell script with first email in To and others in CC
-  def sendEmailNotification(alertCode: String, message: String, emailAddresses: String, business: String): Unit = {
-    val shellScriptPath = "/path/to/email_notification.sh"  // Update with actual path to script
-    val emailList = emailAddresses.split(",").map(_.trim)
-
-    if (emailList.nonEmpty) {
-      val toEmail = emailList(0)
-      val ccEmails = emailList.drop(1).mkString(",")  // All remaining emails in "CC"
-
-      Try {
-        val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message, toEmail, ccEmails, business).start()
-
-        val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
-        var line: String = null
-        while ({ line = reader.readLine(); line != null }) {
-          println(line)
-        }
-
-        val exitCode = process.waitFor()
-        if (exitCode != 0) {
-          throw new Exception(s"Error executing shell script: $shellScriptPath with exit code: $exitCode")
-        } else {
-          println(s"Email notification sent to: $toEmail and CC: $ccEmails for alertCode: $alertCode with message: $message")
-        }
-      } match {
-        case Success(_) => println(s"Notification sent for alertCode: $alertCode")
-        case Failure(ex) => println(s"Failed to send email notification: ${ex.getMessage}")
-      }
-    } else {
-      println("No email addresses found to send the notification.")
-    }
-  }
-
-import java.nio.file.{Paths, Files}
-import java.io.IOException
-import java.nio.charset.StandardCharsets
-
-import java.nio.file.{Paths, Files}
-import java.io.IOException
-import java.nio.charset.StandardCharsets
-
 def readFileAsString(path: String): String= {
 try
 {
@@ -392,29 +328,6 @@ throw e
   }
 }
 
-  // Function to run SQL script and halt execution if it fails
-  def runSqlScript(scriptPath: String): Unit = {
-    try {
-      // Read the SQL script file content
-      val sqlContent = scala.io.Source.fromFile(scriptPath).getLines().mkString("\n")
-
-      // Execute the SQL query using Spark (or another method if needed)
-      val result = spark.sql(sqlContent)  // For Spark SQL execution
-
-      // Check for specific success criteria, or handle failure
-      val status = result.count()  // This could be any check based on your query result
-      if (status == 0) {
-        println(s"SQL script executed successfully: $scriptPath")
-      } else {
-        println(s"SQL script failed, halting execution for: $scriptPath")
-        throw new Exception(s"SQL execution failed, halting further execution.")
-      }
-    } catch {
-      case ex: Exception =>
-        println(s"Error executing SQL script: ${ex.getMessage}")
-        throw new Exception(s"SQL script failed: ${ex.getMessage}, halting process.")
-    }
-  }
 
   // Function to generate a timestamped file name
   def getCurrentTimestamp: String = {
