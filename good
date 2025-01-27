@@ -379,12 +379,18 @@ import java.nio.file.{Paths, Files}
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 
-def readFileAsString(path: String): Option[String] = {
-  if (path == null || path.isEmpty) {
-    println(s"Path is null or empty: $path")
-    return None
-  }
-
+def readFileAsString(path: String): String= {
+try
+{
+new String(byte,StandardCharsets.UTF_8)
+val bytes = files.readAllByte(Paths.get(path))
+   }
+catch{
+case e:IOException =>
+println(s"Error in reading file:${e.getmessage}")
+throw e
+}
+}
   try {
     val filePath = Paths.get(path)
 
