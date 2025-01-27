@@ -70,3 +70,44 @@ class MyAuthenticator(username: String, password: String) extends Authenticator 
     sendEmail(smtpProperties, toEmail, subject, messageText)
   }
 }
+
+
+object AlertProcessor {
+
+  // Sealed trait and case classes for success and failure
+  sealed trait AlertStatus
+  case class Success(alertCode: String) extends AlertStatus
+  case class Failure(alertCode: String) extends AlertStatus
+
+  // List to track success alerts
+  var successAlerts: List[String] = List()
+
+  // Function to process alert based on its status (success or failure)
+  def processAlert(alert: AlertStatus): Unit = {
+    alert match {
+      case Success(alertCode) =>
+        // Add alert code to the success list
+        successAlerts = successAlerts :+ alertCode
+        println(s"Alert $alertCode added to success list.")
+        
+      case Failure(alertCode) =>
+        // Handle failure alert (you can add it to a failure list or take any other action)
+        println(s"Alert $alertCode added to failure list.")
+        
+      case _ =>
+        println("Unknown alert status.")
+    }
+  }
+
+  // Main function to simulate alert processing
+  def main(args: Array[String]): Unit = {
+    // Simulate a list of alerts (some successes and some failures)
+    val alerts = List(Success("alert001"), Failure("alert002"), Success("alert003"))
+
+    // Process each alert and add to the appropriate list
+    alerts.foreach(processAlert)
+
+    // Print the success alerts
+    println(s"Success Alerts: ${successAlerts.mkString(", ")}")
+  }
+}
