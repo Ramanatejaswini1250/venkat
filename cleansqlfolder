@@ -10,7 +10,7 @@ def readFileAsString(path: String): String = {
     new String(bytes, StandardCharsets.UTF_8)
   } catch {
     case e: IOException =>
-      println(s"Error in reading file: ${e.getMessage}")
+      println(s"Error reading file: ${e.getMessage}")
       throw e
   }
 }
@@ -21,27 +21,19 @@ def removeBlockComments(script: String): String = {
   blockCommentPattern.replaceAllIn(script, "") // Remove block comments
 }
 
-// Function to handle inline comments (--) while preserving SQL before them
+// Function to remove inline comments (--) from a line
 def removeInlineComments(line: String): String = {
   val singleLineCommentPattern = """--.*""".r
-  singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
+  singleLineCommentPattern.replaceFirstIn(line, "").trim
 }
 
+// Function to clean and split SQL content into individual commands
 def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
   // Remove block comments first
   val scriptWithoutBlockComments = removeBlockComments(scriptContent)
-  
-  // Split the script into lines, then remove inline comments
-  val cleanedContent = scriptWithoutBlockComments.split("\n")
-    .map(removeInlineComments)  // Remove inline comments from each line
-    .mkString("\n")  // Reassemble the script into a single string
 
-  // Prepare and filter valid lines
-  val validLines = cleanedContent.split("\n")
-    .drop(4) // Skip the first 4 lines
-    .dropRight(3) // Skip the last 3 lines
-    .map(removeInlineComments) // Remove inline comments (-- ...)
-    .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+  // Process the cleaned content: remove inline comments, drop unnecessary lines, and clean whitespace
+  val validLines = processLines(scriptWithoutBlockComments)
 
   // Further clean the lines (remove control characters, replace newlines with spaces) and split by semicolon
   validLines.mkString("\n")
@@ -52,7 +44,16 @@ def cleanAndSplitSqlContent(scriptContent: String): Seq[String] = {
     .filter(_.nonEmpty) // Filter out empty commands
 }
 
-// Function to handle SQL execution logic
+// Function to process lines: drop lines and remove comments
+def processLines(script: String): Seq[String] = {
+  script.split("\n")
+    .drop(4) // Skip the first 4 lines
+    .dropRight(3) // Skip the last 3 lines
+    .map(removeInlineComments) // Remove inline comments from each line
+    .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+}
+
+// Function to execute SQL script
 def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
   println(s"Running SQL script from: $scriptPath")
 
@@ -100,6 +101,7 @@ def extractTableName(command: String): String = {
   }
 }
 
+// Function to process the main process for execution
 def mainProcess(sourceTableCount: Int, dtCount: Int, frequency: String, bteqLocation: String, alertCode: String, emailAddress: String, business: String): Unit = {
   if (sourceTableCount == dtCount) {
     val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
