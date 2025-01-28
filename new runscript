@@ -1,177 +1,124 @@
 import java.nio.file.{Files, Paths}
-import java.nio.file.attribute.FileTime
-import java.nio.file.StandardCopyOption
-import java.util.concurrent.TimeUnit
-import java.io.IOException
-import scala.collection.JavaConverters._
+import scala.io.Source
 
-object SqlUtils {
+df.foreachPartition { partition =>
+  partition.foreach { row =>
+    val alertCode = row.getAs[String]("alert_code")
+    val dtCount = row.getAs[Int]("dt_count")
+    val dateToLoad = row.getAs[String]("date_to_load")
+    val bteqLocation = row.getAs[String]("bteq_location")
+    val emailAddress = row.getAs[String]("email_address")
+    val business = row.getAs[String]("business")
 
-  // Method to get the column names of a table
-  def getTableColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String): Seq[String] = {
-    // Register JDBC driver
-    Class.forName(jdbcDriver)
+    val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
+      sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
+      throw new Exception("Missing source_table_name")
+    }
 
-    // Establish connection
-    val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-    val statement = connection.createStatement()
+    val frequency = row.getAs[String]("frequency").getOrElse {
+      sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
+      throw new Exception("Missing frequency")
+    }
+
+    val filterColumn = row.getAs[String]("filter_column").getOrElse {
+      sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
+      throw new Exception("Missing filter_column")
+    }
 
     try {
-      // Get the column names from the specified table
-      val resultSet = statement.executeQuery(s"DESCRIBE $tableName")
-      var columns = Seq[String]()
+      if (dtCount > 0) {
+        val folderPath = getSqlFolderPath(frequency, bteqLocation)
 
-      while (resultSet.next()) {
-        columns = columns :+ resultSet.getString("Field") // Assuming the column names are in the "Field" column
-      }
-      columns
-    } finally {
-      statement.close()
-      connection.close()
-    }
-  }
-
-  // Method to handle insert statements without column names
-  def handleInsertWithoutColumns(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, tableName: String, query: String): String = {
-    // Get the table columns dynamically
-    val columns = getTableColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName)
-    val columnsString = columns.mkString(", ")
-    val queryWithColumns = query.replace("insert into", s"insert into $tableName ($columnsString)")
-
-    queryWithColumns
-  }
-}
-
-object SqlScriptExecutor {
-
-  // Generate a timestamped log file name
-  def getCurrentTimestamp: String = {
-    val format = new java.text.SimpleDateFormat("yyyyMMddHHmmss")
-    format.format(java.util.Calendar.getInstance().getTime)
-  }
-
-  // Function to remove block comments (/* ... */)
-  def removeBlockComments(script: String): String = {
-    val blockCommentPattern = """(?s)/\*.*?\*/""".r
-    blockCommentPattern.replaceAllIn(script, "") // Remove block comments
-  }
-
-  // Function to handle inline comments (--) while preserving SQL before them
-  def removeInlineComments(line: String): String = {
-    val singleLineCommentPattern = """--.*""".r
-    singleLineCommentPattern.replaceFirstIn(line, "").trim // Remove only the comment part
-  }
-
-  // Function to delete log files older than 24 hours
-  def cleanOldLogFiles(logDirectory: String): Unit = {
-    println(s"Cleaning up old log files from: $logDirectory")
-
-    val logFiles = Files.list(Paths.get(logDirectory)).iterator().asScala
-    val currentTime = System.currentTimeMillis()
-
-    logFiles.foreach { logFile =>
-      try {
-        val fileTime: FileTime = Files.getLastModifiedTime(logFile)
-        val fileAge = currentTime - fileTime.toMillis
-
-        // Check if file is older than 24 hours (24 hours * 60 minutes * 60 seconds * 1000 ms)
-        if (fileAge > TimeUnit.HOURS.toMillis(24)) {
-          println(s"Deleting old log file: ${logFile.getFileName}")
-          Files.delete(logFile) // Delete the log file
-        }
-      } catch {
-        case e: IOException => println(s"Error checking file $logFile: ${e.getMessage}")
-      }
-    }
-  }
-
-  // Execute the SQL script
-  def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
-    println(s"Running SQL script from: $scriptPath")
-    val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
-    val logBuffer = new StringBuilder
-
-    try {
-      // Register JDBC driver
-      println("Registering JDBC driver...")
-      Class.forName(jdbcDriver)
-
-      // Establish connection
-      println(s"Connecting to database at: $jdbcUrl")
-      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement = connection.createStatement()
-
-      // Read the SQL script
-      println("Reading SQL script...")
-      val script = java.nio.file.Files.readString(java.nio.file.Paths.get(scriptPath), java.nio.charset.StandardCharsets.UTF_8)
-
-      // Process the script: remove block comments and split into lines
-      val scriptWithoutComments = removeBlockComments(script)
-      val lines = scriptWithoutComments.split("\n").toSeq
-
-      // Prepare and filter valid lines
-      val validLines = lines
-        .drop(4) // Skip the first 4 lines
-        .dropRight(3) // Skip the last 3 lines
-        .map(removeInlineComments) // Remove inline comments (-- ...)
-        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
-
-      // Combine valid lines into SQL commands and execute them
-      val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
-
-      commands.foreach { command =>
-        try {
-          // Check if the command is an insert without columns
-          if (command.toLowerCase.startsWith("insert into")) {
-            val tableName = command.split(" ")(2) // Extract table name from the insert statement
-            val commandWithColumns = SqlUtils.handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
-            println(s"Executing command: $commandWithColumns")
-            statement.execute(commandWithColumns)
-            val successMsg = s"[SUCCESS] Executed: $commandWithColumns"
-            println(successMsg)
-            logBuffer.append(successMsg + "\n")
-          } else {
-            println(s"Executing command: $command")
-            statement.execute(command)
-            val successMsg = s"[SUCCESS] Executed: $command"
-            println(successMsg)
-            logBuffer.append(successMsg + "\n")
+        if (frequency == "W") {
+          val currentDay = currentDateTime.getDayOfWeek
+          if (currentDateTime.isAfter(cutoffTime) || currentDateTime.toLocalTime.isEqual(cutoffTime)) {
+            if (!Files.exists(Paths.get(folderPath))) {
+              val message = s"AlertCode $alertCode with frequency 'W' was not processed by the cutoff time. Folder $folderPath is missing."
+              sendEmailNotification(alertCode, message, emailAddress, business)
+            }
           }
-        } catch {
-          case ex: Exception =>
-            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
-            println(errorMsg)
-            logBuffer.append(errorMsg + "\n")
+        }
+
+        if (frequency == "M") {
+          val currentDate = LocalDate.now()
+          val cutoffDate = currentDate.withDayOfMonth(10)
+          val currentTime = LocalTime.now()
+          if ((currentDate.isAfter(cutoffDate) || (currentDate.isEqual(cutoffDate) && currentTime.isAfter(cutoffTime)))) {
+            val message = s"AlertCode $alertCode with frequency 'M' was not processed by the cutoff time. No alerts received."
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+        }
+
+        if (frequency == "Q") {
+          val currentDate = LocalDate.now()
+          val isFirstDayOfQuarter = List(1, 4, 7, 10).contains(currentDate.getMonthValue) && currentDate.getDayOfMonth == 1
+          val currentTime = LocalTime.now()
+          if (isFirstDayOfQuarter && currentTime.isAfter(cutoffTime)) {
+            val message = s"AlertCode $alertCode with frequency 'Q' was not processed by the cutoff time. No alerts received."
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+        }
+
+        val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+        val sourceTableCountDF = spark.read
+          .format("jdbc")
+          .option("url", jdbcUrl)
+          .option("dbtable", jdbcQuery)
+          .option("user", jdbcUser)
+          .option("password", jdbcPassword)
+          .option("driver", jdbcDriver)
+          .load()
+
+        val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+
+        if (sourceTableCount == dtCount) {
+          val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+
+          if (Files.exists(Paths.get(sqlFolderPath))) {
+            val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+
+            if (Files.exists(Paths.get(sqlFilePath))) {
+              // Read the SQL file and split by ';' to get individual statements
+              val sqlContent = Source.fromFile(sqlFilePath).getLines().mkString(" ")
+              val sqlStatements = sqlContent.split(";").map(_.trim).filter(_.nonEmpty)
+
+              // Get the connection and statement objects (conn_rss and stmt_rss)
+              val conn_rss = getConnection() // Replace with your actual connection method
+              val stmt_rss = conn_rss.createStatement()
+
+              // Execute each SQL statement
+              try {
+                sqlStatements.foreach { sql =>
+                  try {
+                    stmt_rss.execute(sql)  // Execute the SQL statement
+                    println(s"Executed SQL: $sql")
+                  } catch {
+                    case e: Exception =>
+                      val message = s"Failed to execute SQL statement: $sql due to error: ${e.getMessage}"
+                      sendEmailNotification(alertCode, message, emailAddress, business)
+                  }
+                }
+                sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+              } finally {
+                stmt_rss.close()
+                conn_rss.close()
+              }
+            } else {
+              val message = s"SQL file not found for alertCode: $alertCode"
+              sendEmailNotification(alertCode, message, emailAddress, business)
+            }
+          } else {
+            val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
+            sendEmailNotification(alertCode, message, emailAddress, business)
+          }
+        } else {
+          val message = s"Source table count does not match DT_COUNT"
+          sendEmailNotification(alertCode, message, emailAddress, business)
         }
       }
-
-      // Save execution log to a file
-      println(s"Execution log saved to: $logPath")
-      java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
-
-      // Close resources
-      statement.close()
-      connection.close()
     } catch {
-      case ex: Exception =>
-        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
-        println(fatalErrorMsg)
-        logBuffer.append(fatalErrorMsg + "\n")
-        java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      case e: Exception =>
+        sendEmailNotification(alertCode, s"An error occurred: ${e.getMessage}", emailAddress, business)
     }
-
-    // Clean old log files after execution
-    cleanOldLogFiles("path/to/logs") // Specify your log directory path
-  }
-
-  // Main entry point
-  def main(args: Array[String]): Unit = {
-    val scriptPath = "path/to/your/sqlfile.sql"
-    val jdbcUrl = "jdbc:your_database_url"
-    val jdbcUser = "your_database_username"
-    val jdbcPassword = "your_database_password"
-    val jdbcDriver = "your.jdbc.Driver"
-
-    runSqlScript(scriptPath, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
   }
 }
