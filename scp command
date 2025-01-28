@@ -27,7 +27,9 @@ if [ -e "$SOURCE_PATH" ]; then
   for TARGET_PATH in "${TARGET_PATHS[@]}"; do
     echo "Transferring files to $TARGET_PATH..."
     sshpass -p "$PASSWORD" scp -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
-    
+
+   sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r "$SOURCE_PATH" user@remote-server:"$TARGET_PATH"
+
     # Check if the SCP command was successful for each target
     if [ $? -eq 0 ]; then
       echo "Files successfully transferred to $TARGET_PATH"
