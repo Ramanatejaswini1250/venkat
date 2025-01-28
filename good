@@ -264,69 +264,6 @@ def extractTableName(command: String): String = {
     // Clean old log files after execution
     cleanOldLogFiles("path/to/logs") // Specify your log directory path
   }
- // Process the DataFrame directly
-  val currentDateTime = LocalDateTime.now()
-  val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
-val aert_query=spark.sql("")
-val df=alert_query.toDF("alert_code","dt_count".....)
-
-import java.sql.{Connection, DriverManager}
-
-// Method to establish a connection
-def getConnection(jdbcUrl: String, jdbcUser: String, jdbcPassword: String): Connection = {
-  DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-}
-
-df.foreachPartition { partition =>
-  // Extract JDBC properties from the broadcast variable
-  val jdbcUrl_rss = broadcastJdbcProps.value("jdbcUrl_rss")
-  val jdbcUser_rss = broadcastJdbcProps.value("jdbcUser_rss")
-  val jdbcPassword_rss = broadcastJdbcProps.value("jdbcPassword_rss")
-  val jdbcDriver_rss = broadcastJdbcProps.value("jdbcDriver_rss")
-
-  // Load JDBC driver
-  Class.forName(jdbcDriver_rss)
-
-  // Initialize a connection for the partition
-  var con_rss: Connection = null
-  try {
-    con_rss = getConnection(jdbcUrl_rss, jdbcUser_rss, jdbcPassword_rss)
-
-    // Process each row in the partition
-    partition.foreach { row =>
-      val stmt = con_rss.createStatement()
-def readFileAsString(path: String): String= {
-try
-{
-new String(byte,StandardCharsets.UTF_8)
-val bytes = files.readAllByte(Paths.get(path))
-   }
-catch{
-case e:IOException =>
-println(s"Error in reading file:${e.getmessage}")
-throw e
-}
-}
-  try {
-    val filePath = Paths.get(path)
-
-    // Check if the file exists and is a regular file
-    if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
-      // Read all bytes from the file
-      val bytes = Files.readAllBytes(filePath)
-      // Convert bytes to String using UTF-8 encoding
-      Some(new String(bytes, StandardCharsets.UTF_8))
-    } else {
-      println(s"File does not exist or is not a regular file: $path")
-      None
-    }
-  } catch {
-    case e: IOException =>
-      // Print detailed error if an exception occurs
-      println(s"Error reading file at $path: ${e.getMessage}")
-      None  // Return None in case of an error
-  }
-}
 
 
   // Function to generate a timestamped file name
@@ -539,14 +476,7 @@ def extractTableName(command: String): String = {
   val currentDateTime = LocalDateTime.now()
   val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
 val aert_query=spark.sql("")
-val df=alert_query.toDF("alert_code","dt_count".....)
-
-import java.sql.{Connection, DriverManager}
-
-// Method to establish a connection
-def getConnection(jdbcUrl: String, jdbcUser: String, jdbcPassword: String): Connection = {
-  DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-}
+val df=alert_query.toDF("alert_code","dt_count"....
 
 
         val alertCode = row.getAs[String]("alert_code")
