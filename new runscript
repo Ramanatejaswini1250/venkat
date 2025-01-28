@@ -1,5 +1,6 @@
 import java.nio.file.{Files, Paths}
 import scala.io.Source
+import java.sql.{Connection, Statement}
 
 df.foreachPartition { partition =>
   partition.foreach { row =>
@@ -89,13 +90,40 @@ df.foreachPartition { partition =>
               // Execute each SQL statement
               try {
                 sqlStatements.foreach { sql =>
-                  try {
-                    stmt_rss.execute(sql)  // Execute the SQL statement
-                    println(s"Executed SQL: $sql")
-                  } catch {
-                    case e: Exception =>
-                      val message = s"Failed to execute SQL statement: $sql due to error: ${e.getMessage}"
-                      sendEmailNotification(alertCode, message, emailAddress, business)
+                  if (sql.startsWith("INSERT INTO")) {
+                    // Find corresponding SELECT statement to extract columns
+                    val tableName = sql.split(" ")(2) // Extract the table name from INSERT INTO statement
+                    val selectQuery = s"SELECT * FROM $tableName WHERE 1=0" // To fetch columns without any data
+
+                    val selectResult = stmt_rss.executeQuery(selectQuery)
+                    val columns = selectResult.getMetaData
+                    val columnNames = (1 to columns.getColumnCount).map(columns.getColumnName).mkString(", ")
+
+                    // Modify the INSERT statement to include column names if not present
+                    val modifiedSql = if (!sql.contains("(")) {
+                      s"$sql ($columnNames)"
+                    } else {
+                      sql
+                    }
+
+                    try {
+                      stmt_rss.execute(modifiedSql)  // Execute the modified SQL statement
+                      println(s"Executed SQL: $modifiedSql")
+                    } catch {
+                      case e: Exception =>
+                        val message = s"Failed to execute SQL statement: $modifiedSql due to error: ${e.getMessage}"
+                        sendEmailNotification(alertCode, message, emailAddress, business)
+                    }
+                  } else {
+                    // Execute non-INSERT statements directly
+                    try {
+                      stmt_rss.execute(sql)
+                      println(s"Executed SQL: $sql")
+                    } catch {
+                      case e: Exception =>
+                        val message = s"Failed to execute SQL statement: $sql due to error: ${e.getMessage}"
+                        sendEmailNotification(alertCode, message, emailAddress, business)
+                    }
                   }
                 }
                 sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
