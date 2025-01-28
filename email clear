@@ -61,7 +61,64 @@ def sendEmail(properties: Properties, toEmail: String, ccEmails: Seq[String], su
     }
 
     message.setSubject(subject)
-    message.setText(messageText)
+   def sendEmail(properties: Properties, toEmail: String, ccEmails: Seq[String], subject: String, messageText: String): Unit = {
+  val host = properties.getProperty("smtp.host")
+  val port = properties.getProperty("smtp.port")
+  val user = properties.getProperty("smtp.user")
+  val password = properties.getProperty("smtp.password")
+  val from = properties.getProperty("smtp.from")
+
+  // Set SMTP properties
+  val props = new Properties()
+  props.put("mail.smtp.host", host)
+  props.put("mail.smtp.port", port)
+  props.put("mail.smtp.auth", "true")
+  props.put("mail.smtp.starttls.enable", "true") // Enable TLS
+
+  // Create an authenticator to handle login credentials
+  val authenticator = new Authenticator {
+    override def getPasswordAuthentication: PasswordAuthentication = {
+      new PasswordAuthentication(user, password)
+    }
+  }
+
+  // Create a session with the properties and authenticator
+  val session = Session.getInstance(props, authenticator)
+
+  try {
+    // Create a MimeMessage
+    val message = new MimeMessage(session)
+    message.setFrom(new InternetAddress(from))
+    message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
+    
+    // Add multiple CC recipients
+    if (ccEmails.nonEmpty) {
+      val ccAddresses = ccEmails.map(new InternetAddress(_)).toArray
+      message.addRecipients(Message.RecipientType.CC, ccAddresses)
+    }
+
+    // Append the footer to the message text
+    val fullMessageText = 
+      s"""
+      |$messageText
+      |
+      |Thanks and Regards,
+      |CDAO RAMP Team
+      |""".stripMargin
+
+    message.setSubject(subject)
+    message.setContent(fullMessageText, "text/plain; charset=utf-8") // Or "text/html; charset=utf-8" for HTML emails
+
+    // Send the email
+    Transport.send(message)
+    println(s"Email sent successfully to $toEmail with CCs to ${ccEmails.mkString(",")}")
+  } catch {
+    case e: MessagingException =>
+      e.printStackTrace()
+      println("Failed to send email.")
+  }
+}
+
 
     // Send the email
     Transport.send(message)
