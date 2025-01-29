@@ -161,11 +161,29 @@ def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
     }
   }
 
-  // Execute the SQL script
+  import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+import java.sql.{Connection, DriverManager, Statement}
+import java.time.LocalDateTime
+import scala.util.matching.Regex
+
+object SqlExecutor {
+
+ import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+import java.sql.{Connection, DriverManager, Statement}
+import java.time.LocalDateTime
+import scala.util.matching.Regex
+
+object SqlExecutor {
+
+  // Function to execute an SQL script
   def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
     println(s"Running SQL script from: $scriptPath")
     val logPath = s"sql_execution_log_${getCurrentTimestamp}.txt"
     val logBuffer = new StringBuilder
+    var connection: Connection = null
+    var statement: Statement = null
 
     try {
       // Register JDBC driver
@@ -174,96 +192,87 @@ def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
 
       // Establish connection
       println(s"Connecting to database at: $jdbcUrl")
-      val connection = java.sql.DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-      val statement = connection.createStatement()
+      connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+      statement = connection.createStatement()
 
       // Read the SQL script
       println("Reading SQL script...")
-    new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)
-println(scriptContent)
+      val scriptContent = new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)
+      println(scriptContent)  // Debugging: Print full script
 
-      // Process the script: remove block comments and split into lines
-      val scriptWithoutComments = removeBlockComments(script)
+      // Process script: Remove block comments and split into lines
+      val scriptWithoutComments = removeBlockComments(scriptContent)
       val lines = scriptWithoutComments.split("\n").toSeq
 
       // Prepare and filter valid lines
       val validLines = lines
-        .drop(4) // Skip the first 4 lines
-        .dropRight(3) // Skip the last 3 lines
+        .drop(4) // Skip first 4 lines
+        .dropRight(3) // Skip last 3 lines
         .map(removeInlineComments) // Remove inline comments (-- ...)
-        .filter(_.nonEmpty) // Remove empty or whitespace-only lines
+        .filter(_.nonEmpty) // Remove empty lines
 
       // Combine valid lines into SQL commands and execute them
       val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
 
-} catch {
-  case ex: Exception =>
-    // Extract the table name from the SQL command
-    val tableName = extractTableName(command)
-    val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
-    
-    println(errorMsg) // Print error to console
-    logBuffer.append(errorMsg + "\n") // Append error to log buffer
-}
-
-// Function to extract table name
-def extractTableName(command: String): String = {
-  // Regex to capture table names after 'FROM' or 'JOIN' (case insensitive)
-  val tableRegex = "(?i)(?:from|join)\\s+([\\w\\.]+)".r
-
-  // Find the first match in the SQL command
-  tableRegex.findFirstMatchIn(command) match {
-    case Some(matched) => matched.group(1) // Return the captured group (table name)
-    case None => "Unknown Table" // Default if no table is found
-  }
-}
-
-
-
+      // Execute each SQL command
       commands.foreach { command =>
         try {
-          // Check if the command is an insert without columns
-          if (command.toLowerCase.startsWith("insert into")) {
-            val tableName = command.split(" ")(2) // Extract table name from the insert statement
-            val commandWithColumns = SqlUtils.handleInsertWithoutColumns(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, tableName, command)
-            println(s"Executing command: $commandWithColumns")
-            statement.execute(commandWithColumns)
-            val successMsg = s"[SUCCESS] Executed: $commandWithColumns"
-            println(successMsg)
-            logBuffer.append(successMsg + "\n")
-          } else {
-            println(s"Executing command: $command")
-            statement.execute(command)
-            val successMsg = s"[SUCCESS] Executed: $command"
-            println(successMsg)
-            logBuffer.append(successMsg + "\n")
-          }
+          println(s"Executing SQL: $command")
+          statement.execute(command)
+          connection.commit()
         } catch {
           case ex: Exception =>
-            val errorMsg = s"[ERROR] Failed to execute: $command\nMessage: ${ex.getMessage}"
-            println(errorMsg)
-            logBuffer.append(errorMsg + "\n")
+            val tableName = extractTableName(command)
+            val errorMsg = s"[ERROR] Failed to execute command on table: $tableName\nMessage: ${ex.getMessage}"
+
+            println(errorMsg) // Print error to console
+            logBuffer.append(errorMsg + "\n") // Append error to log buffer
+
+            // Send email alert
+            sendEmailNotification("SQL_EXECUTION_ERROR", errorMsg, "email@example.com", "BusinessName")
         }
       }
 
-      // Save execution log to a file
-      println(s"Execution log saved to: $logPath")
-      java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
-
-      // Close resources
-      statement.close()
-      connection.close()
     } catch {
       case ex: Exception =>
-        val fatalErrorMsg = s"[FATAL] Error: ${ex.getMessage}"
-        println(fatalErrorMsg)
-        logBuffer.append(fatalErrorMsg + "\n")
-        java.nio.file.Files.write(java.nio.file.Paths.get(logPath), logBuffer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))
-    }
+        val errorMsg = s"[CRITICAL ERROR] Could not execute script: ${ex.getMessage}"
+        println(errorMsg)
+        logBuffer.append(errorMsg + "\n")
+        sendEmailNotification("SCRIPT_FAILURE", errorMsg, "email@example.com", "BusinessName")
 
-    // Clean old log files after execution
-    cleanOldLogFiles("path/to/logs") // Specify your log directory path
+    } finally {
+      if (statement != null) statement.close()
+      if (connection != null) connection.close()
+    }
   }
+
+  // Function to extract table name from SQL command
+  def extractTableName(command: String): String = {
+    val tableRegex = "(?i)(?:from|join|insert into|update|delete from)\\s+([\\w\\.]+)".r
+    tableRegex.findFirstMatchIn(command).map(_.group(1)).getOrElse("Unknown Table")
+  }
+
+  // Function to remove block comments (/* ... */)
+  def removeBlockComments(sql: String): String = {
+    sql.replaceAll("(?s)/\\*.*?\\*/", "")
+  }
+
+  // Function to remove inline comments (-- ...)
+  def removeInlineComments(line: String): String = {
+    line.split("--").head.trim
+  }
+
+  // Dummy email function (replace with actual implementation)
+  def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String): Unit = {
+    println(s"Sending email: [Alert Code: $alertCode] $message to $emailAddress")
+  }
+
+  // Function to get current timestamp as a string
+  def getCurrentTimestamp: String = {
+    LocalDateTime.now().toString.replace(":", "_").replace(".", "_")
+  }
+}
+
 
 
   // Function to generate a timestamped file name
