@@ -1,0 +1,33 @@
+import java.io.{File, PrintWriter}
+import org.apache.spark.sql.SparkSession
+
+val spark = SparkSession.builder().appName("SaveCSVToDynamicTmp").getOrCreate()
+import spark.implicits._
+
+// Sample DataFrame
+val df = Seq(
+  (1, "Alice", 30),
+  (2, "Bob", 25),
+  (3, "Charlie", 35)
+).toDF("id", "name", "age")
+
+df.foreachPartition { partition =>
+  // Get the dynamically assigned temp directory on the executor
+  val tempDir = System.getProperty("java.io.tmpdir") + "/executor_output"
+  new File(tempDir).mkdirs() // Ensure directory exists
+
+  // Generate a unique filename per partition
+  val file = new File(s"$tempDir/output_${System.currentTimeMillis()}.csv")
+  val writer = new PrintWriter(file)
+
+  partition.foreach { row =>
+    writer.println(row.toSeq.mkString(","))
+  }
+  
+  writer.close()
+}
+
+val tmpDir = new File(System.getProperty("java.io.tmpdir") + "/executor_output")
+if (tmpDir.exists()) {
+  tmpDir.listFiles().foreach(_.delete())
+}
