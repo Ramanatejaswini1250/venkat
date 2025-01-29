@@ -1,0 +1,41 @@
+import java.io.File
+import java.nio.file.{Files, Paths}
+import java.nio.file.StandardCopyOption
+
+// Directory where the part files are saved on the driver node
+val master2 = System.getProperty("java.io.tmpdir") + "/ramp_csv"
+
+// Target directory on your Linux server
+val targetDir = "/disk/source/ramp"
+
+// Ensure the target directory exists
+val targetDirPath = new File(targetDir)
+if (!targetDirPath.exists()) {
+  targetDirPath.mkdirs()  // Create the directory if it doesn't exist
+}
+
+// List all part files in the master2 directory (the directory on the driver node)
+val sourceDir = new File(master2)
+val partFiles = sourceDir.listFiles().filter(_.getName.startsWith("part-"))
+
+// You can specify a new name for the final CSV file, such as "Master1.csv"
+val renamedFile = new File(targetDir, "Master1.csv")
+
+// If there's only one part file, we can directly rename and move it to target
+if (partFiles.length == 1) {
+  val sourceFile = partFiles(0)
+  Files.move(sourceFile.toPath, renamedFile.toPath, StandardCopyOption.REPLACE_EXISTING)
+  println(s"Renamed and copied ${sourceFile.getName} to $renamedFile")
+} else {
+  // Otherwise, you can concatenate the part files into a single CSV file (optional)
+
+  // For now, we'll copy the first part file as Master1.csv
+  val firstPartFile = partFiles(0)
+  Files.move(firstPartFile.toPath, renamedFile.toPath, StandardCopyOption.REPLACE_EXISTING)
+  println(s"Renamed and copied ${firstPartFile.getName} to $renamedFile")
+
+  // If needed, you could concatenate other part files into this final CSV file (not shown here).
+}
+
+// Confirm that the file is copied
+println(s"All part files have been renamed and copied to: $renamedFile")
