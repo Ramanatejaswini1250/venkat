@@ -1,15 +1,7 @@
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
-// Define the query for the Master Table (same as before)
-val masterTable1Query =
-  """
-    SELECT * 
-    FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST 
-    ORDER BY 1
-  """
-
-// Define the schema for the Master Table (same as before)
+// Define schema for Master1
 val schema_master1 = StructType(
   Seq(
     StructField("ALERT_ID", StringType, nullable = true),
@@ -21,27 +13,34 @@ val schema_master1 = StructType(
   )
 )
 
-// Fetch the data from the database (same as before)
+// Execute Query
+val masterTable1Query = "SELECT ALERT_ID, ALERT_CODE, BUSINESS_LINE, EVENT_TIMESTAMP, PRIORITY, ALERT_DUE_DATE FROM your_table"
+val statement = connection.createStatement()
 val masterTable1: ResultSet = statement.executeQuery(masterTable1Query)
-val rows_master1 = Iterator
-  .continually((masterTable1.next(), masterTable1))
-  .takeWhile(_._1)
-  .map { case (_, rs) =>
-    Row(
-      rs.getString("ALERT_ID"),
-      rs.getString("ALERT_CODE"),
-      rs.getString("BUSINESS_LINE"),
-      rs.getString("EVENT_TIMESTAMP"),
-      rs.getInt("PRIORITY"),
-      rs.getString("ALERT_DUE_DATE")
-    )
-  }
-  .toList
 
-// Create a DataFrame from the Rows
+// Read ResultSet into List of Rows
+import scala.collection.mutable.ListBuffer
+val rows_master1 = new ListBuffer[Row]()
+
+while (masterTable1.next()) {
+  rows_master1 += Row(
+    masterTable1.getString("ALERT_ID"),
+    masterTable1.getString("ALERT_CODE"),
+    masterTable1.getString("BUSINESS_LINE"),
+    masterTable1.getString("EVENT_TIMESTAMP"),
+    masterTable1.getInt("PRIORITY"),
+    masterTable1.getString("ALERT_DUE_DATE")
+  )
+}
+
+// Convert ListBuffer to DataFrame
 val masterTable1DF = spark.createDataFrame(
-  spark.sparkContext.parallelize(rows_master1),
+  spark.sparkContext.parallelize(rows_master1.toList),
   schema_master1
+)
+
+// Show DataFrame
+masterTable1DF.show()
 )
 
 // Convert and format the date columns (EVENT_TIMESTAMP and ALERT_DUE_DATE)
