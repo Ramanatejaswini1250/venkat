@@ -1,38 +1,6 @@
-// Define the function
-def getSqlFolderPath(frequency: String, bteqlocation: String): String = {
-  s"$bteqlocation/$frequency/sql"
-}
+latest_files=$(sshpass -p "$password" ssh "$scp_user@$remote_server" "ls -t $output_location | head -2")
 
-// Assume the DataFrame has the columns `frequency` and `bteqlocation`
-val bteqlocation = df.select("bteqlocation").distinct().collect().head.getString(0)  // bteqlocation is constant across all rows
-
-// Create a set of unique frequencies (if needed)
-val uniqueFrequencies = df.select("frequency").distinct().collect().map(_.getString(0))
-
-// Create a map of frequency to folder path
-val frequencyToPathMap = uniqueFrequencies.map { frequency =>
-  (frequency, getSqlFolderPath(frequency, bteqlocation))
-}.toMap
-
-// Broadcast the map of paths
-val broadcastPathMap = spark.sparkContext.broadcast(frequencyToPathMap)
-
-// Process the DataFrame
-df.foreachPartition { partition =>
-  partition.foreach { row =>
-    val frequency = row.getAs[String]("frequency")  // Get frequency from the current row
-    
-    // Get the path from the broadcasted map
-    val path = broadcastPathMap.value.getOrElse(frequency, s"Default path for $frequency")
-    
-    // Print or use the path
-    println(s"Using path for frequency '$frequency' and bteqlocation '$bteqlocation': $path")
-
-    // Example: Check if the folder exists
-    if (Files.exists(Paths.get(path))) {
-      println(s"Folder exists: $path")
-    } else {
-      println(s"Folder not found: $path")
-    }
-  }
-}
+for file in $latest_files; do
+    # Copy each file
+    sshpass -p "$password" scp "$scp_user@$remote_server:$output_location/$file" "$target_path/"
+done
