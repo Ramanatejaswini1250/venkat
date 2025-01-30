@@ -1,75 +1,50 @@
-// Function to send email notifications via a shell script with a custom message
-def sendEmailNotification(alertCode: String, message: String): Unit = {
-  val shellScriptPath = "/path/to/email_notification.sh"
-  val process = new ProcessBuilder("bash", shellScriptPath, alertCode, message).start()
-  process.waitFor()
-  println(s"Email notification sent for alertCode: $alertCode with message: $message")
-}
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.nio.file.{Files, Paths, StandardCopyOption}
+import org.apache.hadoop.fs.{FileSystem, Path}
 
-// Iterate through each record
-df.collect().foreach { row =>
-  val alertCode = row.getAs[String]("alert_code")
-  val dtCount = row.getAs[Int]("dt_count")
-  val dateToLoad = row.getAs[String]("date_to_load")
-  val bteqLocation = row.getAs[String]("bteq_location")
-  val sourceTableName = Option(row.getAs[String]("source_table_name"))
-  val frequency = Option(row.getAs[String]("frequency"))
-  val filterColumn = Option(row.getAs[String]("filter_column"))
+// Step 1: Get the current time and day to dynamically create folder paths
+val currentTime = new SimpleDateFormat("yyyyMMddHHmmss").format(Calendar.getInstance().getTime)
+val currentDay = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime)  // Current day (e.g., Friday)
 
-  try {
-    // Validation checks for required fields
-    if (dtCount > 0) {
-      // Check if any of the required fields are empty (None)
-      if (sourceTableName.isEmpty || frequency.isEmpty || filterColumn.isEmpty) {
-        // Create a message listing which columns are null
-        var nullColumnsMessage = ""
-        
-        if (sourceTableName.isEmpty) nullColumnsMessage += "source_table_name is null. "
-        if (frequency.isEmpty) nullColumnsMessage += "frequency is null. "
-        if (filterColumn.isEmpty) nullColumnsMessage += "filter_column is null. "
+// Step 2: Define temporary and final output paths
+val tempOutputPath = s"/tmp/tmp_RBSCC_${currentTime}"  // Local temporary directory for part files
+val hdfsOutputPath = s"hdfs:///disk/output/${currentTime}_RBSCSS_${currentDay}"  // HDFS path for intermediate part files
+val finalOutputPath = s"/disk1/bigdata/ramp/${currentTime}_RBSCSS_${currentDay}/master1.csv"  // Final output path
 
-        // Send the email with the missing columns message
-        val message = s"One or more required columns are null for alertCode: $alertCode. $nullColumnsMessage"
-        sendEmailNotification(alertCode, message)
+// Step 3: Write DataFrame to HDFS (This will create part files in HDFS)
+masterdf.coalesce(1).write
+  .option("header", "true")
+  .mode("overwrite")
+  .csv(hdfsOutputPath)  // Writing to HDFS
 
-        // Throw an exception to stop further processing
-        throw new Exception(message)
-      }
+println(s"Data written to HDFS path: $hdfsOutputPath")
 
-      // Run the query to count rows in the source table with the filter
-      val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM ${sourceTableName.get} WHERE ${filterColumn.get} = '$dateToLoad') AS subquery"
-      val sourceTableCountDF = spark.read
-        .format("jdbc")
-        .option("url", jdbcUrl)
-        .option("dbtable", jdbcQuery)
-        .option("user", jdbcUser)
-        .option("password", jdbcPassword)
-        .option("driver", jdbcDriver)
-        .load()
+// Step 4: Get the part files from the HDFS output directory
+val hadoopConf = spark.sparkContext.hadoopConfiguration
+val fs = FileSystem.get(hadoopConf)
+val outputDirPath = new Path(hdfsOutputPath)
+val partFiles = fs.listStatus(outputDirPath).filter(f => f.getPath.getName.startsWith("part"))
 
-      // Extract the count
-      val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+if (partFiles.nonEmpty) {
+  // Step 5: Move the part file to the local /tmp folder and rename it
+  val partFile = partFiles(0).getPath  // Only one part file after coalesce(1)
+  val tempFilePath = s"/tmp/${partFile.getName}"
+  val outputTempPath = new Path(tempFilePath)
+  
+  // Move part file from HDFS to local /tmp folder
+  fs.copyToLocalFile(partFile, outputTempPath)
+  println(s"Part file copied to local temporary path: $tempFilePath")
 
-      // Compare counts
-      if (sourceTableCount == dtCount) {
-        val sqlFilePath = s"${bteqLocation}/${alertCode}.sql"
-        runSqlScript(sqlFilePath)
-        sendEmailNotification(alertCode, "SQL script executed successfully")
-      } else {
-        val message = s"Source table count ($sourceTableCount) does not match DT_COUNT ($dtCount) for alertCode: $alertCode"
-        sendEmailNotification(alertCode, message)
-        println(message)
-      }
-    } else {
-      val message = s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode"
-      sendEmailNotification(alertCode, message)
-      throw new Exception(message)
-    }
-  } catch {
-    case ex: Exception =>
-      val message = s"Error processing alertCode: $alertCode - ${ex.getMessage}"
-      sendEmailNotification(alertCode, message)
-      println(message)
-      ex.printStackTrace()
-  }
+  // Step 6: Rename part file to master1.csv and move it to final location
+  val masterCsvPath = s"/tmp/master1.csv"
+  Files.move(Paths.get(tempFilePath), Paths.get(masterCsvPath), StandardCopyOption.REPLACE_EXISTING)
+
+  // Step 7: Copy the final CSV to the desired location on the local system
+  val finalPath = Paths.get(finalOutputPath)
+  Files.move(Paths.get(masterCsvPath), finalPath, StandardCopyOption.REPLACE_EXISTING)
+
+  println(s"Final CSV file has been moved to: $finalOutputPath")
+} else {
+  println(s"No part files found at HDFS output path: $hdfsOutputPath")
 }
