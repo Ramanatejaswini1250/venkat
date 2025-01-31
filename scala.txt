@@ -1,50 +1,38 @@
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.nio.file.{Files, Paths, StandardCopyOption}
 import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.conf.Configuration
+import org.apache.spark.sql.SparkSession
+import java.util.Timer
+import java.util.TimerTask
 
-// Step 1: Get the current time and day to dynamically create folder paths
-val currentTime = new SimpleDateFormat("yyyyMMddHHmmss").format(Calendar.getInstance().getTime)
-val currentDay = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime)  // Current day (e.g., Friday)
+object HDFSFileCleaner {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("HDFS File Cleaner")
+      .getOrCreate()
 
-// Step 2: Define temporary and final output paths
-val tempOutputPath = s"/tmp/tmp_RBSCC_${currentTime}"  // Local temporary directory for part files
-val hdfsOutputPath = s"hdfs:///disk/output/${currentTime}_RBSCSS_${currentDay}"  // HDFS path for intermediate part files
-val finalOutputPath = s"/disk1/bigdata/ramp/${currentTime}_RBSCSS_${currentDay}/master1.csv"  // Final output path
+    val conf = new Configuration()
+    val fs = FileSystem.get(conf)
+    val path = new Path("/tmp/your-hdfs-dir/")
 
-// Step 3: Write DataFrame to HDFS (This will create part files in HDFS)
-masterdf.coalesce(1).write
-  .option("header", "true")
-  .mode("overwrite")
-  .csv(hdfsOutputPath)  // Writing to HDFS
+    // Timer to schedule deletion every 2 hours
+    val timer = new Timer()
 
-println(s"Data written to HDFS path: $hdfsOutputPath")
+    val task = new TimerTask() {
+      override def run(): Unit = {
+        // Delete the files in the HDFS directory
+        val isDeleted = fs.delete(path, true)
+        if (isDeleted) {
+          println(s"Successfully deleted files at ${System.currentTimeMillis()}")
+        } else {
+          println(s"Failed to delete files at ${System.currentTimeMillis()}")
+        }
+      }
+    }
 
-// Step 4: Get the part files from the HDFS output directory
-val hadoopConf = spark.sparkContext.hadoopConfiguration
-val fs = FileSystem.get(hadoopConf)
-val outputDirPath = new Path(hdfsOutputPath)
-val partFiles = fs.listStatus(outputDirPath).filter(f => f.getPath.getName.startsWith("part"))
+    // Schedule task every 2 hours (7200000 ms)
+    timer.schedule(task, 0, 7200000)
 
-if (partFiles.nonEmpty) {
-  // Step 5: Move the part file to the local /tmp folder and rename it
-  val partFile = partFiles(0).getPath  // Only one part file after coalesce(1)
-  val tempFilePath = s"/tmp/${partFile.getName}"
-  val outputTempPath = new Path(tempFilePath)
-  
-  // Move part file from HDFS to local /tmp folder
-  fs.copyToLocalFile(partFile, outputTempPath)
-  println(s"Part file copied to local temporary path: $tempFilePath")
-
-  // Step 6: Rename part file to master1.csv and move it to final location
-  val masterCsvPath = s"/tmp/master1.csv"
-  Files.move(Paths.get(tempFilePath), Paths.get(masterCsvPath), StandardCopyOption.REPLACE_EXISTING)
-
-  // Step 7: Copy the final CSV to the desired location on the local system
-  val finalPath = Paths.get(finalOutputPath)
-  Files.move(Paths.get(masterCsvPath), finalPath, StandardCopyOption.REPLACE_EXISTING)
-
-  println(s"Final CSV file has been moved to: $finalOutputPath")
-} else {
-  println(s"No part files found at HDFS output path: $hdfsOutputPath")
+    // Keep the Spark job running to allow the timer to keep running
+    spark.streams.awaitAnyTermination()
+  }
 }
