@@ -161,22 +161,6 @@ def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
     }
   }
 
-  import java.nio.file.{Files, Paths}
-import java.nio.charset.StandardCharsets
-import java.sql.{Connection, DriverManager, Statement}
-import java.time.LocalDateTime
-import scala.util.matching.Regex
-
-object SqlExecutor {
-
- import java.nio.file.{Files, Paths}
-import java.nio.charset.StandardCharsets
-import java.sql.{Connection, DriverManager, Statement}
-import java.time.LocalDateTime
-import scala.util.matching.Regex
-
-object SqlExecutor {
-
   // Function to execute an SQL script
   def runSqlScript(scriptPath: String, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String): Unit = {
     println(s"Running SQL script from: $scriptPath")
