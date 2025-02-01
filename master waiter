@@ -1,0 +1,147 @@
+import java.nio.file.{Files, Paths}
+import java.sql.{Connection, DriverManager}
+import org.apache.spark.sql.SparkSession
+
+// Initialize Spark session
+val spark: SparkSession = SparkSession.builder().appName("ValidationProcess").getOrCreate()
+
+// Database connection properties
+val jdbcUrl = "your_jdbc_url"
+val jdbcUser = "your_user"
+val jdbcPassword = "your_password"
+val jdbcDriver = "your_jdbc_driver"
+
+val timeoutMillis = 30 * 60 * 1000 // 30-minute timeout
+val pollingInterval = 30000 // Check every 30 seconds
+val startTime = System.currentTimeMillis()
+
+var dataLoaded = false
+
+// Wait until data is available or timeout occurs
+while (!dataLoaded && (System.currentTimeMillis() - startTime) < timeoutMillis) {
+  println("Checking if master tables are loaded...")
+
+  val masterCountQuery =
+    """
+      |SELECT COUNT(*) AS master_count
+      |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
+    """.stripMargin
+
+  val masterCountDF = spark.read
+    .format("jdbc")
+    .option("url", jdbcUrl)
+    .option("dbtable", s"($masterCountQuery) AS subquery")
+    .option("user", jdbcUser)
+    .option("password", jdbcPassword)
+    .option("driver", jdbcDriver)
+    .load()
+
+  val masterTargetCount = masterCountDF.collect()(0).getAs[Long]("master_count")
+
+  val blankCountQuery =
+    """
+      |SELECT COUNT(*) AS blank_count
+      |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+    """.stripMargin
+
+  val blankCountDF = spark.read
+    .format("jdbc")
+    .option("url", jdbcUrl)
+    .option("dbtable", s"($blankCountQuery) AS subquery")
+    .option("user", jdbcUser)
+    .option("password", jdbcPassword)
+    .option("driver", jdbcDriver)
+    .load()
+
+  val blankCount = blankCountDF.collect()(0).getAs[Long]("blank_count")
+
+  if (masterTargetCount > 0 && blankCount > 0) {
+    dataLoaded = true
+    println("Master tables are loaded. Proceeding with validation...")
+  } else {
+    println("Master tables not loaded yet. Waiting...")
+    Thread.sleep(pollingInterval)
+  }
+}
+
+// If data is available, proceed with validation
+if (dataLoaded) {
+  var validationSuccess = false
+
+  breakable {
+    while (!validationSuccess) {
+      try {
+        println("Starting validation process...")
+
+        // ---- Step 1: Count Validation ----
+        if (masterTargetCount != dtCount) {
+          val message = s"Count validation failed: Master_Target1 count ($masterTargetCount) does not match dt_count ($dtCount)."
+          println(message)
+          throw new Exception(message)
+        }
+        println("Count validation for Master_Target1 passed.")
+
+        // ---- Step 2: Blank Value Validation ----
+        if (blankCount > 0) {
+          println(s"Found $blankCount blank values in Master_Target2. Updating them to NULL...")
+
+          val updateBlankValuesQuery =
+            """
+              |UPDATE U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+              |SET variable = NULL
+              |WHERE variable = ''
+            """.stripMargin
+
+          val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+          try {
+            val statement = connection.createStatement()
+            statement.executeUpdate(updateBlankValuesQuery)
+            statement.close()
+          } finally {
+            connection.close()
+          }
+          println("Blank values updated successfully.")
+        } else {
+          println("No blank values found in Master_Target2.")
+        }
+
+        // ---- Step 3: Archive Alert Load Table ----
+        println("Archiving data from RAMP_ALERT_LOAD to RAMP_ALERT_LOAD_ARCHIVE...")
+
+        val archiveQuery =
+          """
+            |INSERT INTO U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD_ARCHIVE (alert_code, other_columns...)
+            |SELECT alert_code, other_columns...
+            |FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD
+            |WHERE NOT EXISTS (
+            |    SELECT 1
+            |    FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD_ARCHIVE
+            |    WHERE RAMP_ALERT_LOAD_ARCHIVE.alert_code = RAMP_ALERT_LOAD.alert_code
+            |)
+          """.stripMargin
+
+        val connection = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
+        try {
+          val statement = connection.createStatement()
+          statement.executeUpdate(archiveQuery)
+          statement.close()
+        } finally {
+          connection.close()
+        }
+
+        println("Data successfully archived.")
+
+        validationSuccess = true
+        println("Validation and archiving process completed successfully.")
+
+      } catch {
+        case e: Exception =>
+          println(s"Validation failed: ${e.getMessage}")
+          println("Retrying the process on rerun...")
+          Thread.sleep(5000) // Optional: Wait for 5 seconds before retrying
+      }
+    }
+  }
+} else {
+  println("Timeout reached. Data not loaded. Exiting validation process.")
+}
