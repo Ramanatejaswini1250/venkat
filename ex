@@ -1,49 +1,22 @@
-import scala.concurrent.{Future, Promise}
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration._
-
-def executeSqlCommand(sqlQuery: String): Boolean = {
+def executeCountQuery(query: String): Long = {
   try {
     val countDF = spark.read
       .format("jdbc")
       .option("url", jdbcUrl)
-      .option("dbtable", s"($sqlQuery) AS subquery")
+      .option("dbtable", s"($query) AS subquery")
       .option("user", jdbcUser)
       .option("password", jdbcPassword)
       .option("driver", jdbcDriver)
       .load()
 
-    countDF.isEmpty match {
-      case true =>
-        println(s"No data returned from SQL query: $sqlQuery")
-        false
-      case false =>
-        println(s"SQL command executed successfully for: $sqlQuery")
-        true
-    }
+    // Ensure we safely extract the count value, return 0 if not found
+    val count = if (countDF.isEmpty) 0L else countDF.collect()(0).getLong(0)
+    println(s"Count retrieved: $count")
+    count
   } catch {
     case e: Exception =>
-      println(s"Error executing SQL command: ${e.getMessage}")
-      false
-  }
-}
-
-def waitForSqlExecutionCompletion(sqlQuery: String): Boolean = {
-  val promise = Promise[Boolean]()
-  
-  // Execute the SQL command asynchronously and complete the promise once done
-  Future {
-    val result = executeSqlCommand(sqlQuery)
-    promise.success(result)
-  }
-  
-  // Block until the promise is completed (timeout handling can be added here)
-  try {
-    Await.result(promise.future, 10.minutes) // Block until the future completes (set an appropriate timeout)
-  } catch {
-    case e: Exception =>
-      println(s"Error waiting for SQL command to complete: ${e.getMessage}")
-      false
+      println(s"Error executing query: ${e.getMessage}")
+      0L  // Return 0 in case of failure
   }
 }
 
@@ -75,6 +48,7 @@ def waitForDataToLoadAndValidate(
       val count2 = executeCountQuery(countQuery2)
       println(s"count2 retrieved: $count2")
 
+      // Check if count2 is a valid value and greater than 0
       if (count2 > 0) {
         dataLoaded = true
         println(s"Data loaded successfully for alertCode = $alertCode")
@@ -97,7 +71,7 @@ def waitForDataToLoadAndValidate(
   dataLoaded
 }
 
-// Now, calling this in the `df.foreachPartition` for master1 and master2 logic
+// Calling this in the df.foreachPartition for master1 and master2 logic
 df.foreachPartition { partition =>
   partition.foreach { row =>
     val alertCode = row.getAs[String]("alertCode")
