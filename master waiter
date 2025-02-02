@@ -1,6 +1,7 @@
-import org.apache.spark.sql.{SparkSession, DataFrame}
-import scala.util.{Try, Success, Failure}
+import org.apache.spark.sql.{SparkSession, Row, DataFrame}
+import scala.util.Try
 
+// Function to Wait for Data to be Available in Both Master Tables
 def waitForDataToLoadAndValidate(
   spark: SparkSession,
   alertCode: String,
@@ -11,73 +12,41 @@ def waitForDataToLoadAndValidate(
   jdbcDriver: String,
   maxRetries: Int = 10,
   retryInterval: Long = 10000
-): (Boolean, Long) = {
+): Boolean = {
 
   var retries = 0
   var dataLoaded = false
-  var dtCount: Long = 0
 
-  // First attempt (before retry loop)
-  val queryWithAlertCode = countCheckQuery.replace("$alertCode", s"'$alertCode'")
-  try {
-    println(s"Executing Query: $queryWithAlertCode")
+  while (retries < maxRetries && !dataLoaded) {
+    println(s"[Attempt ${retries + 1}] Checking data for alertCode: $alertCode")
 
-    val countDF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", s"($queryWithAlertCode) AS subquery")
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
-
-    // Get dtCount on first attempt
-    dtCount = countDF.agg("count" -> "long").collect().headOption.flatMap(row => Option(row.getLong(0))).getOrElse(0L)
-
-    println(s"First attempt dtCount: $dtCount")
-
-    if (dtCount > 0) {
-      println(s"✅ Data has been successfully loaded for alertCode: $alertCode.")
-      dataLoaded = true
-    } else {
-      println(s"❌ Data not available yet for alertCode: $alertCode. Will retry if needed.")
-    }
-
-  } catch {
-    case e: Exception =>
-      println(s"⚠️ Error executing query: ${e.getMessage}")
-      e.printStackTrace()
-  }
-
-  // If data wasn't loaded on the first attempt, enter retry loop
-  while (!dataLoaded && retries < maxRetries) {
-    println(s"❌ Retry ${retries + 1} of $maxRetries")
-    retries += 1
-    Thread.sleep(retryInterval)
-
-    // Re-attempt query execution
     try {
-      println(s"Executing Query again: $queryWithAlertCode")
-
       val countDF = spark.read
         .format("jdbc")
         .option("url", jdbcUrl)
-        .option("dbtable", s"($queryWithAlertCode) AS subquery")
+        .option("dbtable", s"($countCheckQuery) AS subquery")
         .option("user", jdbcUser)
         .option("password", jdbcPassword)
         .option("driver", jdbcDriver)
         .load()
 
-      // Get dtCount on retry
-      dtCount = countDF.agg("count" -> "long").collect().headOption.flatMap(row => Option(row.getLong(0))).getOrElse(0L)
+      // Extract counts for both master tables
+      val counts = Try {
+        val row = countDF.collect().headOption
+        row.map(r => (r.getAs[Long]("master1_count"), r.getAs[Long]("master2_count"))).getOrElse((0L, 0L))
+      }.getOrElse((0L, 0L))
 
-      println(s"Retry dtCount: $dtCount")
+      val (master1Count, master2Count) = counts
 
-      if (dtCount > 0) {
-        println(s"✅ Data has been successfully loaded for alertCode: $alertCode.")
+      println(s"Retrieved Counts - Master1: $master1Count, Master2: $master2Count")
+
+      if (master1Count > 0 && master2Count > 0) {
+        println(s"✅ Data is available for both Master Tables for alertCode: $alertCode")
         dataLoaded = true
       } else {
-        println(s"❌ Data still not available for alertCode: $alertCode. Waiting for next retry.")
+        println(s"❌ Data not available yet for alertCode: $alertCode. Retrying in ${retryInterval / 1000} seconds...")
+        retries += 1
+        Thread.sleep(retryInterval)
       }
 
     } catch {
@@ -87,11 +56,57 @@ def waitForDataToLoadAndValidate(
     }
   }
 
-  // Final message after retry attempts
   if (!dataLoaded) {
     println(s"⛔ Data for alertCode: $alertCode was NOT loaded after $maxRetries retries.")
   }
 
-  println(s"Final dtCount: $dtCount")
-  (dataLoaded, dtCount)
+  dataLoaded
+}
+
+// Main foreachPartition Logic
+df.foreachPartition { partition =>
+  val spark = SparkSession.builder().getOrCreate()
+
+  // JDBC Connection Details
+  val jdbcUrl = "jdbc:mysql://your-db-host:3306/your-db"
+  val jdbcUser = "your_user"
+  val jdbcPassword = "your_password"
+  val jdbcDriver = "com.mysql.cj.jdbc.Driver"
+
+  // Extract Alert Code from Partition
+  val alertCode = partition.map(row => row.getAs[String]("alert_code")).headOption.getOrElse("")
+
+  if (alertCode.nonEmpty) {
+    // Combined Query to Check Both Master Tables
+    val masterTargetCountQuery =
+      s"""
+      |SELECT 
+      |  (SELECT COUNT(*) FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST WHERE alertCode = '$alertCode') AS master1_count,
+      |  (SELECT COUNT(*) FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET2_TEST WHERE alertCode = '$alertCode') AS master2_count
+      """.stripMargin
+
+    val dataLoaded = waitForDataToLoadAndValidate(
+      spark,
+      alertCode,
+      masterTargetCountQuery,
+      jdbcUrl,
+      jdbcUser,
+      jdbcPassword,
+      jdbcDriver
+    )
+
+    if (dataLoaded) {
+      println(s"🚀 Data is ready for alertCode: $alertCode. Proceeding with partition processing...")
+      
+      partition.foreach { row =>
+        // Your existing logic for processing each row
+        println(s"Processing row: ${row}")
+      }
+
+    } else {
+      println(s"⛔ Skipping partition for alertCode: $alertCode as data was not loaded in time.")
+    }
+  } else {
+    println("⚠️ No alertCode found in this partition. Skipping...")
+  }
 }
