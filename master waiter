@@ -11,17 +11,53 @@ def waitForDataToLoadAndValidate(
   jdbcDriver: String,
   maxRetries: Int = 10,
   retryInterval: Long = 10000
-): Boolean = {
+): (Boolean, Long) = {
 
   var retries = 0
   var dataLoaded = false
-  var dtCount: Long = 0 // Define dtCount outside the loop
+  var dtCount: Long = 0
 
-  while (retries < maxRetries && !dataLoaded) {
-    val queryWithAlertCode = countCheckQuery.replace("$alertCode", s"'$alertCode'")
+  // First attempt (before retry loop)
+  val queryWithAlertCode = countCheckQuery.replace("$alertCode", s"'$alertCode'")
+  try {
+    println(s"Executing Query: $queryWithAlertCode")
 
+    val countDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", s"($queryWithAlertCode) AS subquery")
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    // Get dtCount on first attempt
+    dtCount = countDF.agg("count" -> "long").collect().headOption.flatMap(row => Option(row.getLong(0))).getOrElse(0L)
+
+    println(s"First attempt dtCount: $dtCount")
+
+    if (dtCount > 0) {
+      println(s"✅ Data has been successfully loaded for alertCode: $alertCode.")
+      dataLoaded = true
+    } else {
+      println(s"❌ Data not available yet for alertCode: $alertCode. Will retry if needed.")
+    }
+
+  } catch {
+    case e: Exception =>
+      println(s"⚠️ Error executing query: ${e.getMessage}")
+      e.printStackTrace()
+  }
+
+  // If data wasn't loaded on the first attempt, enter retry loop
+  while (!dataLoaded && retries < maxRetries) {
+    println(s"❌ Retry ${retries + 1} of $maxRetries")
+    retries += 1
+    Thread.sleep(retryInterval)
+
+    // Re-attempt query execution
     try {
-      println(s"[Attempt ${retries + 1}] Executing Query: $queryWithAlertCode")
+      println(s"Executing Query again: $queryWithAlertCode")
 
       val countDF = spark.read
         .format("jdbc")
@@ -32,23 +68,18 @@ def waitForDataToLoadAndValidate(
         .option("driver", jdbcDriver)
         .load()
 
-      // Extract dtCount safely
-      dtCount = Try {
-        val row = countDF.collect().headOption
-        row.map(_.getAs[Long]("count")).getOrElse(0L)
-      }.getOrElse(0L)
+      // Get dtCount on retry
+      dtCount = countDF.agg("count" -> "long").collect().headOption.flatMap(row => Option(row.getLong(0))).getOrElse(0L)
 
-      println(s"Retrieved dtCount: $dtCount")
+      println(s"Retry dtCount: $dtCount")
 
       if (dtCount > 0) {
         println(s"✅ Data has been successfully loaded for alertCode: $alertCode.")
         dataLoaded = true
       } else {
-        println(s"❌ Data not available yet for alertCode: $alertCode. Waiting for ${retryInterval / 1000} seconds before retrying...")
-        retries += 1
-        Thread.sleep(retryInterval) // Wait before retrying
+        println(s"❌ Data still not available for alertCode: $alertCode. Waiting for next retry.")
       }
-      
+
     } catch {
       case e: Exception =>
         println(s"⚠️ Error executing query: ${e.getMessage}")
@@ -56,10 +87,11 @@ def waitForDataToLoadAndValidate(
     }
   }
 
+  // Final message after retry attempts
   if (!dataLoaded) {
     println(s"⛔ Data for alertCode: $alertCode was NOT loaded after $maxRetries retries.")
   }
 
-  println(s"Final dtCount: $dtCount") // Print dtCount outside the loop for debugging
-  dataLoaded
+  println(s"Final dtCount: $dtCount")
+  (dataLoaded, dtCount)
 }
