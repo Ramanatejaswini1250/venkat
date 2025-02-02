@@ -1,12 +1,17 @@
-def waitForDataToLoadAndValidate(countCheckQuery: String, dtCount: Int, maxRetries: Int = 10, retryInterval: Long = 10000): Boolean = {
+import org.apache.spark.sql.DataFrame
+import java.nio.file.{Files, Paths}
+
+def waitForDataToLoadAndValidate(alertCode: String, countCheckQuery: String, dtCount: Int, maxRetries: Int = 10, retryInterval: Long = 10000): Boolean = {
   var retries = 0
   var dataLoaded = false
 
   while (retries < maxRetries && !dataLoaded) {
+    val queryWithAlertCode = countCheckQuery.replace("$alertCode", s"'$alertCode'") // Replace alertCode in query
+
     val countDF = spark.read
       .format("jdbc")
       .option("url", jdbcUrl)
-      .option("dbtable", countCheckQuery)
+      .option("dbtable", s"($queryWithAlertCode) AS subquery") // Use dynamic query
       .option("user", jdbcUser)
       .option("password", jdbcPassword)
       .option("driver", jdbcDriver)
@@ -17,14 +22,14 @@ def waitForDataToLoadAndValidate(countCheckQuery: String, dtCount: Int, maxRetri
     if (count > 0) {
       dataLoaded = true
     } else {
-      println(s"Waiting for data to be loaded into the master table. Retry #$retries...")
+      println(s"Waiting for data to be loaded into the master table for alertCode: $alertCode. Retry #$retries...")
       Thread.sleep(retryInterval) // Wait before retrying
       retries += 1
     }
   }
 
   if (!dataLoaded) {
-    println("Data was not loaded into the master table after maximum retries.")
+    println(s"Data for alertCode: $alertCode was not loaded into the master table after maximum retries.")
   }
   
   dataLoaded
@@ -53,10 +58,8 @@ df.foreachPartition { partition =>
       throw new Exception("Missing filter_column")
     }
 
-    // Validate that dtCount > 0
     if (dtCount > 0) {
       try {
-        // Check the source table count
         val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
 
         val sourceTableCountDF = spark.read
@@ -71,7 +74,6 @@ df.foreachPartition { partition =>
         val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
 
         if (sourceTableCount == dtCount) {
-          // Run the SQL script to load data into the master tables
           val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
 
           if (Files.exists(Paths.get(sqlFolderPath))) {
@@ -81,53 +83,66 @@ df.foreachPartition { partition =>
               runSqlScript(sqlFilePath)
               sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
 
-              // Step 1: Wait for data to be loaded into master tables before proceeding with validation
-              val rampMasterTarget1CountQuery = "(SELECT COUNT(*) AS count FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1) AS subquery"
-              val rampMasterTarget2CountQuery = "(SELECT COUNT(*) AS count FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2) AS subquery"
+              // Step 1: Wait for data to be loaded into master tables before proceeding
+              val rampMasterTarget1CountQuery = 
+                """
+                  |SELECT COUNT(*) AS count 
+                  |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 
+                  |WHERE alertCode = $alertCode
+                """.stripMargin
 
-              // Wait for data to be loaded into both master tables
-              val masterTarget1DataLoaded = waitForDataToLoadAndValidate(rampMasterTarget1CountQuery, dtCount)
-              val masterTarget2DataLoaded = waitForDataToLoadAndValidate(rampMasterTarget2CountQuery, dtCount)
+              val rampMasterTarget2CountQuery = 
+                """
+                  |SELECT COUNT(*) AS count 
+                  |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 
+                  |WHERE alertCode = $alertCode
+                """.stripMargin
+
+              val masterTarget1DataLoaded = waitForDataToLoadAndValidate(alertCode, rampMasterTarget1CountQuery, dtCount)
+              val masterTarget2DataLoaded = waitForDataToLoadAndValidate(alertCode, rampMasterTarget2CountQuery, dtCount)
 
               if (masterTarget1DataLoaded && masterTarget2DataLoaded) {
-                // Step 2: Validate master table counts after ensuring data is loaded
                 println("Data loaded successfully into RAMP_MASTER_TARGET1 and RAMP_MASTER_TARGET2. Proceeding with count validation...")
 
-                // Master table count validation
-                val masterTargetCount1 = spark.read
+                // Fetch Master Table Data
+                val rampMasterTarget1Query = 
+                  s"""
+                    |SELECT * 
+                    |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 
+                    |WHERE alertCode = '$alertCode'
+                    |ORDER BY 1
+                  """.stripMargin
+
+                val rampMasterTarget1DF = spark.read
                   .format("jdbc")
                   .option("url", jdbcUrl)
-                  .option("dbtable", rampMasterTarget1CountQuery)
+                  .option("dbtable", s"($rampMasterTarget1Query) AS subquery")
                   .option("user", jdbcUser)
                   .option("password", jdbcPassword)
                   .option("driver", jdbcDriver)
                   .load()
-                  .collect()(0)
-                  .getAs[Long]("count")
 
-                val masterTargetCount2 = spark.read
-                  .format("jdbc")
-                  .option("url", jdbcUrl)
-                  .option("dbtable", rampMasterTarget2CountQuery)
-                  .option("user", jdbcUser)
-                  .option("password", jdbcPassword)
-                  .option("driver", jdbcDriver)
-                  .load()
-                  .collect()(0)
-                  .getAs[Long]("count")
+                val masterTargetCount1 = rampMasterTarget1DF.count()
 
-                if (masterTargetCount1 != dtCount || masterTargetCount2 != dtCount) {
-                  val message = s"Master table count validation failed. Counts: RAMP_MASTER_TARGET1 ($masterTargetCount1), RAMP_MASTER_TARGET2 ($masterTargetCount2), expected dtCount ($dtCount)"
+                if (masterTargetCount1 == dtCount) {
+                  println(s"Master table count validation passed for alertCode: $alertCode. Proceeding to write to HDFS.")
+
+                  val outputDir = s"hdfs:///user/data/master_output/$alertCode"
+
+                  // Write data to HDFS
+                  rampMasterTarget1DF.write
+                    .mode("overwrite")
+                    .option("header", "true")
+                    .csv(outputDir)
+
+                  println(s"Data for alertCode: $alertCode successfully written to HDFS at $outputDir.")
+                } else {
+                  val message = s"Master table count validation failed for alertCode: $alertCode. Expected: $dtCount, Found: $masterTargetCount1."
                   sendEmailNotification(alertCode, message, emailAddress, business)
                   println(message)
-                  throw new Exception(message)
-                } else {
-                  println(s"Master table count validation passed for both tables. Counts: RAMP_MASTER_TARGET1 ($masterTargetCount1), RAMP_MASTER_TARGET2 ($masterTargetCount2).")
-
-                  // Continue with further blank value checks and archiving if necessary...
                 }
               } else {
-                val message = "Data not loaded into master tables within the allowed time, skipping validation."
+                val message = s"Data for alertCode: $alertCode not loaded into master tables within the allowed time, skipping validation."
                 sendEmailNotification(alertCode, message, emailAddress, business)
                 println(message)
               }
@@ -142,7 +157,7 @@ df.foreachPartition { partition =>
             println(message)
           }
         } else {
-          val message = s"Source table count does not match DT_COUNT"
+          val message = s"Source table count does not match DT_COUNT for alertCode: $alertCode."
           sendEmailNotification(alertCode, message, emailAddress, business)
           println(message)
         }
@@ -153,7 +168,7 @@ df.foreachPartition { partition =>
           println(message)
       }
     } else {
-      val message = "dtCount is not greater than 0, skipping validation"
+      val message = s"dtCount is not greater than 0 for alertCode: $alertCode, skipping validation."
       sendEmailNotification(alertCode, message, emailAddress, business)
       println(message)
     }
