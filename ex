@@ -14,6 +14,34 @@ object ExecutionTracker {
   }
 }
 
+// Function to execute a count query safely
+def executeCountQuery(query: String): Option[Long] = {
+  try {
+    val countDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", s"($query) AS subquery")
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    val count = countDF.collect().headOption.map(row => row.getLong(0)) // Extract the first value
+    count match {
+      case Some(value) =>
+        println(s"Query executed successfully: $query, Count = $value")
+        Some(value)
+      case None =>
+        println(s"Query executed successfully but returned no data: $query")
+        None
+    }
+  } catch {
+    case e: Exception =>
+      println(s"Error executing count query: $query, Error: ${e.getMessage}")
+      None
+  }
+}
+
 // Simulated runSqlScript method (Replace with actual implementation)
 def runSqlScript(alertCode: String): Boolean = {
   println(s"Executing SQL scripts for alertCode = $alertCode...")
@@ -84,43 +112,4 @@ def waitForDataToLoadAndValidate(
         println(s"Count1 does not match dtCount or is not available for alertCode = $alertCode.")
     }
 
-    if (!dataLoaded) {
-      retries += 1
-      if (retries < maxRetries) {
-        println(s"Retrying in ${retryInterval / 1000} seconds...")
-        Thread.sleep(retryInterval)
-      }
-    }
-  }
-
-  if (!dataLoaded) {
-    println(s"Data load failed for alertCode = $alertCode after $maxRetries retries.")
-  }
-
-  dataLoaded
-}
-
-// Now, calling this in the `df.foreachPartition` for master1 and master2 logic
-df.foreachPartition { partition =>
-  partition.foreach { row =>
-    val alertCode = row.getAs[String]("alertCode")
-
-    val countQuery1 = s"SELECT COUNT(*) FROM master1 WHERE alert_code = '$alertCode'"
-    val countQuery2 = s"SELECT COUNT(*) FROM master2 WHERE alert_code = '$alertCode'"
-
-    val dtCount: Long = 100L // Expected count
-
-    // First, ensure the SQL scripts are executed
-    if (!ExecutionTracker.isCompleted(alertCode)) {
-      runSqlScript(alertCode) // Run SQL scripts for the alertCode
-    }
-
-    val dataLoaded = waitForDataToLoadAndValidate(alertCode, countQuery1, countQuery2, dtCount)
-
-    if (dataLoaded) {
-      println(s"Master1 and Master2 data validation passed for alertCode = $alertCode")
-    } else {
-      println(s"Validation failed for alertCode = $alertCode")
-    }
-  }
-}
+    if (!dataLoaded
