@@ -1,176 +1,65 @@
-import org.apache.spark.sql.DataFrame
-import java.nio.file.{Files, Paths}
+import org.apache.spark.sql.{SparkSession, DataFrame}
+import scala.util.{Try, Success, Failure}
 
-def waitForDataToLoadAndValidate(alertCode: String, countCheckQuery: String, dtCount: Int, maxRetries: Int = 10, retryInterval: Long = 10000): Boolean = {
+def waitForDataToLoadAndValidate(
+  spark: SparkSession,
+  alertCode: String,
+  countCheckQuery: String,
+  jdbcUrl: String,
+  jdbcUser: String,
+  jdbcPassword: String,
+  jdbcDriver: String,
+  maxRetries: Int = 10,
+  retryInterval: Long = 10000
+): Boolean = {
+
   var retries = 0
   var dataLoaded = false
+  var dtCount: Long = 0 // Define dtCount outside the loop
 
   while (retries < maxRetries && !dataLoaded) {
-    val queryWithAlertCode = countCheckQuery.replace("$alertCode", s"'$alertCode'") // Replace alertCode in query
+    val queryWithAlertCode = countCheckQuery.replace("$alertCode", s"'$alertCode'")
 
-    val countDF = spark.read
-      .format("jdbc")
-      .option("url", jdbcUrl)
-      .option("dbtable", s"($queryWithAlertCode) AS subquery") // Use dynamic query
-      .option("user", jdbcUser)
-      .option("password", jdbcPassword)
-      .option("driver", jdbcDriver)
-      .load()
+    try {
+      println(s"[Attempt ${retries + 1}] Executing Query: $queryWithAlertCode")
 
-    val count = countDF.collect()(0).getAs[Long]("count")
+      val countDF = spark.read
+        .format("jdbc")
+        .option("url", jdbcUrl)
+        .option("dbtable", s"($queryWithAlertCode) AS subquery")
+        .option("user", jdbcUser)
+        .option("password", jdbcPassword)
+        .option("driver", jdbcDriver)
+        .load()
 
-    if (count > 0) {
-      dataLoaded = true
-    } else {
-      println(s"Waiting for data to be loaded into the master table for alertCode: $alertCode. Retry #$retries...")
-      Thread.sleep(retryInterval) // Wait before retrying
-      retries += 1
+      // Extract dtCount safely
+      dtCount = Try {
+        val row = countDF.collect().headOption
+        row.map(_.getAs[Long]("count")).getOrElse(0L)
+      }.getOrElse(0L)
+
+      println(s"Retrieved dtCount: $dtCount")
+
+      if (dtCount > 0) {
+        println(s"✅ Data has been successfully loaded for alertCode: $alertCode.")
+        dataLoaded = true
+      } else {
+        println(s"❌ Data not available yet for alertCode: $alertCode. Waiting for ${retryInterval / 1000} seconds before retrying...")
+        retries += 1
+        Thread.sleep(retryInterval) // Wait before retrying
+      }
+      
+    } catch {
+      case e: Exception =>
+        println(s"⚠️ Error executing query: ${e.getMessage}")
+        e.printStackTrace()
     }
   }
 
   if (!dataLoaded) {
-    println(s"Data for alertCode: $alertCode was not loaded into the master table after maximum retries.")
+    println(s"⛔ Data for alertCode: $alertCode was NOT loaded after $maxRetries retries.")
   }
-  
+
+  println(s"Final dtCount: $dtCount") // Print dtCount outside the loop for debugging
   dataLoaded
-}
-
-df.foreachPartition { partition =>
-  partition.foreach { row =>
-    val alertCode = row.getAs[String]("alert_code")
-    val dtCount = row.getAs[Int]("dt_count")
-    val dateToLoad = row.getAs[String]("date_to_load")
-    val bteqLocation = row.getAs[String]("bteq_location")
-    val emailAddress = row.getAs[String]("email_address")
-    val business = row.getAs[String]("business")
-    val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-      sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-      throw new Exception("Missing source_table_name")
-    }
-
-    val frequency = row.getAs[String]("frequency").getOrElse {
-      sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-      throw new Exception("Missing frequency")
-    }
-
-    val filterColumn = row.getAs[String]("filter_column").getOrElse {
-      sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-      throw new Exception("Missing filter_column")
-    }
-
-    if (dtCount > 0) {
-      try {
-        val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
-
-        val sourceTableCountDF = spark.read
-          .format("jdbc")
-          .option("url", jdbcUrl)
-          .option("dbtable", jdbcQuery)
-          .option("user", jdbcUser)
-          .option("password", jdbcPassword)
-          .option("driver", jdbcDriver)
-          .load()
-
-        val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
-
-        if (sourceTableCount == dtCount) {
-          val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
-
-          if (Files.exists(Paths.get(sqlFolderPath))) {
-            val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
-
-            if (Files.exists(Paths.get(sqlFilePath))) {
-              runSqlScript(sqlFilePath)
-              sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
-
-              // Step 1: Wait for data to be loaded into master tables before proceeding
-              val rampMasterTarget1CountQuery = 
-                """
-                  |SELECT COUNT(*) AS count 
-                  |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 
-                  |WHERE alertCode = $alertCode
-                """.stripMargin
-
-              val rampMasterTarget2CountQuery = 
-                """
-                  |SELECT COUNT(*) AS count 
-                  |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2 
-                  |WHERE alertCode = $alertCode
-                """.stripMargin
-
-              val masterTarget1DataLoaded = waitForDataToLoadAndValidate(alertCode, rampMasterTarget1CountQuery, dtCount)
-              val masterTarget2DataLoaded = waitForDataToLoadAndValidate(alertCode, rampMasterTarget2CountQuery, dtCount)
-
-              if (masterTarget1DataLoaded && masterTarget2DataLoaded) {
-                println("Data loaded successfully into RAMP_MASTER_TARGET1 and RAMP_MASTER_TARGET2. Proceeding with count validation...")
-
-                // Fetch Master Table Data
-                val rampMasterTarget1Query = 
-                  s"""
-                    |SELECT * 
-                    |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1 
-                    |WHERE alertCode = '$alertCode'
-                    |ORDER BY 1
-                  """.stripMargin
-
-                val rampMasterTarget1DF = spark.read
-                  .format("jdbc")
-                  .option("url", jdbcUrl)
-                  .option("dbtable", s"($rampMasterTarget1Query) AS subquery")
-                  .option("user", jdbcUser)
-                  .option("password", jdbcPassword)
-                  .option("driver", jdbcDriver)
-                  .load()
-
-                val masterTargetCount1 = rampMasterTarget1DF.count()
-
-                if (masterTargetCount1 == dtCount) {
-                  println(s"Master table count validation passed for alertCode: $alertCode. Proceeding to write to HDFS.")
-
-                  val outputDir = s"hdfs:///user/data/master_output/$alertCode"
-
-                  // Write data to HDFS
-                  rampMasterTarget1DF.write
-                    .mode("overwrite")
-                    .option("header", "true")
-                    .csv(outputDir)
-
-                  println(s"Data for alertCode: $alertCode successfully written to HDFS at $outputDir.")
-                } else {
-                  val message = s"Master table count validation failed for alertCode: $alertCode. Expected: $dtCount, Found: $masterTargetCount1."
-                  sendEmailNotification(alertCode, message, emailAddress, business)
-                  println(message)
-                }
-              } else {
-                val message = s"Data for alertCode: $alertCode not loaded into master tables within the allowed time, skipping validation."
-                sendEmailNotification(alertCode, message, emailAddress, business)
-                println(message)
-              }
-            } else {
-              val message = s"SQL file not found for alertCode: $alertCode"
-              sendEmailNotification(alertCode, message, emailAddress, business)
-              println(message)
-            }
-          } else {
-            val message = s"Folder not found for frequency: $frequency at path: $sqlFolderPath"
-            sendEmailNotification(alertCode, message, emailAddress, business)
-            println(message)
-          }
-        } else {
-          val message = s"Source table count does not match DT_COUNT for alertCode: $alertCode."
-          sendEmailNotification(alertCode, message, emailAddress, business)
-          println(message)
-        }
-      } catch {
-        case e: Exception =>
-          val message = s"Validation failed for alertCode: $alertCode with error: ${e.getMessage}"
-          sendEmailNotification(alertCode, message, emailAddress, business)
-          println(message)
-      }
-    } else {
-      val message = s"dtCount is not greater than 0 for alertCode: $alertCode, skipping validation."
-      sendEmailNotification(alertCode, message, emailAddress, business)
-      println(message)
-    }
-  }
 }
