@@ -1,94 +1,26 @@
-val alertCode = row.getAs[String]("alert_code")
-val dtCount = row.getAs[Int]("dt_count")
-val dateToLoad = row.getAs[String]("date_to_load")
-val bteqLocation = row.getAs[String]("bteq_location")
-val emailAddress = row.getAs[String]("email_address")
-val business = row.getAs[String]("business")
-val sourceTableName = row.getAs[String]("source_table_name").getOrElse {
-  sendEmailNotification(alertCode, "Missing source_table_name", emailAddress, business)
-  throw new Exception("Missing source_table_name")
-}
-val frequency = row.getAs[String]("frequency").getOrElse {
-  sendEmailNotification(alertCode, "Missing frequency", emailAddress, business)
-  throw new Exception("Missing frequency")
-}
-val filterColumn = row.getAs[String]("filter_column").getOrElse {
-  sendEmailNotification(alertCode, "Missing filter_column", emailAddress, business)
-  throw new Exception("Missing filter_column")
-}
+def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
+  val metadata = resultSet.getMetaData
+  val columnCount = metadata.getColumnCount
 
-// Logic to handle execution only after data is loaded
-val folderPath = getSqlFolderPath(frequency, bteqLocation)
-if (Files.exists(Paths.get(folderPath))) {
-  val sqlFilePath = s"$folderPath/${alertCode}.sql"
-  
-  // Run SQL script and wait for data load to complete
-  if (Files.exists(Paths.get(sqlFilePath))) {
-    runSqlScript(sqlFilePath)  // Run the SQL script
-    sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
-    
-    // Now wait for the data to load in the target table
-    var dataLoaded = false
-    var attempts = 0
-    while (!dataLoaded && attempts < 10) {  // Retry for a certain number of attempts
-      try {
-        // Query master target table to check if data is loaded
-        val countValidationQuery =
-          s"""
-             |SELECT COUNT(*) AS master_count
-             |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
-             """.stripMargin
+  // Get column names
+  val columns = (1 to columnCount).map(metadata.getColumnName)
 
-        val masterCountDF = spark.read
-          .format("jdbc")
-          .option("url", jdbcUrl)
-          .option("dbtable", s"($countValidationQuery) AS subquery")
-          .option("user", jdbcUser)
-          .option("password", jdbcPassword)
-          .option("driver", jdbcDriver)
-          .load()
-
-        val masterCount = masterCountDF.collect()(0).getAs[Long]("master_count")
-
-        if (masterCount > 0) {
-          // Data is loaded; proceed with validation
-          println(s"Data loaded successfully. Master count: $masterCount")
-          if (masterCount != dtCount) {
-            val message = s"Master count validation failed: Expected $dtCount, but got $masterCount."
-            sendEmailNotification(alertCode, message, emailAddress, business)
-            println(message)
-            throw new Exception(message)
-          } else {
-            println("Master count validation passed.")
-          }
-          dataLoaded = true  // Data is successfully loaded, so stop waiting
-        } else {
-          println("Data not loaded yet. Retrying...")
-          attempts += 1
-          Thread.sleep(60000)  // Wait for 1 minute before retrying
-        }
-      } catch {
-        case e: Exception =>
-          println(s"Error during master count validation: ${e.getMessage}")
-          sendEmailNotification(alertCode, "Master count validation failed", emailAddress, business)
-          e.printStackTrace()
-          attempts += 1
-          Thread.sleep(60000)  // Wait for 1 minute before retrying
+  // Collect rows from the ResultSet
+  val rows = Iterator
+    .continually {
+      if (resultSet.next()) {
+        Some((1 to columnCount).map(resultSet.getObject))
+      } else {
+        None
       }
     }
+    .takeWhile(_.isDefined)
+    .map(_.get)
+    .toList
 
-    if (!dataLoaded) {
-      val message = s"Data loading timed out. Master count validation was not performed."
-      sendEmailNotification(alertCode, message, emailAddress, business)
-      println(message)
-    }
-  } else {
-    val message = s"SQL file not found for alertCode: $alertCode"
-    sendEmailNotification(alertCode, message, emailAddress, business)
-    println(message)
-  }
-} else {
-  val message = s"Folder not found for frequency: $frequency at path: $folderPath"
-  sendEmailNotification(alertCode, message, emailAddress, business)
-  println(message)
+  // Convert rows to Spark DataFrame
+  val rdd = spark.sparkContext.parallelize(rows.map(Row.fromSeq))
+  val schema = StructType(columns.map(fieldName => StructField(fieldName, StringType, true)))
+
+  spark.createDataFrame(rdd, schema)
 }
