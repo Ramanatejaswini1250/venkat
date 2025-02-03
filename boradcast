@@ -1,5 +1,8 @@
-import java.sql.Types._
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.types._
+import java.sql.{Connection, ResultSet}
+import scala.collection.mutable
+import scala.jdk.CollectionConverters._
 
 def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
   import spark.implicits._
@@ -17,6 +20,32 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
 
   val rows = mutable.Buffer[Row]()
 
+  // Check if the ResultSet is empty by attempting to move to the first row
+  if (!resultSet.isBeforeFirst) {
+    println("No data found in ResultSet.")
+    // Return an empty DataFrame with the schema if no data
+    val emptySchema = StructType(columnNames.zip(columnTypes).map {
+      case (name, sqlType) =>
+        val sparkType = sqlType match {
+          case INTEGER      => IntegerType
+          case VARCHAR      => StringType
+          case DATE         => DateType
+          case TIMESTAMP    => TimestampType
+          case FLOAT        => FloatType
+          case DOUBLE       => DoubleType
+          case BIGINT       => LongType
+          case BOOLEAN      => BooleanType
+          case DECIMAL      => DecimalType(10, 2) // Adjust scale and precision as needed
+          case LONGVARCHAR  => StringType // For CLOB or large strings
+          case _            => StringType // Default fallback to StringType
+        }
+        StructField(name, sparkType, nullable = true)
+    })
+    // Return an empty DataFrame with the same schema as the ResultSet
+    return spark.createDataFrame(spark.sparkContext.emptyRDD[Row], emptySchema)
+  }
+
+  // Convert the ResultSet to rows
   while (resultSet.next()) {
     val row = (1 to columnCount).map { i =>
       columnTypes(i - 1) match {
@@ -51,10 +80,30 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
   }
 
   if (rows.isEmpty) {
-    throw new RuntimeException("No data found in ResultSet.")
+    println("No rows found in ResultSet after processing.")
+    // Return an empty DataFrame with the schema if no rows are found
+    val emptySchema = StructType(columnNames.zip(columnTypes).map {
+      case (name, sqlType) =>
+        val sparkType = sqlType match {
+          case INTEGER      => IntegerType
+          case VARCHAR      => StringType
+          case DATE         => DateType
+          case TIMESTAMP    => TimestampType
+          case FLOAT        => FloatType
+          case DOUBLE       => DoubleType
+          case BIGINT       => LongType
+          case BOOLEAN      => BooleanType
+          case DECIMAL      => DecimalType(10, 2) // Adjust scale and precision as needed
+          case LONGVARCHAR  => StringType // For CLOB or large strings
+          case _            => StringType // Default fallback to StringType
+        }
+        StructField(name, sparkType, nullable = true)
+    })
+    // Return an empty DataFrame with the same schema as the ResultSet
+    return spark.createDataFrame(spark.sparkContext.emptyRDD[Row], emptySchema)
   }
 
-  // Create the schema dynamically based on column types
+  // Create the DataFrame from the rows collected
   val schema = StructType(columnNames.zip(columnTypes).map {
     case (name, sqlType) =>
       val sparkType = sqlType match {
@@ -73,6 +122,5 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
       StructField(name, sparkType, nullable = true)
   })
 
-  // Return the DataFrame with the correct schema
   spark.createDataFrame(rows.toSeq.asJava, schema)
 }
