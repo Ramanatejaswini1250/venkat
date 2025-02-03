@@ -12,15 +12,13 @@ object RampAutomationExecution {
     val jdbcUser = "your_user"
     val jdbcPassword = "your_password"
     val jdbcDriver = "your.jdbc.driver.ClassName"
-    val alertCode = "your_alert_code" // Replace with the actual alert code dynamically if needed.
 
-    // Step 1: Compute counts at the driver level
-    val masterTargetCounts = Map(
+    // Step 1: Compute counts dynamically from the master tables
+    val masterCounts = Map(
       "RAMP_MASTER_TARGET1" -> {
-        val query = s"""
+        val query = """
           SELECT COUNT(*) AS count 
           FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
-          WHERE alertCode = '$alertCode'
         """
         println(s"Executing count query for RAMP_MASTER_TARGET1: $query")
         val countDF = spark.read
@@ -35,10 +33,9 @@ object RampAutomationExecution {
         countDF.collect().headOption.map(_.getAs[Long]("count")).getOrElse(0L)
       },
       "RAMP_MASTER_TARGET2" -> {
-        val query = s"""
+        val query = """
           SELECT COUNT(*) AS count 
           FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
-          WHERE alertCode = '$alertCode'
         """
         println(s"Executing count query for RAMP_MASTER_TARGET2: $query")
         val countDF = spark.read
@@ -54,8 +51,8 @@ object RampAutomationExecution {
       }
     )
 
-    // Step 2: Broadcast the counts
-    val broadcastCounts = spark.sparkContext.broadcast(masterTargetCounts)
+    // Step 2: Broadcast the master counts
+    val broadcastCounts = spark.sparkContext.broadcast(masterCounts)
 
     // Sample DataFrame (Replace with your actual DataFrame)
     val df = spark.read.format("csv").load("your_data_file.csv")
@@ -69,22 +66,24 @@ object RampAutomationExecution {
         val target1Count = counts.getOrElse("RAMP_MASTER_TARGET1", 0L)
         val target2Count = counts.getOrElse("RAMP_MASTER_TARGET2", 0L)
 
-        // Assuming "alertCode" column exists in your DataFrame
-        val currentAlertCode = row.getAs[String]("alertCode")
+        // Dynamically use masterTableValidation for processing
+        val validationResult = masterTableValidation(target1Count, target2Count)
 
-        println(s"Processing row with alertCode=$currentAlertCode")
-        println(s"Master Target 1 Count: $target1Count, Master Target 2 Count: $target2Count")
-
-        // Perform your validation logic here
-        if (target1Count > 0 && target2Count > 0) {
-          println("Validation passed!")
-        } else {
-          println("Validation failed!")
-        }
+        // Assuming "alertCode" or any other column that may influence validation logic is available
+        println(s"Processing row with dynamic validation: $validationResult")
       }
     }
 
     // Stop the Spark session
     spark.stop()
+  }
+
+  // Step 4: Master Table Validation Logic (Dynamic)
+  def masterTableValidation(target1Count: Long, target2Count: Long): String = {
+    if (target1Count > 0 && target2Count > 0) {
+      "Validation Passed"
+    } else {
+      "Validation Failed"
+    }
   }
 }
