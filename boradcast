@@ -1,31 +1,3 @@
-def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
-  val metadata = resultSet.getMetaData
-  val columnCount = metadata.getColumnCount
-
-  // Get column names
-  val columns = (1 to columnCount).map(metadata.getColumnName)
-
-  // Collect rows from the ResultSet
-  val rows = Iterator
-    .continually {
-      if (resultSet.next()) {
-        Some((1 to columnCount).map(resultSet.getObject))
-      } else {
-        None
-      }
-    }
-    .takeWhile(_.isDefined)
-    .map(_.get)
-    .toList
-
-  // Convert rows to Spark DataFrame
-  val rdd = spark.sparkContext.parallelize(rows.map(Row.fromSeq))
-  val schema = StructType(columns.map(fieldName => StructField(fieldName, StringType, true)))
-
-  spark.createDataFrame(rdd, schema)
-}
-
-
 import java.sql.{Connection, DriverManager, ResultSet}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
