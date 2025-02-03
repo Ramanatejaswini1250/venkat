@@ -24,3 +24,101 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
 
   spark.createDataFrame(rdd, schema)
 }
+
+
+import java.sql.{Connection, DriverManager, ResultSet}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions._
+
+object RampAutomationExecution {
+  def main(args: Array[String]): Unit = {
+    // Initialize Spark Session
+    val spark = SparkSession.builder()
+      .appName("RampAutomationExecution")
+      .master("local[*]") // Adjust to your cluster mode
+      .getOrCreate()
+
+    val alertCode = "RA0387" // Example alertCode, replace with dynamic input if needed
+
+    // Database connection details
+    val jdbcUrl = "jdbc:your_database_url" // Replace with your database URL
+    val dbUser = "your_username" // Replace with your username
+    val dbPassword = "your_password" // Replace with your password
+
+    var conn_rss: Connection = null
+    try {
+      // Establish connection
+      conn_rss = DriverManager.getConnection(jdbcUrl, dbUser, dbPassword)
+      println("Database connection established.")
+
+      // Query to fetch data
+      val masterTable1Query =
+        s"""
+           |SELECT * 
+           |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1_TEST 
+           |WHERE alert_code = '$alertCode' 
+           |ORDER BY 1
+           |""".stripMargin
+
+      println(s"Executing query: $masterTable1Query")
+
+      val stmt_rss = conn_rss.createStatement()
+      val resultSet = stmt_rss.executeQuery(masterTable1Query)
+
+      if (resultSet == null) {
+        throw new RuntimeException("ResultSet is null. Query execution might have failed.")
+      } else if (!resultSet.next()) {
+        throw new RuntimeException("ResultSet is empty. No rows returned for the query.")
+      } else {
+        println("ResultSet fetched successfully.")
+      }
+
+      // Convert ResultSet to DataFrame
+      resultSet.beforeFirst() // Reset cursor position
+      val masterTable1DF = resultSetToDataFrame(resultSet, spark)
+
+      // Transformations on DataFrame
+      val formattedMasterTable1DF = masterTable1DF
+        .withColumn("EVENT_TIMESTAMP", date_format(to_timestamp(col("EVENT_TIMESTAMP"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
+        .withColumn("ALERT_DUE_DATE", date_format(to_timestamp(col("ALERT_DUE_DATE"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
+
+      // Display transformed DataFrame
+      formattedMasterTable1DF.show()
+
+      // Write the DataFrame to a target (HDFS, local path, etc.)
+      formattedMasterTable1DF.write
+        .format("csv") // Example format, can be "parquet" or others
+        .option("header", "true")
+        .save("/tmp/master_table1_output") // Replace with your output path
+
+    } catch {
+      case e: Exception =>
+        println(s"Error occurred: ${e.getMessage}")
+        e.printStackTrace()
+    } finally {
+      if (conn_rss != null && !conn_rss.isClosed) {
+        conn_rss.close()
+        println("Database connection closed.")
+      }
+    }
+  }
+
+  // Helper function to convert ResultSet to DataFrame
+  def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
+    import scala.collection.mutable
+    import spark.implicits._
+
+    val metadata = resultSet.getMetaData
+    val columnCount = metadata.getColumnCount
+    val columnNames = (1 to columnCount).map(metadata.getColumnName)
+
+    val rows = mutable.Buffer[Row]()
+    while (resultSet.next()) {
+      val row = (1 to columnCount).map(resultSet.getObject).toSeq
+      rows.append(Row.fromSeq(row))
+    }
+
+    val schema = StructType(columnNames.map(name => StructField(name, StringType, nullable = true)))
+    spark.createDataFrame(rows.toSeq.asJava, schema)
+  }
+}
