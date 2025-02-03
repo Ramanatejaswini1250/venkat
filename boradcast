@@ -1,4 +1,7 @@
 import org.apache.spark.sql.SparkSession
+import java.nio.file.{Files, Paths}
+import java.time.{LocalDate, LocalTime, DayOfWeek}
+import scala.util.control.Breaks._
 
 object RampAutomationExecution {
 
@@ -13,20 +16,54 @@ object RampAutomationExecution {
     val jdbcPassword = "your_password"
     val jdbcDriver = "your.jdbc.driver.ClassName"
 
+    // Sample DataFrame (Replace with your actual DataFrame)
+    val df = alert_query.toDF("alert_code", "dt_count", "date_to_load", "bteq_location", "email_address", "business", "source_table_name", "frequency", "filter_column")
+
     // Step 1: Fetch and broadcast the counts for master1 and master2
     val broadcastCounts = getAndBroadcastMasterCounts(spark, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
 
-    // Sample DataFrame (Replace with your actual DataFrame)
-    val df = spark.read.format("csv").load("your_data_file.csv")
-
-    // Step 2: Use the broadcasted counts in foreachPartition and perform validation
+    // Step 2: Process the DataFrame and perform validation
     df.foreachPartition { partition =>
       partition.foreach { row =>
-        // Call the validation method using the broadcasted counts
-        val validationResult = performValidation(broadcastCounts.value)
+        // Extract the necessary fields
+        val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val dateToLoad = row.getAs[String]("date_to_load")
+        val bteqLocation = row.getAs[String]("bteq_location")
+        val emailAddress = row.getAs[String]("email_address")
+        val business = row.getAs[String]("business")
+        val sourceTableName = row.getAs[String]("source_table_name")
+        val frequency = row.getAs[String]("frequency")
+        val filterColumn = row.getAs[String]("filter_column")
 
-        // Assuming you have some additional logic to process validationResult
-        println(s"Processing row: Validation Result = $validationResult")
+        try {
+          if (dtCount > 0) {
+            val folderPath = getSqlFolderPath(frequency, bteqLocation)
+
+            // Check if the file has been received by verifying the existence of the folder for the given frequency
+            validateFileReceived(frequency, folderPath, alertCode, emailAddress, business)
+
+            // Perform the source table count validation
+            val sourceTableCount = validateSourceTableCount(jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver, sourceTableName, filterColumn, dateToLoad, dtCount, alertCode, emailAddress, business)
+
+            if (sourceTableCount == dtCount) {
+              val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
+              validateSqlFileAndRun(alertCode, sqlFolderPath, emailAddress, business)
+            }
+
+            // Master validation logic using broadcasted counts
+            performMasterValidation(spark, broadcastCounts.value, alertCode, emailAddress, business)
+
+          } else {
+            sendEmailNotification(alertCode, s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode", emailAddress, business)
+            throw new Exception(s"DT_COUNT is less than or equal to 0 for alertCode: $alertCode")
+          }
+        } catch {
+          case ex: Exception =>
+            sendEmailNotification(alertCode, s"Error processing alertCode: $alertCode - ${ex.getMessage}", emailAddress, business)
+            println(ex.getMessage)
+            ex.printStackTrace()
+        }
       }
     }
 
@@ -34,7 +71,7 @@ object RampAutomationExecution {
     spark.stop()
   }
 
-  // Step 3: Fetch and broadcast master counts from the database
+  // Step 1: Fetch and broadcast master counts from the database
   def getAndBroadcastMasterCounts(spark: SparkSession, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String) = {
     val masterCounts = Map(
       "RAMP_MASTER_TARGET1" -> {
@@ -42,7 +79,6 @@ object RampAutomationExecution {
           SELECT COUNT(*) AS count 
           FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
         """
-        println(s"Executing count query for RAMP_MASTER_TARGET1: $query")
         val countDF = spark.read
           .format("jdbc")
           .option("url", jdbcUrl)
@@ -59,7 +95,6 @@ object RampAutomationExecution {
           SELECT COUNT(*) AS count 
           FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
         """
-        println(s"Executing count query for RAMP_MASTER_TARGET2: $query")
         val countDF = spark.read
           .format("jdbc")
           .option("url", jdbcUrl)
@@ -73,21 +108,84 @@ object RampAutomationExecution {
       }
     )
 
-    // Broadcast the master counts
     spark.sparkContext.broadcast(masterCounts)
   }
 
-  // Step 4: Method to perform validation dynamically using the broadcasted master counts
-  def performValidation(masterCounts: Map[String, Long]): String = {
-    // Extract values from the broadcasted master counts
-    val target1Count = masterCounts.getOrElse("RAMP_MASTER_TARGET1", 0L)
-    val target2Count = masterCounts.getOrElse("RAMP_MASTER_TARGET2", 0L)
-
-    // Validation Logic
-    if (target1Count > 0 && target2Count > 0) {
-      "Validation Passed"
-    } else {
-      "Validation Failed"
+  // Step 2: File validation logic based on frequency
+  def validateFileReceived(frequency: String, folderPath: String, alertCode: String, emailAddress: String, business: String): Unit = {
+    if (frequency == "W") {
+      // Validate weekly file reception
+      val currentDay = LocalDate.now().getDayOfWeek
+      if (currentDay == DayOfWeek.MONDAY && !Files.exists(Paths.get(folderPath))) {
+        val message = s"AlertCode $alertCode with frequency 'W' was not processed by the cutoff time. The file has not been received from folder $folderPath."
+        sendEmailNotification(alertCode, message, emailAddress, business)
+      }
     }
+    // Add additional frequency checks for "M" and "Q" as per your existing logic
+  }
+
+  // Step 3: Source table count validation
+  def validateSourceTableCount(jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String, sourceTableName: String, filterColumn: String, dateToLoad: String, dtCount: Int, alertCode: String, emailAddress: String, business: String): Long = {
+    val jdbcQuery = s"(SELECT COUNT(*) AS cnt FROM $sourceTableName WHERE $filterColumn = '$dateToLoad') AS subquery"
+    val sourceTableCountDF = spark.read
+      .format("jdbc")
+      .option("url", jdbcUrl)
+      .option("dbtable", jdbcQuery)
+      .option("user", jdbcUser)
+      .option("password", jdbcPassword)
+      .option("driver", jdbcDriver)
+      .load()
+
+    val sourceTableCount = sourceTableCountDF.collect()(0).getAs[Long]("cnt")
+    if (sourceTableCount != dtCount) {
+      val message = s"Source table count does not match DT_COUNT"
+      sendEmailNotification(alertCode, message, emailAddress, business)
+      println(message)
+    }
+    sourceTableCount
+  }
+
+  // Step 4: SQL file validation and execution
+  def validateSqlFileAndRun(alertCode: String, sqlFolderPath: String, emailAddress: String, business: String): Unit = {
+    if (Files.exists(Paths.get(sqlFolderPath))) {
+      val sqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
+      if (Files.exists(Paths.get(sqlFilePath))) {
+        runSqlScript(sqlFilePath)
+        sendEmailNotification(alertCode, "SQL script executed successfully", emailAddress, business)
+      } else {
+        val message = s"SQL file not found for alertCode: $alertCode"
+        sendEmailNotification(alertCode, message, emailAddress, business)
+        println(message)
+      }
+    } else {
+      val message = s"Folder not found for frequency at path: $sqlFolderPath"
+      sendEmailNotification(alertCode, message, emailAddress, business)
+      println(message)
+    }
+  }
+
+  // Step 5: Perform validation using the broadcasted master counts
+  def performMasterValidation(spark: SparkSession, broadcastCounts: Map[String, Long], alertCode: String, emailAddress: String, business: String): Unit = {
+    val target1Count = broadcastCounts.getOrElse("RAMP_MASTER_TARGET1", 0L)
+    val target2Count = broadcastCounts.getOrElse("RAMP_MASTER_TARGET2", 0L)
+
+    if (target1Count > 0 && target2Count > 0) {
+      println(s"Master validation passed for alertCode: $alertCode.")
+      sendEmailNotification(alertCode, s"Master validation passed. Target1: $target1Count, Target2: $target2Count", emailAddress, business)
+    } else {
+      val message = s"Master validation failed for alertCode: $alertCode. Counts - Target1: $target1Count, Target2: $target2Count."
+      sendEmailNotification(alertCode, message, emailAddress, business)
+      println(message)
+    }
+  }
+
+  // Dummy email sending method (you should replace with actual implementation)
+  def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String): Unit = {
+    println(s"Sending email to $emailAddress for business $business: $message")
+  }
+
+  // Dummy SQL script execution method (you should replace with actual implementation)
+  def runSqlScript(filePath: String): Unit = {
+    println(s"Running SQL script from $filePath")
   }
 }
