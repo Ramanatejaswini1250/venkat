@@ -1,0 +1,42 @@
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+import java.sql.ResultSet
+
+// Function to convert ResultSet to DataFrame
+def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
+  val metadata = resultSet.getMetaData
+  val columnCount = metadata.getColumnCount
+
+  val schema = StructType((1 to columnCount).map { i =>
+    StructField(metadata.getColumnName(i), StringType, nullable = true)
+  })
+
+  val rows = new scala.collection.mutable.ListBuffer[Row]()
+  while (resultSet.next()) {
+    val row = (1 to columnCount).map(i => resultSet.getString(i))
+    rows += Row.fromSeq(row)
+  }
+
+  spark.createDataFrame(spark.sparkContext.parallelize(rows.toList), schema)
+}
+
+// Your main logic
+val masterTable1Query =
+  s"""
+     |SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST
+     |WHERE alert_code = '$alertCode' ORDER BY 1
+     |""".stripMargin
+
+val resultSet: ResultSet = stmt_rss.executeQuery(masterTable1Query)
+val masterTable1DF = resultSetToDataFrame(resultSet, spark)
+
+// Perform transformations
+val formattedMasterTable1DF = masterTable1DF
+  .withColumn("EVENT_TIMESTAMP",
+    date_format(to_timestamp(col("EVENT_TIMESTAMP"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
+  .withColumn("ALERT_DUE_DATE",
+    date_format(to_timestamp(col("ALERT_DUE_DATE"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
+
+// Save the data
+formattedMasterTable1DF.write.format("parquet").save("/path/to/output")
