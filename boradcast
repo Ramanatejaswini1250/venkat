@@ -75,22 +75,31 @@ object RampAutomationExecution {
     }
   }
 
-  // Helper function to convert ResultSet to DataFrame
-  def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
-    import scala.collection.mutable
-    import spark.implicits._
+ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
+  import spark.implicits._
 
-    val metadata = resultSet.getMetaData
-    val columnCount = metadata.getColumnCount
-    val columnNames = (1 to columnCount).map(metadata.getColumnName)
+  val metadata = resultSet.getMetaData
+  val columnCount = metadata.getColumnCount
 
-    val rows = mutable.Buffer[Row]()
-    while (resultSet.next()) {
-      val row = (1 to columnCount).map(resultSet.getObject).toSeq
-      rows.append(Row.fromSeq(row))
-    }
-
-    val schema = StructType(columnNames.map(name => StructField(name, StringType, nullable = true)))
-    spark.createDataFrame(rows.toSeq.asJava, schema)
+  if (columnCount <= 0) {
+    throw new RuntimeException(s"Invalid column count: $columnCount")
   }
+
+  val columnNames = (1 to columnCount).map(metadata.getColumnName)
+  val rows = mutable.Buffer[Row]()
+
+  while (resultSet.next()) {
+    val row = (1 to columnCount).map { i =>
+      val value = Option(resultSet.getObject(i)).getOrElse(null)
+      value
+    }.toSeq
+    rows.append(Row.fromSeq(row))
+  }
+
+  if (rows.isEmpty) {
+    throw new RuntimeException("No data found in ResultSet.")
+  }
+
+  val schema = StructType(columnNames.map(name => StructField(name, StringType, nullable = true)))
+  spark.createDataFrame(rows.toSeq.asJava, schema)
 }
