@@ -1,6 +1,90 @@
-latest_files=$(sshpass -p "$password" ssh "$scp_user@$remote_server" "ls -t $output_location | head -2")
+import org.apache.spark.sql.SparkSession
 
-for file in $latest_files; do
-    # Copy each file
-    sshpass -p "$password" scp "$scp_user@$remote_server:$output_location/$file" "$target_path/"
-done
+object RampAutomationExecution {
+
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("Ramp Automation Execution")
+      .getOrCreate()
+
+    // JDBC Configuration
+    val jdbcUrl = "jdbc:your_database_url"
+    val jdbcUser = "your_user"
+    val jdbcPassword = "your_password"
+    val jdbcDriver = "your.jdbc.driver.ClassName"
+    val alertCode = "your_alert_code" // Replace with the actual alert code dynamically if needed.
+
+    // Step 1: Compute counts at the driver level
+    val masterTargetCounts = Map(
+      "RAMP_MASTER_TARGET1" -> {
+        val query = s"""
+          SELECT COUNT(*) AS count 
+          FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1
+          WHERE alertCode = '$alertCode'
+        """
+        println(s"Executing count query for RAMP_MASTER_TARGET1: $query")
+        val countDF = spark.read
+          .format("jdbc")
+          .option("url", jdbcUrl)
+          .option("dbtable", s"($query) AS subquery")
+          .option("user", jdbcUser)
+          .option("password", jdbcPassword)
+          .option("driver", jdbcDriver)
+          .load()
+
+        countDF.collect().headOption.map(_.getAs[Long]("count")).getOrElse(0L)
+      },
+      "RAMP_MASTER_TARGET2" -> {
+        val query = s"""
+          SELECT COUNT(*) AS count 
+          FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET2
+          WHERE alertCode = '$alertCode'
+        """
+        println(s"Executing count query for RAMP_MASTER_TARGET2: $query")
+        val countDF = spark.read
+          .format("jdbc")
+          .option("url", jdbcUrl)
+          .option("dbtable", s"($query) AS subquery")
+          .option("user", jdbcUser)
+          .option("password", jdbcPassword)
+          .option("driver", jdbcDriver)
+          .load()
+
+        countDF.collect().headOption.map(_.getAs[Long]("count")).getOrElse(0L)
+      }
+    )
+
+    // Step 2: Broadcast the counts
+    val broadcastCounts = spark.sparkContext.broadcast(masterTargetCounts)
+
+    // Sample DataFrame (Replace with your actual DataFrame)
+    val df = spark.read.format("csv").load("your_data_file.csv")
+
+    // Step 3: Use the broadcasted counts in foreachPartition
+    df.foreachPartition { partition =>
+      val counts = broadcastCounts.value
+
+      partition.foreach { row =>
+        // Extract values from the broadcast map
+        val target1Count = counts.getOrElse("RAMP_MASTER_TARGET1", 0L)
+        val target2Count = counts.getOrElse("RAMP_MASTER_TARGET2", 0L)
+
+        // Assuming "alertCode" column exists in your DataFrame
+        val currentAlertCode = row.getAs[String]("alertCode")
+
+        println(s"Processing row with alertCode=$currentAlertCode")
+        println(s"Master Target 1 Count: $target1Count, Master Target 2 Count: $target2Count")
+
+        // Perform your validation logic here
+        if (target1Count > 0 && target2Count > 0) {
+          println("Validation passed!")
+        } else {
+          println("Validation failed!")
+        }
+      }
+    }
+
+    // Stop the Spark session
+    spark.stop()
+  }
+}
