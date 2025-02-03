@@ -1,0 +1,11 @@
+catch {
+  case e: NullPointerException => println("Caught a NullPointerException")
+  case e: Exception => 
+    println(s"Caught exception: ${e.getClass.getName}")
+    if (e.getMessage != null) {
+      println(s"Message: ${e.getMessage}")
+    } else {
+      println("No message available")
+    }
+    e.printStackTrace()  // This should print the full stack trace if available
+}
