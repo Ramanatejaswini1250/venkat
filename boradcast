@@ -75,7 +75,14 @@ object RampAutomationExecution {
     }
   }
 
- def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
+ 
+
+  
+
+import java.sql.Types._
+import org.apache.spark.sql.types._
+
+def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
   import spark.implicits._
 
   val metadata = resultSet.getMetaData
@@ -95,15 +102,17 @@ object RampAutomationExecution {
     val row = (1 to columnCount).map { i =>
       // Depending on the column type, use appropriate get methods
       columnTypes(i - 1) match {
-        case java.sql.Types.INTEGER     => Option(resultSet.getInt(i)).getOrElse(null)  // Integer
-        case java.sql.Types.VARCHAR    => Option(resultSet.getString(i)).getOrElse(null) // String
-        case java.sql.Types.DATE       => Option(resultSet.getDate(i)).getOrElse(null)   // Date
-        case java.sql.Types.TIMESTAMP  => Option(resultSet.getTimestamp(i)).getOrElse(null) // Timestamp
-        case java.sql.Types.FLOAT      => Option(resultSet.getFloat(i)).getOrElse(null)  // Float
-        case java.sql.Types.DOUBLE     => Option(resultSet.getDouble(i)).getOrElse(null) // Double
-        case java.sql.Types.BIGINT     => Option(resultSet.getLong(i)).getOrElse(null)   // BigInt
-        case java.sql.Types.BOOLEAN    => Option(resultSet.getBoolean(i)).getOrElse(null) // Boolean
-        case _ => Option(resultSet.getObject(i)).getOrElse(null) // Fallback to generic Object
+        case INTEGER     => Option(resultSet.getInt(i)).getOrElse(null)  // Integer
+        case VARCHAR     => Option(resultSet.getString(i)).getOrElse(null) // String
+        case DATE        => Option(resultSet.getDate(i)).getOrElse(null)   // Date
+        case TIMESTAMP   => Option(resultSet.getTimestamp(i)).getOrElse(null) // Timestamp
+        case FLOAT       => Option(resultSet.getFloat(i)).getOrElse(null)  // Float
+        case DOUBLE      => Option(resultSet.getDouble(i)).getOrElse(null) // Double
+        case BIGINT      => Option(resultSet.getLong(i)).getOrElse(null)   // BigInt
+        case BOOLEAN     => Option(resultSet.getBoolean(i)).getOrElse(null) // Boolean
+        case DECIMAL     => Option(resultSet.getBigDecimal(i)).getOrElse(null) // Decimal
+        case LONGVARCHAR => Option(resultSet.getString(i)).getOrElse(null) // Large String (e.g., CLOB)
+        case _           => Option(resultSet.getObject(i)).getOrElse(null) // Fallback to generic Object
       }
     }.toSeq
     rows.append(Row.fromSeq(row))
@@ -113,19 +122,21 @@ object RampAutomationExecution {
     throw new RuntimeException("No data found in ResultSet.")
   }
 
-  // Create the schema based on the column types
+  // Create the schema dynamically based on column types
   val schema = StructType(columnNames.zip(columnTypes).map {
     case (name, sqlType) =>
       val sparkType = sqlType match {
-        case java.sql.Types.INTEGER    => IntegerType
-        case java.sql.Types.VARCHAR   => StringType
-        case java.sql.Types.DATE      => DateType
-        case java.sql.Types.TIMESTAMP => TimestampType
-        case java.sql.Types.FLOAT     => FloatType
-        case java.sql.Types.DOUBLE    => DoubleType
-        case java.sql.Types.BIGINT    => LongType
-        case java.sql.Types.BOOLEAN   => BooleanType
-        case _ => StringType // Default fallback
+        case INTEGER      => IntegerType
+        case VARCHAR      => StringType
+        case DATE         => DateType
+        case TIMESTAMP    => TimestampType
+        case FLOAT        => FloatType
+        case DOUBLE       => DoubleType
+        case BIGINT       => LongType
+        case BOOLEAN      => BooleanType
+        case DECIMAL      => DecimalType(10, 2) // Adjust scale and precision as needed
+        case LONGVARCHAR  => StringType // For CLOB or large strings
+        case _            => StringType // Default fallback to StringType
       }
       StructField(name, sparkType, nullable = true)
   })
@@ -133,3 +144,4 @@ object RampAutomationExecution {
   // Return the DataFrame with the correct schema
   spark.createDataFrame(rows.toSeq.asJava, schema)
 }
+
