@@ -1,0 +1,135 @@
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+import java.sql.{Connection, ResultSet}
+
+import scala.collection.mutable
+import scala.jdk.CollectionConverters._
+
+object Main {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("Ramp Automation")
+      .master("local[*]") // Change master as per your cluster configuration
+      .getOrCreate()
+
+    var conn_rss: Connection = null
+
+    try {
+      // Establish a database connection (modify with your connection details)
+      conn_rss = getDatabaseConnection()
+
+      // Query to fetch data
+      val masterTable1Query =
+        s"""
+           |SELECT * 
+           |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1_TEST 
+           |WHERE alert_code = '$alertCode' 
+           |ORDER BY 1
+           |""".stripMargin
+
+      println(s"Executing query: $masterTable1Query")
+
+      val stmt_rss = conn_rss.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)
+      val resultSet = stmt_rss.executeQuery(masterTable1Query)
+
+      if (resultSet == null) {
+        throw new RuntimeException("ResultSet is null. Query execution might have failed.")
+      } else if (!resultSet.isBeforeFirst) {
+        throw new RuntimeException("ResultSet is empty. No rows returned for the query.")
+      } else {
+        println("ResultSet fetched successfully.")
+      }
+
+      // Convert ResultSet to DataFrame without using beforeFirst()
+      val masterTable1DF = resultSetToDataFrame(resultSet, spark)
+
+      // Transformations on DataFrame
+      val formattedMasterTable1DF = masterTable1DF
+        .withColumn(
+          "EVENT_TIMESTAMP",
+          date_format(to_timestamp(col("EVENT_TIMESTAMP"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm")
+        )
+        .withColumn(
+          "ALERT_DUE_DATE",
+          date_format(to_timestamp(col("ALERT_DUE_DATE"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm")
+        )
+
+      // Display transformed DataFrame
+      formattedMasterTable1DF.show()
+
+      // Write the DataFrame to a target (HDFS, local path, etc.)
+      formattedMasterTable1DF.write
+        .format("csv") // Example format, can be "parquet" or others
+        .option("header", "true")
+        .save("/tmp/master_table1_output") // Replace with your output path
+
+    } catch {
+      case e: Exception =>
+        println(s"Error occurred: ${e.getMessage}")
+        e.printStackTrace()
+    } finally {
+      if (conn_rss != null && !conn_rss.isClosed) {
+        conn_rss.close()
+        println("Database connection closed.")
+      }
+    }
+  }
+
+  // Helper function to convert ResultSet to DataFrame
+  def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
+    import spark.implicits._
+
+    val metadata = resultSet.getMetaData
+    val columnCount = metadata.getColumnCount
+    val columnNames = (1 to columnCount).map(metadata.getColumnName)
+
+    val rows = mutable.Buffer[Row]()
+
+    while (resultSet.next()) {
+      val row = (1 to columnCount).map { i =>
+        val value = Option(resultSet.getObject(i)) match {
+          case Some(v) if v == "" => null // Handle empty strings as null
+          case Some(v) => v
+          case None => null
+        }
+
+        // Print column name, value, and type for debugging
+        val columnType = metadata.getColumnTypeName(i)
+        println(s"Column: ${metadata.getColumnName(i)} | Type: $columnType | Value: $value")
+
+        value
+      }.toSeq
+
+      rows.append(Row.fromSeq(row))
+    }
+
+    if (rows.isEmpty) {
+      throw new RuntimeException("No data found in ResultSet after processing.")
+    }
+
+    val schema = StructType(columnNames.map { name =>
+      val columnType = metadata.getColumnTypeName(columnNames.indexOf(name) + 1)
+      // Infer column data types based on JDBC types
+      val fieldType = columnType match {
+        case "VARCHAR" | "CHAR" | "TEXT" => StringType
+        case "INTEGER" | "INT" => IntegerType
+        case "BIGINT" => LongType
+        case "DECIMAL" | "NUMERIC" => DecimalType(10, 2)
+        case "DATE" | "TIMESTAMP" => TimestampType
+        case "DOUBLE" | "FLOAT" => DoubleType
+        case "BOOLEAN" => BooleanType
+        case _ => StringType // Default to StringType for unknown types
+      }
+      StructField(name, fieldType, nullable = true)
+    })
+
+    spark.createDataFrame(rows.toSeq.asJava, schema)
+  }
+
+  // Replace this with your database connection logic
+  def getDatabaseConnection(): Connection = {
+    // Implement JDBC connection setup (URL, username, password, driver)
+    ???
+  }
+}
