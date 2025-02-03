@@ -1,84 +1,3 @@
-import java.sql.{Connection, DriverManager, ResultSet}
-import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions._
-
-object RampAutomationExecution {
-  def main(args: Array[String]): Unit = {
-    // Initialize Spark Session
-    val spark = SparkSession.builder()
-      .appName("RampAutomationExecution")
-      .master("local[*]") // Adjust to your cluster mode
-      .getOrCreate()
-
-    val alertCode = "RA0387" // Example alertCode, replace with dynamic input if needed
-
-    // Database connection details
-    val jdbcUrl = "jdbc:your_database_url" // Replace with your database URL
-    val dbUser = "your_username" // Replace with your username
-    val dbPassword = "your_password" // Replace with your password
-
-    var conn_rss: Connection = null
-    try {
-      // Establish connection
-      conn_rss = DriverManager.getConnection(jdbcUrl, dbUser, dbPassword)
-      println("Database connection established.")
-
-      // Query to fetch data
-      val masterTable1Query =
-        s"""
-           |SELECT * 
-           |FROM U_D_DSV_001_RSS_O.RAMP_MASTER_TARGET1_TEST 
-           |WHERE alert_code = '$alertCode' 
-           |ORDER BY 1
-           |""".stripMargin
-
-      println(s"Executing query: $masterTable1Query")
-
-      val stmt_rss = conn_rss.createStatement()
-      val resultSet = stmt_rss.executeQuery(masterTable1Query)
-
-      if (resultSet == null) {
-        throw new RuntimeException("ResultSet is null. Query execution might have failed.")
-      } else if (!resultSet.next()) {
-        throw new RuntimeException("ResultSet is empty. No rows returned for the query.")
-      } else {
-        println("ResultSet fetched successfully.")
-      }
-
-      // Convert ResultSet to DataFrame
-      resultSet.beforeFirst() // Reset cursor position
-      val masterTable1DF = resultSetToDataFrame(resultSet, spark)
-
-      // Transformations on DataFrame
-      val formattedMasterTable1DF = masterTable1DF
-        .withColumn("EVENT_TIMESTAMP", date_format(to_timestamp(col("EVENT_TIMESTAMP"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
-        .withColumn("ALERT_DUE_DATE", date_format(to_timestamp(col("ALERT_DUE_DATE"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
-
-      // Display transformed DataFrame
-      formattedMasterTable1DF.show()
-
-      // Write the DataFrame to a target (HDFS, local path, etc.)
-      formattedMasterTable1DF.write
-        .format("csv") // Example format, can be "parquet" or others
-        .option("header", "true")
-        .save("/tmp/master_table1_output") // Replace with your output path
-
-    } catch {
-      case e: Exception =>
-        println(s"Error occurred: ${e.getMessage}")
-        e.printStackTrace()
-    } finally {
-      if (conn_rss != null && !conn_rss.isClosed) {
-        conn_rss.close()
-        println("Database connection closed.")
-      }
-    }
-  }
-
- 
-
-  
-
 import java.sql.Types._
 import org.apache.spark.sql.types._
 
@@ -102,17 +21,17 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
     val row = (1 to columnCount).map { i =>
       // Depending on the column type, use appropriate get methods
       columnTypes(i - 1) match {
-        case INTEGER     => Option(resultSet.getInt(i)).getOrElse(null)  // Integer
-        case VARCHAR     => Option(resultSet.getString(i)).getOrElse(null) // String
-        case DATE        => Option(resultSet.getDate(i)).getOrElse(null)   // Date
-        case TIMESTAMP   => Option(resultSet.getTimestamp(i)).getOrElse(null) // Timestamp
-        case FLOAT       => Option(resultSet.getFloat(i)).getOrElse(null)  // Float
-        case DOUBLE      => Option(resultSet.getDouble(i)).getOrElse(null) // Double
-        case BIGINT      => Option(resultSet.getLong(i)).getOrElse(null)   // BigInt
-        case BOOLEAN     => Option(resultSet.getBoolean(i)).getOrElse(null) // Boolean
-        case DECIMAL     => Option(resultSet.getBigDecimal(i)).getOrElse(null) // Decimal
-        case LONGVARCHAR => Option(resultSet.getString(i)).getOrElse(null) // Large String (e.g., CLOB)
-        case _           => Option(resultSet.getObject(i)).getOrElse(null) // Fallback to generic Object
+        case INTEGER     => Option(resultSet.getInt(i)).getOrElse(null.asInstanceOf[Any])  // Integer
+        case VARCHAR     => Option(resultSet.getString(i)).getOrElse(null.asInstanceOf[Any]) // String
+        case DATE        => Option(resultSet.getDate(i)).getOrElse(null.asInstanceOf[Any])   // Date
+        case TIMESTAMP   => Option(resultSet.getTimestamp(i)).getOrElse(null.asInstanceOf[Any]) // Timestamp
+        case FLOAT       => Option(resultSet.getFloat(i)).getOrElse(null.asInstanceOf[Any])  // Float
+        case DOUBLE      => Option(resultSet.getDouble(i)).getOrElse(null.asInstanceOf[Any]) // Double
+        case BIGINT      => Option(resultSet.getLong(i)).getOrElse(null.asInstanceOf[Any])   // BigInt
+        case BOOLEAN     => Option(resultSet.getBoolean(i)).getOrElse(null.asInstanceOf[Any]) // Boolean
+        case DECIMAL     => Option(resultSet.getBigDecimal(i)).getOrElse(null.asInstanceOf[Any]) // Decimal
+        case LONGVARCHAR => Option(resultSet.getString(i)).getOrElse(null.asInstanceOf[Any]) // Large String (e.g., CLOB)
+        case _           => Option(resultSet.getObject(i)).getOrElse(null.asInstanceOf[Any]) // Fallback to generic Object
       }
     }.toSeq
     rows.append(Row.fromSeq(row))
@@ -144,4 +63,3 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
   // Return the DataFrame with the correct schema
   spark.createDataFrame(rows.toSeq.asJava, schema)
 }
-
