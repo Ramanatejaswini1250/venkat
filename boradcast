@@ -13,7 +13,29 @@ object RampAutomationExecution {
     val jdbcPassword = "your_password"
     val jdbcDriver = "your.jdbc.driver.ClassName"
 
-    // Step 1: Compute counts dynamically from the master tables
+    // Step 1: Fetch and broadcast the counts for master1 and master2
+    val broadcastCounts = getAndBroadcastMasterCounts(spark, jdbcUrl, jdbcUser, jdbcPassword, jdbcDriver)
+
+    // Sample DataFrame (Replace with your actual DataFrame)
+    val df = spark.read.format("csv").load("your_data_file.csv")
+
+    // Step 2: Use the broadcasted counts in foreachPartition and perform validation
+    df.foreachPartition { partition =>
+      partition.foreach { row =>
+        // Call the validation method using the broadcasted counts
+        val validationResult = performValidation(broadcastCounts.value)
+
+        // Assuming you have some additional logic to process validationResult
+        println(s"Processing row: Validation Result = $validationResult")
+      }
+    }
+
+    // Stop the Spark session
+    spark.stop()
+  }
+
+  // Step 3: Fetch and broadcast master counts from the database
+  def getAndBroadcastMasterCounts(spark: SparkSession, jdbcUrl: String, jdbcUser: String, jdbcPassword: String, jdbcDriver: String) = {
     val masterCounts = Map(
       "RAMP_MASTER_TARGET1" -> {
         val query = """
@@ -51,35 +73,17 @@ object RampAutomationExecution {
       }
     )
 
-    // Step 2: Broadcast the master counts
-    val broadcastCounts = spark.sparkContext.broadcast(masterCounts)
-
-    // Sample DataFrame (Replace with your actual DataFrame)
-    val df = spark.read.format("csv").load("your_data_file.csv")
-
-    // Step 3: Use the broadcasted counts in foreachPartition
-    df.foreachPartition { partition =>
-      val counts = broadcastCounts.value
-
-      partition.foreach { row =>
-        // Extract values from the broadcast map
-        val target1Count = counts.getOrElse("RAMP_MASTER_TARGET1", 0L)
-        val target2Count = counts.getOrElse("RAMP_MASTER_TARGET2", 0L)
-
-        // Dynamically use masterTableValidation for processing
-        val validationResult = masterTableValidation(target1Count, target2Count)
-
-        // Assuming "alertCode" or any other column that may influence validation logic is available
-        println(s"Processing row with dynamic validation: $validationResult")
-      }
-    }
-
-    // Stop the Spark session
-    spark.stop()
+    // Broadcast the master counts
+    spark.sparkContext.broadcast(masterCounts)
   }
 
-  // Step 4: Master Table Validation Logic (Dynamic)
-  def masterTableValidation(target1Count: Long, target2Count: Long): String = {
+  // Step 4: Method to perform validation dynamically using the broadcasted master counts
+  def performValidation(masterCounts: Map[String, Long]): String = {
+    // Extract values from the broadcasted master counts
+    val target1Count = masterCounts.getOrElse("RAMP_MASTER_TARGET1", 0L)
+    val target2Count = masterCounts.getOrElse("RAMP_MASTER_TARGET2", 0L)
+
+    // Validation Logic
     if (target1Count > 0 && target2Count > 0) {
       "Validation Passed"
     } else {
