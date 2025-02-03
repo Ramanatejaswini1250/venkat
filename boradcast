@@ -85,13 +85,26 @@ object RampAutomationExecution {
     throw new RuntimeException(s"Invalid column count: $columnCount")
   }
 
+  // Detect column names and types
   val columnNames = (1 to columnCount).map(metadata.getColumnName)
+  val columnTypes = (1 to columnCount).map(metadata.getColumnType)
+
   val rows = mutable.Buffer[Row]()
 
   while (resultSet.next()) {
     val row = (1 to columnCount).map { i =>
-      val value = Option(resultSet.getObject(i)).getOrElse(null)
-      value
+      // Depending on the column type, use appropriate get methods
+      columnTypes(i - 1) match {
+        case java.sql.Types.INTEGER     => Option(resultSet.getInt(i)).getOrElse(null)  // Integer
+        case java.sql.Types.VARCHAR    => Option(resultSet.getString(i)).getOrElse(null) // String
+        case java.sql.Types.DATE       => Option(resultSet.getDate(i)).getOrElse(null)   // Date
+        case java.sql.Types.TIMESTAMP  => Option(resultSet.getTimestamp(i)).getOrElse(null) // Timestamp
+        case java.sql.Types.FLOAT      => Option(resultSet.getFloat(i)).getOrElse(null)  // Float
+        case java.sql.Types.DOUBLE     => Option(resultSet.getDouble(i)).getOrElse(null) // Double
+        case java.sql.Types.BIGINT     => Option(resultSet.getLong(i)).getOrElse(null)   // BigInt
+        case java.sql.Types.BOOLEAN    => Option(resultSet.getBoolean(i)).getOrElse(null) // Boolean
+        case _ => Option(resultSet.getObject(i)).getOrElse(null) // Fallback to generic Object
+      }
     }.toSeq
     rows.append(Row.fromSeq(row))
   }
@@ -100,6 +113,23 @@ object RampAutomationExecution {
     throw new RuntimeException("No data found in ResultSet.")
   }
 
-  val schema = StructType(columnNames.map(name => StructField(name, StringType, nullable = true)))
+  // Create the schema based on the column types
+  val schema = StructType(columnNames.zip(columnTypes).map {
+    case (name, sqlType) =>
+      val sparkType = sqlType match {
+        case java.sql.Types.INTEGER    => IntegerType
+        case java.sql.Types.VARCHAR   => StringType
+        case java.sql.Types.DATE      => DateType
+        case java.sql.Types.TIMESTAMP => TimestampType
+        case java.sql.Types.FLOAT     => FloatType
+        case java.sql.Types.DOUBLE    => DoubleType
+        case java.sql.Types.BIGINT    => LongType
+        case java.sql.Types.BOOLEAN   => BooleanType
+        case _ => StringType // Default fallback
+      }
+      StructField(name, sparkType, nullable = true)
+  })
+
+  // Return the DataFrame with the correct schema
   spark.createDataFrame(rows.toSeq.asJava, schema)
 }
