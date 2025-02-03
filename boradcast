@@ -19,7 +19,6 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
 
   while (resultSet.next()) {
     val row = (1 to columnCount).map { i =>
-      // Depending on the column type, use appropriate get methods
       columnTypes(i - 1) match {
         case INTEGER     => Option(resultSet.getInt(i)).getOrElse(null.asInstanceOf[Any])  // Integer
         case VARCHAR     => Option(resultSet.getString(i)).getOrElse(null.asInstanceOf[Any]) // String
@@ -28,7 +27,21 @@ def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame =
         case FLOAT       => Option(resultSet.getFloat(i)).getOrElse(null.asInstanceOf[Any])  // Float
         case DOUBLE      => Option(resultSet.getDouble(i)).getOrElse(null.asInstanceOf[Any]) // Double
         case BIGINT      => Option(resultSet.getLong(i)).getOrElse(null.asInstanceOf[Any])   // BigInt
-        case BOOLEAN     => Option(resultSet.getBoolean(i)).getOrElse(null.asInstanceOf[Any]) // Boolean
+        case BOOLEAN     =>
+          // Handle BOOLEAN in both cases: JDBC may return 0/1 or "true"/"false"
+          Option(resultSet.getObject(i)) match {
+            case Some(value) if value.isInstanceOf[Int] => value.asInstanceOf[Int] match {
+              case 1 => true
+              case 0 => false
+              case _ => null
+            }
+            case Some(value) if value.isInstanceOf[String] => value.asInstanceOf[String].toLowerCase match {
+              case "true" => true
+              case "false" => false
+              case _ => null
+            }
+            case _ => null
+          }
         case DECIMAL     => Option(resultSet.getBigDecimal(i)).getOrElse(null.asInstanceOf[Any]) // Decimal
         case LONGVARCHAR => Option(resultSet.getString(i)).getOrElse(null.asInstanceOf[Any]) // Large String (e.g., CLOB)
         case _           => Option(resultSet.getObject(i)).getOrElse(null.asInstanceOf[Any]) // Fallback to generic Object
