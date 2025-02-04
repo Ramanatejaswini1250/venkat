@@ -1,45 +1,76 @@
-import java.sql.{Connection, DriverManager, ResultSet, Statement}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.functions._
+import java.sql.ResultSet
 
-// JDBC Setup (Replace with actual values)
-val url = "jdbc:your_database_url"
-val driver = "your_database_driver"
-val username = "your_database_username"
-val password = "your_database_password"
+// Initialize Spark session
+val spark = SparkSession.builder().appName("ResultSetToDataFrame").master("local[*]").getOrCreate()
 
-// Establish JDBC connection
-val connection = DriverManager.getConnection(url, username, password)
-val stmt_rss = connection.createStatement()
+// Define schema (ensure this matches the columns you're extracting)
+val schema_master1 = StructType(Seq(
+  StructField("alert_id", StringType, nullable = true),
+  StructField("alert_code", StringType, nullable = true),
+  StructField("business_line", StringType, nullable = true),
+  StructField("event_timestamp", StringType, nullable = true)
+))
 
-// SQL query to execute
-val alertCode = "SomeAlertCode"  // Replace with actual alert code value
-val master1 = s"""SELECT * FROM your_table_name WHERE alertcode='$alertCode' ORDER BY 1"""
+// Get metadata to check column names
+val metaData = masterTable1.getMetaData
+val columnCount = metaData.getColumnCount
+println(s"Column count: $columnCount")
 
-// Execute the query
-val resultSet: ResultSet = stmt_rss.executeQuery(master1)
-
-// Check if there are records to show
-if (resultSet.next()) {
-  // Print column names (optional)
-  val metaData = resultSet.getMetaData
-  val columnCount = metaData.getColumnCount
-  for (i <- 1 to columnCount) {
-    print(s"${metaData.getColumnName(i)}\t")
-  }
-  println()
-
-  // Print the rows
-  do {
-    // Iterate through the result set and print each row
-    for (i <- 1 to columnCount) {
-      print(s"${resultSet.getString(i)}\t")
-    }
-    println()  // New line after each row
-  } while (resultSet.next())  // Continue while there are more rows
-} else {
-  println("No records found!")
+// Print column names for debugging
+for (i <- 1 to columnCount) {
+  println(s"Column $i: ${metaData.getColumnName(i)}")
 }
 
-// Close the resources
-resultSet.close()
-stmt_rss.close()
-connection.close()
+// Initialize an empty list to hold rows
+var rows_master1 = List[Row]()
+
+// Check if there are any records in the ResultSet
+if (masterTable1.isBeforeFirst()) {
+  masterTable1.beforeFirst()  // Reset to the first row
+
+  // Iterate over all rows in the ResultSet
+  while (masterTable1.next()) {
+    // Dynamically extract values for each column in the row
+    val rowValues = (1 to columnCount).map { i =>
+      val columnName = metaData.getColumnName(i).toLowerCase
+      val columnValue = masterTable1.getString(i) // Extract column value as String
+      println(s"Extracted $columnName: $columnValue") // Debugging output to ensure correct extraction
+      columnValue
+    }
+
+    // Debug: print the entire row of values
+    println("Row Data: " + rowValues.mkString(", "))
+
+    // Create a Row and add to the list
+    rows_master1 = rows_master1 :+ Row.fromSeq(rowValues)
+  }
+
+  // Convert the List of Rows to a DataFrame
+  if (rows_master1.nonEmpty) {
+    val masterTable1DF = spark.createDataFrame(
+      spark.sparkContext.parallelize(rows_master1),
+      schema_master1  // Ensure this matches the columns in the ResultSet
+    )
+
+    // Show the DataFrame
+    masterTable1DF.show()
+
+    // Optional: Apply transformations like formatting the event_timestamp
+    val formattedDF = masterTable1DF.withColumn(
+      "formatted_event_timestamp",
+      date_format(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss")
+    )
+
+    // Show the transformed DataFrame
+    formattedDF.show()
+
+  } else {
+    println("No rows to display in DataFrame!")
+  }
+
+} else {
+  println("No records found in the ResultSet!")
+}
