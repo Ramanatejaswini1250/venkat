@@ -1,43 +1,64 @@
-def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
-  import spark.implicits._
+import java.sql.{Connection, DriverManager, ResultSet, Statement}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.{StructType, StructField, StringType}
 
-  val metadata = resultSet.getMetaData
-  val columnCount = metadata.getColumnCount
-  val columnNames = (1 to columnCount).map(metadata.getColumnName)
+// Initialize Spark session
+val spark = SparkSession.builder()
+  .appName("RampAutomationExecution")
+  .master("local[*]")  // Change master based on your cluster setup
+  .getOrCreate()
 
-  val rows = mutable.Buffer[Row]()
+val masterTable1Query =
+  s"""
+  |SELECT 
+  |  ALERT_ID AS alert_id, 
+  |  ALERT_CODE AS alert_code, 
+  |  BUSINESS_LINE AS business_line, 
+  |  EVENT_TIMESTAMP AS event_timestamp 
+  |FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST
+  |WHERE alert_code = '$alertCode' 
+  |ORDER BY 1
+  """.stripMargin
 
-  // Ensure that resultSet has data before processing
-  var hasData = false
-  while (resultSet.next()) {  // Moves the cursor to the first row and processes each row
-    hasData = true
-    val row = (1 to columnCount).map { i =>
-      Option(resultSet.getObject(i)).orNull  // Null-safe retrieval of values
-    }.toSeq
-    rows.append(Row.fromSeq(row))
-  }
+// Execute query
+val masterTable1: ResultSet = stmt_rss.executeQuery(masterTable1Query)
 
-  // If no data was found, return an empty DataFrame instead of throwing an error
-  if (!hasData) {
-    println("Warning: No data found in ResultSet. Returning an empty DataFrame.")
-    return spark.createDataFrame(spark.emptyDataFrame.rdd, StructType(Seq.empty))
-  }
+// Print available columns to debug case sensitivity issues
+val metaData = masterTable1.getMetaData
+val columnCount = metaData.getColumnCount
+println("Available Columns in ResultSet:")
+(1 to columnCount).foreach(i => println(metaData.getColumnName(i)))
 
-  // Define schema dynamically based on column types
-  val schema = StructType(columnNames.map { name =>
-    val columnType = metadata.getColumnTypeName(columnNames.indexOf(name) + 1)
-    val fieldType = columnType match {
-      case "VARCHAR" | "CHAR" | "TEXT" => StringType
-      case "INTEGER" | "INT" => IntegerType
-      case "BIGINT" => LongType
-      case "DECIMAL" | "NUMERIC" => DecimalType(10, 2)
-      case "DATE" | "TIMESTAMP" => TimestampType
-      case "DOUBLE" | "FLOAT" => DoubleType
-      case "BOOLEAN" => BooleanType
-      case _ => StringType // Default to StringType for unknown types
-    }
-    StructField(name, fieldType, nullable = true)
-  })
+// Define schema with lowercase column names (safe for case sensitivity)
+val schema_master1 = StructType(Seq(
+  StructField("alert_id", StringType, nullable = true),
+  StructField("alert_code", StringType, nullable = true),
+  StructField("business_line", StringType, nullable = true),
+  StructField("event_timestamp", StringType, nullable = true)
+))
 
-  spark.createDataFrame(rows.toSeq.asJava, schema)
+// Ensure there is data before processing
+if (masterTable1.isBeforeFirst()) {  
+  val rows_master1 = Iterator
+    .continually(masterTable1)  // Use ResultSet directly
+    .takeWhile(_.next())        // Move to next row and stop when exhausted
+    .map { rs =>
+      Row(
+        rs.getString("alert_id"),      // Using lowercase column names
+        rs.getString("alert_code"),
+        rs.getString("business_line"),
+        rs.getString("event_timestamp")
+      )
+    }.toList
+
+  // Convert list of rows into a DataFrame
+  val masterTable1DF = spark.createDataFrame(
+    spark.sparkContext.parallelize(rows_master1),
+    schema_master1
+  )
+
+  // Show DataFrame to verify data
+  masterTable1DF.show()
+} else {
+  println("No data found in masterTable1Query!")
 }
