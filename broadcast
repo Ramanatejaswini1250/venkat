@@ -1,105 +1,73 @@
-import org.apache.spark.sql.functions.{col, lower, date_format}
+import org.apache.spark.sql.types._
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.types.{StructType, StructField, StringType}
-import java.sql.{Connection, DriverManager, ResultSet, Statement}
+import java.sql.ResultSet
 
-// Initialize Spark session
-val spark = SparkSession.builder()
-  .appName("RampAutomationExecution")
-  .master("local[*]")  // Change master based on your cluster setup
-  .getOrCreate()
+// Define schema dynamically based on detected column names and types
+val schema_master1 = StructType(Seq(
+  StructField("alert_id", StringType, nullable = true),
+  StructField("alert_code", StringType, nullable = true),
+  StructField("business_line", StringType, nullable = true),
+  StructField("event_timestamp", StringType, nullable = true),
+  StructField("alert_description", StringType, nullable = true),
+  StructField("alert_count", IntegerType, nullable = true) // Assuming this is the INT column
+))
 
-// JDBC setup (replace with actual credentials and connection string)
-val url = "jdbc:your_database_url"
-val driver = "your_database_driver"
-val username = "your_database_username"
-val password = "your_database_password"
-
-val connection = DriverManager.getConnection(url, username, password)
-val stmt_rss = connection.createStatement()
-
-// SQL query (replace with your actual query)
-val masterTable1Query =
-  s"""
-  |SELECT 
-  |  ALERT_ID AS alert_id, 
-  |  ALERT_CODE AS alert_code, 
-  |  BUSINESS_LINE AS business_line, 
-  |  EVENT_TIMESTAMP AS event_timestamp 
-  |FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST
-  |WHERE alert_code = '$alertCode' 
-  |ORDER BY 1
-  """.stripMargin
-
-// Execute query
-val masterTable1: ResultSet = stmt_rss.executeQuery(masterTable1Query)
-
-// Get column names dynamically
+// Get metadata to check column names and types
 val metaData = masterTable1.getMetaData
 val columnCount = metaData.getColumnCount
-val availableColumns = (1 to columnCount).map(i => metaData.getColumnName(i).toLowerCase).toSet
+println(s"Column count: $columnCount")
 
-println("Available Columns in ResultSet:")
-availableColumns.foreach(println)  // Debugging: Prints detected column names
+// Print column names and types for debugging
+for (i <- 1 to columnCount) {
+  println(s"Column $i: ${metaData.getColumnName(i)} | Type: ${metaData.getColumnTypeName(i)}")
+}
 
+// Initialize an empty list to hold rows
+var rows_master1 = List[Row]()
 
+// Check if there are any records in the ResultSet
 if (masterTable1.isBeforeFirst()) {
-  println("ResultSet contains data")
-  masterTable1.beforeFirst()  // Reset the cursor to before the first row
+  masterTable1.beforeFirst()  // Reset to the first row
 
-  // Collect rows from ResultSet and create Rows
-  val rows_master1 = Iterator
-    .continually(masterTable1.next())  // Call next() to move to the next row
-    .takeWhile(identity)  // Continue until next() returns false (end of ResultSet)
-    .map { rs =>
-      // Extract columns from the ResultSet based on column names (ensure column names match)
-      val alertId = rs.getString("alert_id")
-      val alertCode = rs.getString("alert_code")
-      val businessLine = rs.getString("business_line")
-      val eventTimestamp = rs.getString("event_timestamp")
-      
-      // Print the row for debugging purposes
-      println(s"Row - alert_id: $alertId, alert_code: $alertCode, business_line: $businessLine, event_timestamp: $eventTimestamp")
-      
-      // Create a Row object for Spark DataFrame
-      Row(alertId, alertCode, businessLine, eventTimestamp)
+  // Iterate over all rows in the ResultSet
+  while (masterTable1.next()) {
+    // Dynamically extract values for each column in the row
+    val rowValues = (1 to columnCount).map { i =>
+      val columnName = metaData.getColumnName(i).toLowerCase
+      val columnType = metaData.getColumnTypeName(i).toLowerCase  // Fetch column type
+
+      // Handle data types dynamically
+      val columnValue: Any = columnType match {
+        case "varchar" | "char" | "text"  => masterTable1.getString(i) // String types
+        case "int" | "integer"            => masterTable1.getInt(i)    // Integer types
+        case "bigint"                     => masterTable1.getLong(i)   // BigInt types
+        case _                             => masterTable1.getString(i) // Default to String
+      }
+
+      println(s"Extracted $columnName: $columnValue") // Debugging output to ensure correct extraction
+      columnValue
     }
-    .toList  // Collect all rows into a list
 
-  // Check if we have any rows
-  if (rows_master1.nonEmpty) {
-    // Convert the list of Rows into a DataFrame
-    val masterTable1DF = spark.createDataFrame(
-      spark.sparkContext.parallelize(rows_master1),
-      schema_master1  // Assuming you've defined schema_master1 earlier
-    )
+    // Debug: print the entire row of values
+    println("Row Data: " + rowValues.mkString(", "))
 
-masterTable1DF.show()
-
-
-  // Convert list of rows into a DataFrame
-  var masterTable1DF = spark.createDataFrame(
-    spark.sparkContext.parallelize(rows_master1),
-    schema_master1
-  )
-
-  // Automatically normalize all column names to lowercase
-  masterTable1DF = masterTable1DF.toDF(masterTable1DF.columns.map(_.toLowerCase): _*)
-
-  // Format event_timestamp column dynamically (if it exists)
-  if (masterTable1DF.columns.contains("event_timestamp")) {
-    masterTable1DF = masterTable1DF.withColumn(
-      "formatted_event_timestamp",
-      date_format(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss") // Adjust format as needed
-    )
+    // Create a Row and add to the list
+    rows_master1 = rows_master1 :+ Row.fromSeq(rowValues)
   }
 
-  // Show final DataFrame
-  masterTable1DF.show()
+  // Check if rows_master1 has been updated
+  if (rows_master1.nonEmpty) {
+    // Convert the List of Rows to a DataFrame
+    val masterTable1DF = spark.createDataFrame(
+      spark.sparkContext.parallelize(rows_master1),
+      schema_master1  // Ensure this matches the columns in the ResultSet
+    )
 
-  // Get count of rows in the DataFrame
-  val rowCount = masterTable1DF.count()
-  println(s"Row count: $rowCount")
+    // Show the DataFrame
+    masterTable1DF.show()
+  } else {
+    println("No rows to display in DataFrame!")
+  }
 } else {
-  println("No data found in masterTable1Query!")
+  println("No records found in the ResultSet!")
 }
