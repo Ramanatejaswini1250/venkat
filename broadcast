@@ -1,6 +1,7 @@
-import java.sql.{Connection, DriverManager, ResultSet, Statement}
+import org.apache.spark.sql.functions.{col, lower, date_format}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.types.{StructType, StructField, StringType}
+import java.sql.{Connection, DriverManager, ResultSet, Statement}
 
 // Initialize Spark session
 val spark = SparkSession.builder()
@@ -23,13 +24,15 @@ val masterTable1Query =
 // Execute query
 val masterTable1: ResultSet = stmt_rss.executeQuery(masterTable1Query)
 
-// Print available columns to debug case sensitivity issues
+// Get column names dynamically
 val metaData = masterTable1.getMetaData
 val columnCount = metaData.getColumnCount
-println("Available Columns in ResultSet:")
-(1 to columnCount).foreach(i => println(metaData.getColumnName(i)))
+val availableColumns = (1 to columnCount).map(i => metaData.getColumnName(i).toLowerCase).toSet
 
-// Define schema with lowercase column names (safe for case sensitivity)
+println("Available Columns in ResultSet:")
+availableColumns.foreach(println)  // Debugging: Prints detected column names
+
+// Define schema dynamically based on detected columns
 val schema_master1 = StructType(Seq(
   StructField("alert_id", StringType, nullable = true),
   StructField("alert_code", StringType, nullable = true),
@@ -38,26 +41,37 @@ val schema_master1 = StructType(Seq(
 ))
 
 // Ensure there is data before processing
-if (masterTable1.isBeforeFirst()) {  
+if (masterTable1.isBeforeFirst()) {
   val rows_master1 = Iterator
-    .continually(masterTable1)  // Use ResultSet directly
-    .takeWhile(_.next())        // Move to next row and stop when exhausted
+    .continually(masterTable1)
+    .takeWhile(_.next())
     .map { rs =>
       Row(
-        rs.getString("alert_id"),      // Using lowercase column names
-        rs.getString("alert_code"),
-        rs.getString("business_line"),
-        rs.getString("event_timestamp")
+        rs.getString(availableColumns.find(_.contains("alert_id")).getOrElse("ALERT_ID")),
+        rs.getString(availableColumns.find(_.contains("alert_code")).getOrElse("ALERT_CODE")),
+        rs.getString(availableColumns.find(_.contains("business_line")).getOrElse("BUSINESS_LINE")),
+        rs.getString(availableColumns.find(_.contains("event_timestamp")).getOrElse("EVENT_TIMESTAMP"))
       )
     }.toList
 
   // Convert list of rows into a DataFrame
-  val masterTable1DF = spark.createDataFrame(
+  var masterTable1DF = spark.createDataFrame(
     spark.sparkContext.parallelize(rows_master1),
     schema_master1
   )
 
-  // Show DataFrame to verify data
+  // Automatically normalize all column names to lowercase
+  masterTable1DF = masterTable1DF.toDF(masterTable1DF.columns.map(_.toLowerCase): _*)
+
+  // Format event_timestamp column dynamically (if it exists)
+  if (masterTable1DF.columns.contains("event_timestamp")) {
+    masterTable1DF = masterTable1DF.withColumn(
+      "formatted_event_timestamp",
+      date_format(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss") // Adjust format as needed
+    )
+  }
+
+  // Show final DataFrame
   masterTable1DF.show()
 } else {
   println("No data found in masterTable1Query!")
