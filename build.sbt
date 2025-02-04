@@ -1,76 +1,43 @@
-import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.types._
-import org.apache.spark.sql.functions._
-import java.sql.ResultSet
-
-// Initialize Spark session
-val spark = SparkSession.builder().appName("ResultSetToDataFrame").master("local[*]").getOrCreate()
-
-// Define schema (ensure this matches the columns you're extracting)
 val schema_master1 = StructType(Seq(
   StructField("alert_id", StringType, nullable = true),
   StructField("alert_code", StringType, nullable = true),
   StructField("business_line", StringType, nullable = true),
-  StructField("event_timestamp", StringType, nullable = true)
+  StructField("event_timestamp", StringType, nullable = true),
+  StructField("priority", IntegerType, nullable = true),
+  StructField("alert_due_date", StringType, nullable = true)
 ))
 
-// Get metadata to check column names
-val metaData = masterTable1.getMetaData
-val columnCount = metaData.getColumnCount
-println(s"Column count: $columnCount")
+val rows_master1 = ArrayBuffer[Row]()
 
-// Print column names for debugging
-for (i <- 1 to columnCount) {
-  println(s"Column $i: ${metaData.getColumnName(i)}")
-}
+// Check and process the first row (or iterate through all rows if multiple)
+if (masterTable1.next()) {
+  do {
+    val alertId = Option(masterTable1.getString("alert_id")).getOrElse(null)
+    val alertCode = Option(masterTable1.getString("alert_code")).getOrElse(null)
+    val businessLine = Option(masterTable1.getString("business_line")).getOrElse(null)
+    val eventTimestamp = Option(masterTable1.getString("event_timestamp")).getOrElse(null)
+    val alertDueDate = Option(masterTable1.getString("alert_due_date")).getOrElse(null)
 
-// Initialize an empty list to hold rows
-var rows_master1 = List[Row]()
-
-// Check if there are any records in the ResultSet
-if (masterTable1.isBeforeFirst()) {
-  masterTable1.beforeFirst()  // Reset to the first row
-
-  // Iterate over all rows in the ResultSet
-  while (masterTable1.next()) {
-    // Dynamically extract values for each column in the row
-    val rowValues = (1 to columnCount).map { i =>
-      val columnName = metaData.getColumnName(i).toLowerCase
-      val columnValue = masterTable1.getString(i) // Extract column value as String
-      println(s"Extracted $columnName: $columnValue") // Debugging output to ensure correct extraction
-      columnValue
+    val priority = Option(masterTable1.getObject("priority")) match {
+      case Some(value: Int) => value
+      case _ => null
     }
 
-    // Debug: print the entire row of values
-    println("Row Data: " + rowValues.mkString(", "))
+    // Add the row to the buffer
+    rows_master1 += Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
 
-    // Create a Row and add to the list
-    rows_master1 = rows_master1 :+ Row.fromSeq(rowValues)
-  }
-
-  // Convert the List of Rows to a DataFrame
-  if (rows_master1.nonEmpty) {
-    val masterTable1DF = spark.createDataFrame(
-      spark.sparkContext.parallelize(rows_master1),
-      schema_master1  // Ensure this matches the columns in the ResultSet
-    )
-
-    // Show the DataFrame
-    masterTable1DF.show()
-
-    // Optional: Apply transformations like formatting the event_timestamp
-    val formattedDF = masterTable1DF.withColumn(
-      "formatted_event_timestamp",
-      date_format(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss")
-    )
-
-    // Show the transformed DataFrame
-    formattedDF.show()
-
-  } else {
-    println("No rows to display in DataFrame!")
-  }
-
-} else {
-  println("No records found in the ResultSet!")
+  } while (masterTable1.next())  // Continue iterating over all rows
 }
+
+// Debugging: Ensure rows are correct before creating DataFrame
+rows_master1.foreach(row => println(s"Row Data: $row"))
+
+// Handle empty rows scenario and create DataFrame
+val masterTable1DF = if (rows_master1.isEmpty) {
+  println("Warning: No data found. Creating an empty DataFrame.")
+  spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema_master1)  // Empty DataFrame
+} else {
+  spark.createDataFrame(rows_master1.toSeq, schema_master1)  // Convert to immutable Seq
+}
+
+masterTable1DF.show()
