@@ -1,73 +1,51 @@
-import org.apache.spark.sql.types._
-import org.apache.spark.sql.{Row, SparkSession}
-import java.sql.ResultSet
-
-// Define schema dynamically based on detected column names and types
-val schema_master1 = StructType(Seq(
-  StructField("alert_id", StringType, nullable = true),
-  StructField("alert_code", StringType, nullable = true),
-  StructField("business_line", StringType, nullable = true),
-  StructField("event_timestamp", StringType, nullable = true),
-  StructField("alert_description", StringType, nullable = true),
-  StructField("alert_count", IntegerType, nullable = true) // Assuming this is the INT column
-))
-
-// Get metadata to check column names and types
-val metaData = masterTable1.getMetaData
-val columnCount = metaData.getColumnCount
-println(s"Column count: $columnCount")
-
-// Print column names and types for debugging
-for (i <- 1 to columnCount) {
-  println(s"Column $i: ${metaData.getColumnName(i)} | Type: ${metaData.getColumnTypeName(i)}")
-}
-
 // Initialize an empty list to hold rows
 var rows_master1 = List[Row]()
 
-// Check if there are any records in the ResultSet
+// Iterate through the ResultSet and collect rows
 if (masterTable1.isBeforeFirst()) {
   masterTable1.beforeFirst()  // Reset to the first row
-
-  // Iterate over all rows in the ResultSet
   while (masterTable1.next()) {
-    // Dynamically extract values for each column in the row
+    // Extract values safely based on column names
     val rowValues = (1 to columnCount).map { i =>
       val columnName = metaData.getColumnName(i).toLowerCase
-      val columnType = metaData.getColumnTypeName(i).toLowerCase  // Fetch column type
-
-      // Handle data types dynamically
-      val columnValue: Any = columnType match {
-        case "varchar" | "char" | "text"  => masterTable1.getString(i) // String types
-        case "int" | "integer"            => masterTable1.getInt(i)    // Integer types
-        case "bigint"                     => masterTable1.getLong(i)   // BigInt types
-        case _                             => masterTable1.getString(i) // Default to String
+      columnName match {
+        case "alert_id" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
+        case "alert_code" => columnName -> try {
+          Option(masterTable1.getString(i)).flatMap(s => Option(s.toInt)).getOrElse(null)
+        } catch {
+          case _: Exception => null
+        }
+        case "business_line" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
+        case "event_timestamp" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
+        case _ => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
       }
+    }.toMap
 
-      println(s"Extracted $columnName: $columnValue") // Debugging output to ensure correct extraction
-      columnValue
-    }
-
-    // Debug: print the entire row of values
+    // Print the row for debugging purposes
     println("Row Data: " + rowValues.mkString(", "))
 
     // Create a Row and add to the list
-    rows_master1 = rows_master1 :+ Row.fromSeq(rowValues)
+    rows_master1 = rows_master1 :+ Row.fromSeq(rowValues.values.toSeq)
   }
 
-  // Check if rows_master1 has been updated
-  if (rows_master1.nonEmpty) {
-    // Convert the List of Rows to a DataFrame
-    val masterTable1DF = spark.createDataFrame(
-      spark.sparkContext.parallelize(rows_master1),
-      schema_master1  // Ensure this matches the columns in the ResultSet
-    )
+  // Convert List of Rows to DataFrame
+  val masterTable1DF = spark.createDataFrame(
+    spark.sparkContext.parallelize(rows_master1),
+    schema_master1  // Ensure this matches the columns in the ResultSet
+  )
 
-    // Show the DataFrame
-    masterTable1DF.show()
-  } else {
-    println("No rows to display in DataFrame!")
-  }
+  // Show the DataFrame
+  masterTable1DF.show()
+
+  // Optional: You can apply transformations, such as formatting the timestamp
+  val formattedDF = masterTable1DF.withColumn(
+    "formatted_event_timestamp",
+    date_format(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss")
+  )
+
+  // Show the transformed DataFrame
+  formattedDF.show()
+
 } else {
   println("No records found in the ResultSet!")
 }
