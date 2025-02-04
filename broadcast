@@ -1,60 +1,52 @@
-// Initialize an empty list to hold rows
-var rows_master1 = List[Row]()
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types._
+import scala.collection.mutable.ArrayBuffer
 
-// Iterate through the ResultSet and collect rows
-if (masterTable1.isBeforeFirst()) {
-  masterTable1.beforeFirst()  // Reset to the first row
-  while (masterTable1.next()) {
-    // Extract values safely based on column names
-    val rowValues = (1 to columnCount).map { i =>
-      val columnName = metaData.getColumnName(i).toLowerCase
-      columnName match {
-        case "alert_id" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
-        case "alert_code" => columnName -> try {
-          Option(masterTable1.getString(i)).flatMap(s => Option(s.toInt)).getOrElse(null)
-        } catch {
-          case _: Exception => null
-        }
-case "alert_code" => columnName -> try {
-  Option(masterTable1.getInt(i)) match {
-    case Some(value) if value != 0 => Some(value)  // Assuming 0 means null in this case
-    case _ => null  // null or invalid value handling
-  }
-} catch {
-  case _: Exception => null  // Catch any exceptions during fetching or conversion
-}
+// Define schema with correct data types
+val schema_master1 = StructType(Seq(
+  StructField("alert_id", StringType, nullable = true),
+  StructField("alert_code", StringType, nullable = true),
+  StructField("business_line", StringType, nullable = true),
+  StructField("event_timestamp", StringType, nullable = true),
+  StructField("priority", IntegerType, nullable = true),  // Int must be handled safely
+  StructField("alert_due_date", StringType, nullable = true)
+))
 
-        case "business_line" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
-        case "event_timestamp" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
-        case _ => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
-      }
-    }.toMap
+// Collect rows
+val rows_master1 = ArrayBuffer[Row]()
 
-    // Print the row for debugging purposes
-    println("Row Data: " + rowValues.mkString(", "))
+while (masterTable1.next()) {
+  val alertId = Option(masterTable1.getString("alert_id")).orNull
+  val alertCode = Option(masterTable1.getString("alert_code")).orNull
+  val businessLine = Option(masterTable1.getString("business_line")).orNull
+  val eventTimestamp = Option(masterTable1.getString("event_timestamp")).orNull
+  val alertDueDate = Option(masterTable1.getString("alert_due_date")).orNull
 
-    // Create a Row and add to the list
-    rows_master1 = rows_master1 :+ Row.fromSeq(rowValues.values.toSeq)
+  // Handle priority safely
+  val priority = try {
+    if (masterTable1.getObject("priority") != null) {
+      Some(masterTable1.getInt("priority")) // Avoid NullPointerException
+    } else None
+  } catch {
+    case _: Exception => None
   }
 
-  // Convert List of Rows to DataFrame
-  val masterTable1DF = spark.createDataFrame(
-    spark.sparkContext.parallelize(rows_master1),
-    schema_master1  // Ensure this matches the columns in the ResultSet
-  )
-
-  // Show the DataFrame
-  masterTable1DF.show()
-
-  // Optional: You can apply transformations, such as formatting the timestamp
-  val formattedDF = masterTable1DF.withColumn(
-    "formatted_event_timestamp",
-    date_format(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss")
-  )
-
-  // Show the transformed DataFrame
-  formattedDF.show()
-
-} else {
-  println("No records found in the ResultSet!")
+  // Create row
+  val row = Row(alertId, alertCode, businessLine, eventTimestamp, priority.getOrElse(null), alertDueDate)
+  
+  rows_master1 += row
 }
+
+// Debugging: Print rows before creating DataFrame
+println(s"Schema: $schema_master1")
+println(s"Row Count: ${rows_master1.size}")
+rows_master1.foreach(row => println(s"Row Data: $row"))
+
+// Convert to DataFrame
+val masterTable1DF = spark.createDataFrame(
+  spark.sparkContext.parallelize(rows_master1.toSeq),  // Convert ArrayBuffer to Seq
+  schema_master1
+)
+
+// Show the DataFrame
+masterTable1DF.show()
