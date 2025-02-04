@@ -1,125 +1,42 @@
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.sql.types._
-import java.sql.{Connection, ResultSet}
-import scala.collection.mutable
-import scala.jdk.CollectionConverters._
-
 def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
   import spark.implicits._
 
   val metadata = resultSet.getMetaData
   val columnCount = metadata.getColumnCount
-
-  if (columnCount <= 0) {
-    throw new RuntimeException(s"Invalid column count: $columnCount")
-  }
-
-  // Detect column names and types
   val columnNames = (1 to columnCount).map(metadata.getColumnName)
-  val columnTypes = (1 to columnCount).map(metadata.getColumnType)
 
   val rows = mutable.Buffer[Row]()
 
-  // Check if the ResultSet is empty by attempting to move to the first row
-  if (!resultSet.isBeforeFirst) {
-    println("No data found in ResultSet.")
-    // Return an empty DataFrame with the schema if no data
-    val emptySchema = StructType(columnNames.zip(columnTypes).map {
-      case (name, sqlType) =>
-        val sparkType = sqlType match {
-          case INTEGER      => IntegerType
-          case VARCHAR      => StringType
-          case DATE         => DateType
-          case TIMESTAMP    => TimestampType
-          case FLOAT        => FloatType
-          case DOUBLE       => DoubleType
-          case BIGINT       => LongType
-          case BOOLEAN      => BooleanType
-          case DECIMAL      => DecimalType(10, 2) // Adjust scale and precision as needed
-          case LONGVARCHAR  => StringType // For CLOB or large strings
-          case _            => StringType // Default fallback to StringType
-        }
-        StructField(name, sparkType, nullable = true)
-    })
-    // Return an empty DataFrame with the same schema as the ResultSet
-    return spark.createDataFrame(spark.sparkContext.emptyRDD[Row], emptySchema)
-  }
-
-  // Convert the ResultSet to rows
-  while (resultSet.next()) {
+  // Ensure that resultSet has data before processing
+  var hasData = false
+  while (resultSet.next()) {  // Moves the cursor to the first row and processes each row
+    hasData = true
     val row = (1 to columnCount).map { i =>
-      columnTypes(i - 1) match {
-        case INTEGER     => Option(resultSet.getInt(i)).getOrElse(null.asInstanceOf[Any])  // Integer
-        case VARCHAR     => Option(resultSet.getString(i)).getOrElse(null.asInstanceOf[Any]) // String
-        case DATE        => Option(resultSet.getDate(i)).getOrElse(null.asInstanceOf[Any])   // Date
-        case TIMESTAMP   => Option(resultSet.getTimestamp(i)).getOrElse(null.asInstanceOf[Any]) // Timestamp
-        case FLOAT       => Option(resultSet.getFloat(i)).getOrElse(null.asInstanceOf[Any])  // Float
-        case DOUBLE      => Option(resultSet.getDouble(i)).getOrElse(null.asInstanceOf[Any]) // Double
-        case BIGINT      => Option(resultSet.getLong(i)).getOrElse(null.asInstanceOf[Any])   // BigInt
-        case BOOLEAN     =>
-          // Handle BOOLEAN in both cases: JDBC may return 0/1 or "true"/"false"
-          Option(resultSet.getObject(i)) match {
-            case Some(value) if value.isInstanceOf[Int] => value.asInstanceOf[Int] match {
-              case 1 => true
-              case 0 => false
-              case _ => null
-            }
-            case Some(value) if value.isInstanceOf[String] => value.asInstanceOf[String].toLowerCase match {
-              case "true" => true
-              case "false" => false
-              case _ => null
-            }
-            case _ => null
-          }
-        case DECIMAL     => Option(resultSet.getBigDecimal(i)).getOrElse(null.asInstanceOf[Any]) // Decimal
-        case LONGVARCHAR => Option(resultSet.getString(i)).getOrElse(null.asInstanceOf[Any]) // Large String (e.g., CLOB)
-        case _           => Option(resultSet.getObject(i)).getOrElse(null.asInstanceOf[Any]) // Fallback to generic Object
-      }
+      Option(resultSet.getObject(i)).orNull  // Null-safe retrieval of values
     }.toSeq
     rows.append(Row.fromSeq(row))
   }
 
-  if (rows.isEmpty) {
-    println("No rows found in ResultSet after processing.")
-    // Return an empty DataFrame with the schema if no rows are found
-    val emptySchema = StructType(columnNames.zip(columnTypes).map {
-      case (name, sqlType) =>
-        val sparkType = sqlType match {
-          case INTEGER      => IntegerType
-          case VARCHAR      => StringType
-          case DATE         => DateType
-          case TIMESTAMP    => TimestampType
-          case FLOAT        => FloatType
-          case DOUBLE       => DoubleType
-          case BIGINT       => LongType
-          case BOOLEAN      => BooleanType
-          case DECIMAL      => DecimalType(10, 2) // Adjust scale and precision as needed
-          case LONGVARCHAR  => StringType // For CLOB or large strings
-          case _            => StringType // Default fallback to StringType
-        }
-        StructField(name, sparkType, nullable = true)
-    })
-    // Return an empty DataFrame with the same schema as the ResultSet
-    return spark.createDataFrame(spark.sparkContext.emptyRDD[Row], emptySchema)
+  // If no data was found, return an empty DataFrame instead of throwing an error
+  if (!hasData) {
+    println("Warning: No data found in ResultSet. Returning an empty DataFrame.")
+    return spark.createDataFrame(spark.emptyDataFrame.rdd, StructType(Seq.empty))
   }
 
-  // Create the DataFrame from the rows collected
-  val schema = StructType(columnNames.zip(columnTypes).map {
-    case (name, sqlType) =>
-      val sparkType = sqlType match {
-        case INTEGER      => IntegerType
-        case VARCHAR      => StringType
-        case DATE         => DateType
-        case TIMESTAMP    => TimestampType
-        case FLOAT        => FloatType
-        case DOUBLE       => DoubleType
-        case BIGINT       => LongType
-        case BOOLEAN      => BooleanType
-        case DECIMAL      => DecimalType(10, 2) // Adjust scale and precision as needed
-        case LONGVARCHAR  => StringType // For CLOB or large strings
-        case _            => StringType // Default fallback to StringType
-      }
-      StructField(name, sparkType, nullable = true)
+  // Define schema dynamically based on column types
+  val schema = StructType(columnNames.map { name =>
+    val columnType = metadata.getColumnTypeName(columnNames.indexOf(name) + 1)
+    val fieldType = columnType match {
+      case "VARCHAR" | "CHAR" | "TEXT" => StringType
+      case "INTEGER" | "INT" => IntegerType
+      case "BIGINT" => LongType
+      case "DECIMAL" | "NUMERIC" => DecimalType(10, 2)
+      case "DATE" | "TIMESTAMP" => TimestampType
+      case "DOUBLE" | "FLOAT" => DoubleType
+      case "BOOLEAN" => BooleanType
+      case _ => StringType // Default to StringType for unknown types
+    }
+    StructField(name, fieldType, nullable = true)
   })
 
   spark.createDataFrame(rows.toSeq.asJava, schema)
