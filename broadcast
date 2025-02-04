@@ -20,21 +20,24 @@ val schema_master1 = StructType(Seq(
 // Collect rows
 val rows_master1 = new ArrayBuffer[Row]()
 
-while (masterTable1.next()) {
-  val alertId = Option(masterTable1.getString("alert_id")).orNull
-  val alertCode = Option(masterTable1.getString("alert_code")).orNull
-  val businessLine = Option(masterTable1.getString("business_line")).orNull
-  val eventTimestamp = Option(masterTable1.getString("event_timestamp")).orNull
-  val alertDueDate = Option(masterTable1.getString("alert_due_date")).orNull
+if (masterTable1.next()) {  // Check for the first row
+  do {
+    val alertId = Option(masterTable1.getString("alert_id")).getOrElse(null)
+    val alertCode = Option(masterTable1.getString("alert_code")).getOrElse(null)
+    val businessLine = Option(masterTable1.getString("business_line")).getOrElse(null)
+    val eventTimestamp = Option(masterTable1.getString("event_timestamp")).getOrElse(null)
+    val alertDueDate = Option(masterTable1.getString("alert_due_date")).getOrElse(null)
 
-  // Handle priority safely, ensuring it's properly converted
-  val priority: java.lang.Integer = try {
-    if (masterTable1.getObject("priority") != null) {
-      masterTable1.getInt("priority")  // Directly fetch integer
-    } else null
-  } catch {
-    case _: Exception => null  // Ensure `null` instead of Scala `None`
-  }
+    val priority = Option(masterTable1.getObject("priority")) match {
+      case Some(value: Int) => value
+      case _ => null
+    }
+
+    // Add the row to the buffer
+    rows_master1 += Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
+  } while (masterTable1.next())  // Keep iterating over all rows
+}
+
 
   // Create Row object
   val row = Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
