@@ -9,6 +9,16 @@ val spark = SparkSession.builder()
   .master("local[*]")  // Change master based on your cluster setup
   .getOrCreate()
 
+// JDBC setup (replace with actual credentials and connection string)
+val url = "jdbc:your_database_url"
+val driver = "your_database_driver"
+val username = "your_database_username"
+val password = "your_database_password"
+
+val connection = DriverManager.getConnection(url, username, password)
+val stmt_rss = connection.createStatement()
+
+// SQL query (replace with your actual query)
 val masterTable1Query =
   s"""
   |SELECT 
@@ -32,7 +42,7 @@ val availableColumns = (1 to columnCount).map(i => metaData.getColumnName(i).toL
 println("Available Columns in ResultSet:")
 availableColumns.foreach(println)  // Debugging: Prints detected column names
 
-// Define schema dynamically based on detected columns
+// Define schema dynamically based on detected columns (adjust as needed)
 val schema_master1 = StructType(Seq(
   StructField("alert_id", StringType, nullable = true),
   StructField("alert_code", StringType, nullable = true),
@@ -47,10 +57,10 @@ if (masterTable1.isBeforeFirst()) {
     .takeWhile(_.next())
     .map { rs =>
       Row(
-        rs.getString(availableColumns.find(_.contains("alert_id")).getOrElse("ALERT_ID")),
-        rs.getString(availableColumns.find(_.contains("alert_code")).getOrElse("ALERT_CODE")),
-        rs.getString(availableColumns.find(_.contains("business_line")).getOrElse("BUSINESS_LINE")),
-        rs.getString(availableColumns.find(_.contains("event_timestamp")).getOrElse("EVENT_TIMESTAMP"))
+        rs.getString(availableColumns.find(_.contains("alert_id")).getOrElse("alert_id")),
+        rs.getString(availableColumns.find(_.contains("alert_code")).getOrElse("alert_code")),
+        rs.getString(availableColumns.find(_.contains("business_line")).getOrElse("business_line")),
+        rs.getString(availableColumns.find(_.contains("event_timestamp")).getOrElse("event_timestamp"))
       )
     }.toList
 
@@ -73,6 +83,10 @@ if (masterTable1.isBeforeFirst()) {
 
   // Show final DataFrame
   masterTable1DF.show()
+
+  // Get count of rows in the DataFrame
+  val rowCount = masterTable1DF.count()
+  println(s"Row count: $rowCount")
 } else {
   println("No data found in masterTable1Query!")
 }
