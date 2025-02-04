@@ -37,7 +37,10 @@ val masterTable1DF = if (rows_master1.isEmpty) {
   println("Warning: No data found. Creating an empty DataFrame.")
   spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema_master1)  // Empty DataFrame
 } else {
-  spark.createDataFrame(rows_master1.toSeq, schema_master1)  // Convert to immutable Seq
+  // Convert ArrayBuffer to RDD and then use createDataFrame
+  val rowsRDD = spark.sparkContext.parallelize(rows_master1)
+  spark.createDataFrame(rowsRDD, schema_master1)
 }
+
 
 masterTable1DF.show()
