@@ -1,38 +1,33 @@
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.SparkSession
-import java.util.Timer
-import java.util.TimerTask
+// Assuming you're using Scala and Spark
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.Row
 
-object HDFSFileCleaner {
-  def main(args: Array[String]): Unit = {
-    val spark = SparkSession.builder()
-      .appName("HDFS File Cleaner")
-      .getOrCreate()
+// Example schema
+val schema = StructType(Seq(
+  StructField("ALERT_ID", StringType, true),
+  StructField("PRIORITY", StringType, true),
+  StructField("SEQUENCENUMBER", StringType, true),
+  StructField("MESSAGE", StringType, true)
+))
 
-    val conf = new Configuration()
-    val fs = FileSystem.get(conf)
-    val path = new Path("/tmp/your-hdfs-dir/")
+// Debug SQL query result
+val resultSet = stmt.executeQuery("YOUR SQL QUERY")
+val rows = scala.collection.mutable.ArrayBuffer[Row]()
 
-    // Timer to schedule deletion every 2 hours
-    val timer = new Timer()
-
-    val task = new TimerTask() {
-      override def run(): Unit = {
-        // Delete the files in the HDFS directory
-        val isDeleted = fs.delete(path, true)
-        if (isDeleted) {
-          println(s"Successfully deleted files at ${System.currentTimeMillis()}")
-        } else {
-          println(s"Failed to delete files at ${System.currentTimeMillis()}")
-        }
-      }
-    }
-
-    // Schedule task every 2 hours (7200000 ms)
-    timer.schedule(task, 0, 7200000)
-
-    // Keep the Spark job running to allow the timer to keep running
-    spark.streams.awaitAnyTermination()
-  }
+while (resultSet.next()) {
+  val alertId = resultSet.getString("ALERT_ID")
+  val priority = resultSet.getString("PRIORITY")
+  val sequenceNumber = resultSet.getString("SEQUENCENUMBER")
+  val message = resultSet.getString("MESSAGE")
+  rows.append(Row(alertId, priority, sequenceNumber, message))
 }
+
+// Debug print rows
+rows.foreach(println)
+
+// Create DataFrame
+val rdd = spark.sparkContext.parallelize(rows)
+val df = spark.createDataFrame(rdd, schema)
+
+// Write to HDFS
+df.write.mode("overwrite").csv("hdfs://path/to/output")
