@@ -1,46 +1,47 @@
-val schema_master1 = StructType(Seq(
-  StructField("alert_id", StringType, nullable = true),
-  StructField("alert_code", StringType, nullable = true),
-  StructField("business_line", StringType, nullable = true),
-  StructField("event_timestamp", StringType, nullable = true),
-  StructField("priority", IntegerType, nullable = true),
-  StructField("alert_due_date", StringType, nullable = true)
+import scala.collection.mutable.ArrayBuffer
+import org.apache.spark.sql.Row
+
+// Create an empty ArrayBuffer to hold each row's data
+val rowmasters = ArrayBuffer[ArrayBuffer[Any]]()
+
+// Assume stmt is your JDBC Statement object and you execute your query
+val resultSet = stmt.executeQuery("YOUR SQL QUERY")
+
+while (resultSet.next()) {
+  // Extract each column value from the ResultSet.
+  // Adjust the column names and types as needed.
+  val alertId = resultSet.getString("ALERT_ID")
+  val alertCode = resultSet.getString("ALERT_CODE")
+  val alertDesc = resultSet.getString("ALERT_DESC")
+  val alertTimestamp = resultSet.getString("ALERT_TIMESTAMP")
+  val priority = resultSet.getInt("PRIORITY")  // If this column is an int in the DB
+  val alertDueDate = resultSet.getString("ALERT_DUE_DATE")
+  
+  // Append the row's data as an ArrayBuffer
+  rowmasters += ArrayBuffer(alertId, alertCode, alertDesc, alertTimestamp, priority, alertDueDate)
+}
+import org.apache.spark.sql.Row
+
+// Convert each element of rowmasters (an ArrayBuffer of values) into a Row.
+val rows = rowmasters.map {
+  case ArrayBuffer(alertId, alertCode, alertDesc, alertTimestamp, priority, alertDueDate) =>
+    Row(alertId, alertCode, alertDesc, alertTimestamp, priority.toString.toInt, alertDueDate)
+}
+
+// Then parallelize it to create an RDD (assuming you're in a Spark context)
+val rdd = spark.sparkContext.parallelize(rows)
+
+// Define your schema appropriately
+import org.apache.spark.sql.types._
+val schema = StructType(Seq(
+  StructField("ALERT_ID", StringType, true),
+  StructField("ALERT_CODE", StringType, true),
+  StructField("ALERT_DESC", StringType, true),
+  StructField("ALERT_TIMESTAMP", StringType, true),
+  StructField("PRIORITY", IntegerType, true),
+  StructField("ALERT_DUE_DATE", StringType, true)
 ))
 
-val rows_master1 = ArrayBuffer[Row]()
-
-// Check and process the first row (or iterate through all rows if multiple)
-if (masterTable1.next()) {
-  do {
-    val alertId = Option(masterTable1.getString("alert_id")).getOrElse(null)
-    val alertCode = Option(masterTable1.getString("alert_code")).getOrElse(null)
-    val businessLine = Option(masterTable1.getString("business_line")).getOrElse(null)
-    val eventTimestamp = Option(masterTable1.getString("event_timestamp")).getOrElse(null)
-    val alertDueDate = Option(masterTable1.getString("alert_due_date")).getOrElse(null)
-
-    val priority = Option(masterTable1.getObject("priority")) match {
-      case Some(value: Int) => value
-      case _ => null
-    }
-
-    // Add the row to the buffer
-    rows_master1 += Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
-
-  } while (masterTable1.next())  // Continue iterating over all rows
-}
-
-// Debugging: Ensure rows are correct before creating DataFrame
-rows_master1.foreach(row => println(s"Row Data: $row"))
-
-// Handle empty rows scenario and create DataFrame
-val masterTable1DF = if (rows_master1.isEmpty) {
-  println("Warning: No data found. Creating an empty DataFrame.")
-  spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema_master1)  // Empty DataFrame
-} else {
-  // Convert ArrayBuffer to RDD and then use createDataFrame
-  val rowsRDD = spark.sparkContext.parallelize(rows_master1)
-  spark.createDataFrame(rowsRDD, schema_master1)
-}
-
-
-masterTable1DF.show()
+// Create the DataFrame
+val df = spark.createDataFrame(rdd, schema)
+df.show()
