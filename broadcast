@@ -42,27 +42,40 @@ val availableColumns = (1 to columnCount).map(i => metaData.getColumnName(i).toL
 println("Available Columns in ResultSet:")
 availableColumns.foreach(println)  // Debugging: Prints detected column names
 
-// Define schema dynamically based on detected columns (adjust as needed)
-val schema_master1 = StructType(Seq(
-  StructField("alert_id", StringType, nullable = true),
-  StructField("alert_code", StringType, nullable = true),
-  StructField("business_line", StringType, nullable = true),
-  StructField("event_timestamp", StringType, nullable = true)
-))
 
-// Ensure there is data before processing
 if (masterTable1.isBeforeFirst()) {
+  println("ResultSet contains data")
+  masterTable1.beforeFirst()  // Reset the cursor to before the first row
+
+  // Collect rows from ResultSet and create Rows
   val rows_master1 = Iterator
-    .continually(masterTable1)
-    .takeWhile(_.next())
+    .continually(masterTable1.next())  // Call next() to move to the next row
+    .takeWhile(identity)  // Continue until next() returns false (end of ResultSet)
     .map { rs =>
-      Row(
-        rs.getString(availableColumns.find(_.contains("alert_id")).getOrElse("alert_id")),
-        rs.getString(availableColumns.find(_.contains("alert_code")).getOrElse("alert_code")),
-        rs.getString(availableColumns.find(_.contains("business_line")).getOrElse("business_line")),
-        rs.getString(availableColumns.find(_.contains("event_timestamp")).getOrElse("event_timestamp"))
-      )
-    }.toList
+      // Extract columns from the ResultSet based on column names (ensure column names match)
+      val alertId = rs.getString("alert_id")
+      val alertCode = rs.getString("alert_code")
+      val businessLine = rs.getString("business_line")
+      val eventTimestamp = rs.getString("event_timestamp")
+      
+      // Print the row for debugging purposes
+      println(s"Row - alert_id: $alertId, alert_code: $alertCode, business_line: $businessLine, event_timestamp: $eventTimestamp")
+      
+      // Create a Row object for Spark DataFrame
+      Row(alertId, alertCode, businessLine, eventTimestamp)
+    }
+    .toList  // Collect all rows into a list
+
+  // Check if we have any rows
+  if (rows_master1.nonEmpty) {
+    // Convert the list of Rows into a DataFrame
+    val masterTable1DF = spark.createDataFrame(
+      spark.sparkContext.parallelize(rows_master1),
+      schema_master1  // Assuming you've defined schema_master1 earlier
+    )
+
+masterTable1DF.show()
+
 
   // Convert list of rows into a DataFrame
   var masterTable1DF = spark.createDataFrame(
