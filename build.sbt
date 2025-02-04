@@ -1,80 +1,45 @@
-import scala.util.Try
-import scala.concurrent.duration._
-import java.lang.Thread.sleep
-import java.sql.{Connection, DriverManager}
+import java.sql.{Connection, DriverManager, ResultSet, Statement}
 
-def waitForDataToLoadAndValidate(
-    alertCode: String,
-    query: String,
-    url: String,
-    username: String,
-    password: String,
-    driver: String,
-    maxRetries: Int = 5,  
-    initialDelay: FiniteDuration = 2.seconds 
-): Boolean = {
-    
-    var attempt = 0
-    var delay = initialDelay.toMillis
-    var connection: Connection = null
+// JDBC Setup (Replace with actual values)
+val url = "jdbc:your_database_url"
+val driver = "your_database_driver"
+val username = "your_database_username"
+val password = "your_database_password"
 
-    try {
-        // Load JDBC driver
-        Class.forName(driver)
+// Establish JDBC connection
+val connection = DriverManager.getConnection(url, username, password)
+val stmt_rss = connection.createStatement()
 
-        // Establish a JDBC connection
-        connection = DriverManager.getConnection(url, username, password)
-        connection.setAutoCommit(false)  // Disable auto-commit to manually commit
+// SQL query to execute
+val alertCode = "SomeAlertCode"  // Replace with actual alert code value
+val master1 = s"""SELECT * FROM your_table_name WHERE alertcode='$alertCode' ORDER BY 1"""
 
-        while (attempt < maxRetries) {
-            println(s"Attempt ${attempt + 1}: Executing query: $query")
+// Execute the query
+val resultSet: ResultSet = stmt_rss.executeQuery(master1)
 
-            val countDF = spark.read
-                .format("jdbc")
-                .option("url", url)
-                .option("dbtable", s"($query) AS subquery")
-                .option("user", username)
-                .option("password", password)
-                .option("driver", driver)
-                .load()
+// Check if there are records to show
+if (resultSet.next()) {
+  // Print column names (optional)
+  val metaData = resultSet.getMetaData
+  val columnCount = metaData.getColumnCount
+  for (i <- 1 to columnCount) {
+    print(s"${metaData.getColumnName(i)}\t")
+  }
+  println()
 
-            val dtCount = Try {
-                val row = countDF.collect().headOption
-                row.map(_.getAs[Long]("count")).getOrElse(0L)
-            }.getOrElse(0L)
-
-            println(s"Data count for alertCode $alertCode: $dtCount")
-
-            if (dtCount > 0) {
-                println(s"✅ Data successfully loaded for alertCode: $alertCode.")
-
-                // Commit the transaction since data is found
-                connection.commit()
-                println(s"✅ Data committed successfully.")
-
-                return true  // Exit early since data is found
-            } else {
-                println(s"⚠ No data found yet for alertCode $alertCode. Retrying in ${delay / 1000} seconds...")
-                sleep(delay) 
-                delay *= 2 
-            }
-            
-            attempt += 1
-        }
-
-        println(s"❌ Data still not available after $maxRetries retries. Failing process.")
-        false
-
-    } catch {
-        case e: Exception =>
-            println(s"❌ Error occurred: ${e.getMessage}")
-            if (connection != null) connection.rollback() // Rollback on failure
-            false
-
-    } finally {
-        if (connection != null) {
-            connection.close()
-            println("✅ Connection closed successfully.")
-        }
+  // Print the rows
+  do {
+    // Iterate through the result set and print each row
+    for (i <- 1 to columnCount) {
+      print(s"${resultSet.getString(i)}\t")
     }
+    println()  // New line after each row
+  } while (resultSet.next())  // Continue while there are more rows
+} else {
+  println("No records found!")
 }
+
+// Close the resources
+resultSet.close()
+stmt_rss.close()
+connection.close()
