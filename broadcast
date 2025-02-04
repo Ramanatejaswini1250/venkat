@@ -15,6 +15,15 @@ if (masterTable1.isBeforeFirst()) {
         } catch {
           case _: Exception => null
         }
+case "alert_code" => columnName -> try {
+  Option(masterTable1.getInt(i)) match {
+    case Some(value) if value != 0 => Some(value)  // Assuming 0 means null in this case
+    case _ => null  // null or invalid value handling
+  }
+} catch {
+  case _: Exception => null  // Catch any exceptions during fetching or conversion
+}
+
         case "business_line" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
         case "event_timestamp" => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
         case _ => columnName -> Option(masterTable1.getString(i)).getOrElse(null)
