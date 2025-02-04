@@ -1,3 +1,22 @@
+import org.apache.spark.sql.Row
+
+val rows = rowmasters.map { row =>
+  // Assuming row is a Seq[Any] with exactly 6 elements.
+  if (row.length != 6) {
+    throw new RuntimeException(s"Expected 6 elements, but got ${row.length}: $row")
+  }
+  Row(
+    row(0).asInstanceOf[String],
+    row(1).asInstanceOf[String],
+    row(2).asInstanceOf[String],
+    row(3).asInstanceOf[String],
+    row(4).asInstanceOf[Int],      // or row(4).toString.toInt if it's a string
+    row(5).asInstanceOf[String]
+  )
+}
+
+
+
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.Row
 
