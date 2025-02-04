@@ -2,18 +2,23 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.types._
 import scala.collection.mutable.ArrayBuffer
 
-// Define schema with correct data types
+// Create Spark session
+val spark = SparkSession.builder()
+  .appName("FixNullPointerException")
+  .getOrCreate()
+
+// Define schema based on screenshot data
 val schema_master1 = StructType(Seq(
   StructField("alert_id", StringType, nullable = true),
   StructField("alert_code", StringType, nullable = true),
   StructField("business_line", StringType, nullable = true),
   StructField("event_timestamp", StringType, nullable = true),
-  StructField("priority", IntegerType, nullable = true),  // Int must be handled safely
+  StructField("priority", IntegerType, nullable = true),  // Ensure safe handling
   StructField("alert_due_date", StringType, nullable = true)
 ))
 
 // Collect rows
-val rows_master1 = ArrayBuffer[Row]()
+val rows_master1 = new ArrayBuffer[Row]()
 
 while (masterTable1.next()) {
   val alertId = Option(masterTable1.getString("alert_id")).orNull
@@ -22,31 +27,32 @@ while (masterTable1.next()) {
   val eventTimestamp = Option(masterTable1.getString("event_timestamp")).orNull
   val alertDueDate = Option(masterTable1.getString("alert_due_date")).orNull
 
-  // Handle priority safely
-  val priority = try {
+  // Handle priority safely, ensuring it's properly converted
+  val priority: java.lang.Integer = try {
     if (masterTable1.getObject("priority") != null) {
-      Some(masterTable1.getInt("priority")) // Avoid NullPointerException
-    } else None
+      masterTable1.getInt("priority")  // Directly fetch integer
+    } else null
   } catch {
-    case _: Exception => None
+    case _: Exception => null  // Ensure `null` instead of Scala `None`
   }
 
-  // Create row
-  val row = Row(alertId, alertCode, businessLine, eventTimestamp, priority.getOrElse(null), alertDueDate)
-  
+  // Create Row object
+  val row = Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
   rows_master1 += row
 }
 
-// Debugging: Print rows before creating DataFrame
+// Debugging: Print collected rows before DataFrame creation
 println(s"Schema: $schema_master1")
 println(s"Row Count: ${rows_master1.size}")
 rows_master1.foreach(row => println(s"Row Data: $row"))
 
-// Convert to DataFrame
-val masterTable1DF = spark.createDataFrame(
-  spark.sparkContext.parallelize(rows_master1.toSeq),  // Convert ArrayBuffer to Seq
-  schema_master1
-)
+// Ensure rows are not empty before creating DataFrame
+val masterTable1DF = if (rows_master1.isEmpty) {
+  println("Warning: No data found. Creating an empty DataFrame.")
+  spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema_master1)
+} else {
+  spark.createDataFrame(rows_master1.toSeq, schema_master1)  // Convert to immutable Seq
+}
 
-// Show the DataFrame
+// Show DataFrame contents
 masterTable1DF.show()
