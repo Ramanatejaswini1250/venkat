@@ -56,29 +56,39 @@ val rdd = spark.sparkContext.parallelize(rows.toList)
 val outputPath = "hdfs://namenode:8020/user/hadoop/output/formatted_data.csv"
 rdd.saveAsTextFile(outputPath)
 
-// Step 4: Validate by comparing row counts
+// Step 4: Validate by comparing data
 
-// Get the count of records from the table and CSV
-val tableRecordCount = rows.size
+// Read the CSV data back into DataFrame
 val csvDf = spark.read.option("header", "false").csv(outputPath)
-val csvRecordCount = csvDf.count()
 
-if (tableRecordCount == csvRecordCount) {
-  println(s"Row count matches: $tableRecordCount records")
+// Step 5: Compare original data with CSV data row by row
+
+// Extracting the transformed data from the ListBuffer
+val originalData = rows.map { row =>
+  val formattedEventTimestamp = row(3).toString
+  val formattedAlertDueDate = row(5).toString
+  (row(0).toString, row(1).toString, row(2).toString, formattedEventTimestamp, row(4).toString, formattedAlertDueDate, row(6).toString)
+}
+
+// Extracting data from CSV
+val csvData = csvDf.collect().map { row =>
+  (row.getString(0), row.getString(1), row.getString(2), row.getString(3), row.getString(4), row.getString(5), row.getString(6))
+}
+
+// Step 6: Compare each row of the original data with the corresponding row from the CSV file
+var dataConsistent = true
+for (i <- originalData.indices) {
+  if (originalData(i) != csvData(i)) {
+    println(s"Mismatch found at row $i: Original: ${originalData(i)} != CSV: ${csvData(i)}")
+    dataConsistent = false
+  }
+}
+
+if (dataConsistent) {
+  println("Data is consistent between table and CSV.")
 } else {
-  println(s"Row count mismatch! Table count: $tableRecordCount, CSV count: $csvRecordCount")
+  println("Data mismatch found between table and CSV.")
 }
-
-// Optionally, compare specific columns (event_timestamp and alert_due_date)
-val originalFormattedTimestamps = rows.map { row =>
-  (row(0), row(1), row(2), row(3), row(4), row(5), row(6)) // Original format
-}
-
-val csvFormattedTimestamps = csvDf.collect().map { row =>
-  (row.getString(0), row.getString(1), row.getString(2), row.getString(3), row.getString(4), row.getString(5), row.getString(6)) // CSV format
-}
-
-// You can compare originalFormattedTimestamps and csvFormattedTimestamps row by row if needed
 
 // Close connection and statement
 stmt_rss.close()
