@@ -31,14 +31,20 @@ def runSqlScript(
     .map(removeInlineComments)
     .filter(_.nonEmpty)
 
-  // Check if DELETE statement exists in the script
-  val deleteStatement = "DELETE FROM master1_test"
-  val containsDelete = validLines.exists(_.toUpperCase.contains(deleteStatement))
+  // Check if DELETE statements exist in the script
+  val deleteStatements = List(
+    "DELETE FROM master1_test",
+    "DELETE FROM master2_test"
+  )
 
-  // Add DELETE statement if it's not present
-  if (!containsDelete) {
-    println(s"[INFO] Adding DELETE statement at the start of the script.")
-    validLines.prepend(deleteStatement) // Add DELETE at the beginning
+  val missingDeletes = deleteStatements.filterNot { deleteStmt =>
+    validLines.exists(_.toUpperCase.contains(deleteStmt))
+  }
+
+  // Add missing DELETE statements at the beginning of the script
+  if (missingDeletes.nonEmpty) {
+    println(s"[INFO] Adding missing DELETE statements: ${missingDeletes.mkString(", ")}")
+    validLines.prependAll(missingDeletes) // Add missing DELETE statements at the beginning
   }
 
   val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
