@@ -19,15 +19,24 @@ while (resultSet.next()) {
     rows += Row.fromSeq(row)
 }
 
-// Step 3: Create Schema Dynamically
+// Step 3: Create Schema Dynamically with IntegerType for the specific column
 val schema = StructType((1 to columnCount).map { i =>
-    StructField(metadata.getColumnName(i), StringType, nullable = true) // Change type if necessary
+    val columnName = metadata.getColumnName(i)
+    val columnType = metadata.getColumnType(i)
+    
+    // Check the SQL column type and map it to appropriate Spark type
+    columnType match {
+        case java.sql.Types.INTEGER => StructField(columnName, IntegerType, nullable = true)
+        case java.sql.Types.DATE | java.sql.Types.TIMESTAMP => StructField(columnName, TimestampType, nullable = true)
+        case java.sql.Types.VARCHAR | java.sql.Types.CHAR => StructField(columnName, StringType, nullable = true)
+        case _ => StructField(columnName, StringType, nullable = true) // Default to StringType
+    }
 })
 
-// Step 4: Convert List[Row] to Spark DataFrame
+// Step 4: Convert List[Row] to Spark DataFrame with the new dynamic schema
 val resultSetDF = spark.createDataFrame(spark.sparkContext.parallelize(rows.toList), schema)
 
-// Step 5: Format Date Columns
+// Step 5: Format Date Columns if necessary
 val formattedMasterTable1DF = resultSetDF
   .withColumn("event_timestamp", date_format(to_timestamp(col("event_timestamp"), "yyyy-MM-dd HH:mm:ss"), "dd-MM-yyyy hh:mm:ss a"))
   .withColumn("alert_due_date", date_format(to_timestamp(col("alert_due_date"), "yyyy-MM-dd HH:mm:ss"), "dd/MM/yyyy HH:mm"))
