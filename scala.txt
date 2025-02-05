@@ -13,7 +13,7 @@ val jdbcUrl = "jdbc:mysql://your-db-host:3306/your-db"
 val dbUser = "your-username"
 val dbPassword = "your-password"
 
-// Define master table schema (Make sure this matches your database table)
+// Define master table schema (Column names and order must match your DB table)
 val masterSchema = StructType(Seq(
   StructField("alert_id", StringType, nullable = true),
   StructField("alert_code", IntegerType, nullable = true),
@@ -57,17 +57,23 @@ df.foreachPartition(partition => {
               if (resultSet == null) {
                 println("Query returned NULL ResultSet")
               } else {
-                // Step 4: Collect data properly, ensuring each value is mapped correctly
+                // Step 4: Collect data properly and ensure correct column mapping
                 while (resultSet.next()) {
-                  val alertId = resultSet.getString("alert_id")
-                  val alertCode = resultSet.getInt("alert_code")
-                  val category = resultSet.getString("category")
-                  val status = resultSet.getInt("status")
-                  val priority = resultSet.getInt("priority")
-                  val timestamp = resultSet.getInt("timestamp") 
+                  val rowData = Array(
+                    resultSet.getString("alert_id"),   // First column
+                    resultSet.getInt("alert_code"),    // Second column
+                    resultSet.getString("category"),   // Third column
+                    resultSet.getInt("status"),        // Fourth column
+                    resultSet.getInt("priority"),      // Fifth column
+                    resultSet.getInt("timestamp")      // Sixth column
+                  )
 
-                  // Map all values correctly into their respective columns
-                  masterList += Row(alertId, alertCode, category, status, priority, timestamp)
+                  // Step 5: Convert Array to Row (Splitting the array correctly)
+                  if (rowData.length == masterSchema.fields.length) {
+                    masterList += Row.fromSeq(rowData) // Assign values as per schema order
+                  } else {
+                    println(s"Skipping row due to column mismatch: ${rowData.mkString(",")}")
+                  }
                 }
                 resultSet.close()
               }
@@ -76,14 +82,14 @@ df.foreachPartition(partition => {
                 println(s"DB Read Error: ${e.getMessage}")
             }
 
-            // Step 5: Check if masterList is empty before broadcasting
+            // Step 6: Check if masterList is empty before broadcasting
             if (masterList.isEmpty) {
               println("No data found in master_table. Skipping this partition.")
             } else {
               println("Broadcasting master data...")
               val broadcastMaster = spark.sparkContext.broadcast(masterList.toArray)
 
-              // Step 6: Recreate the DataFrame inside the partition using schema
+              // Step 7: Recreate the DataFrame inside the partition using schema
               val masterRDD = spark.sparkContext.parallelize(broadcastMaster.value)
 
               // Debugging: Print RDD contents to ensure correct row structure
@@ -91,7 +97,7 @@ df.foreachPartition(partition => {
 
               val masterDF = spark.createDataFrame(masterRDD, masterSchema)
 
-              // Step 7: Ensure masterDF is not empty and has correct data
+              // Step 8: Ensure masterDF is not empty and has correct data
               if (masterDF.isEmpty) {
                 println("masterDF is empty after broadcast.")
               } else {
@@ -113,7 +119,7 @@ df.foreachPartition(partition => {
     case e: Exception =>
       println(s"Database Connection Error: ${e.getMessage}")
   } finally {
-    // Step 8: Close DB connection after processing the partition
+    // Step 9: Close DB connection after processing the partition
     if (stmt != null) stmt.close()
     if (conn != null) conn.close()
   }
