@@ -2,6 +2,7 @@ import java.sql.{Connection, DriverManager, Statement}
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 import scala.util.{Try, Using}
+import scala.collection.mutable.ListBuffer
 
 def runSqlScript(
     scriptPath: String,
@@ -41,10 +42,12 @@ def runSqlScript(
     validLines.exists(_.toUpperCase.contains(deleteStmt))
   }
 
-  // Add missing DELETE statements at the beginning of the script
+  // Add missing DELETE statements at the beginning of the script using ListBuffer
   if (missingDeletes.nonEmpty) {
     println(s"[INFO] Adding missing DELETE statements: ${missingDeletes.mkString(", ")}")
-    validLines.prependAll(missingDeletes) // Add missing DELETE statements at the beginning
+    val validLinesBuffer = ListBuffer(validLines: _*) // Convert to ListBuffer
+    validLinesBuffer.prependAll(missingDeletes) // Add missing DELETE statements at the beginning
+    validLines = validLinesBuffer.toList // Convert back to List
   }
 
   val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
