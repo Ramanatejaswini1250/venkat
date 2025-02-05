@@ -1,33 +1,58 @@
-// Assuming you're using Scala and Spark
+import org.apache.spark.sql.{Row, SparkSession, DataFrame}
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.Row
+import org.apache.spark.broadcast.Broadcast
 
-// Example schema
-val schema = StructType(Seq(
-  StructField("ALERT_ID", StringType, true),
-  StructField("PRIORITY", StringType, true),
-  StructField("SEQUENCENUMBER", StringType, true),
-  StructField("MESSAGE", StringType, true)
-))
+// Create Spark Session
+val spark = SparkSession.builder()
+  .appName("Broadcast Example")
+  .getOrCreate()
 
-// Debug SQL query result
-val resultSet = stmt.executeQuery("YOUR SQL QUERY")
-val rows = scala.collection.mutable.ArrayBuffer[Row]()
+// JDBC Connection Details
+val jdbcUrl = "jdbc:mysql://your-db-host:3306/your-database"
+val dbTable = "master_table"
+val dbUser = "your-username"
+val dbPassword = "your-password"
 
-while (resultSet.next()) {
-  val alertId = resultSet.getString("ALERT_ID")
-  val priority = resultSet.getString("PRIORITY")
-  val sequenceNumber = resultSet.getString("SEQUENCENUMBER")
-  val message = resultSet.getString("MESSAGE")
-  rows.append(Row(alertId, priority, sequenceNumber, message))
-}
+// Step 1: Load master data before foreachPartition
+val masterDF = spark.read.format("jdbc")
+  .option("url", jdbcUrl)
+  .option("dbtable", dbTable)
+  .option("user", dbUser)
+  .option("password", dbPassword)
+  .load()
 
-// Debug print rows
-rows.foreach(println)
+// Step 2: Collect master data and broadcast it
+val masterData: Array[Row] = masterDF.collect() // Collects data from DataFrame as an Array of Rows
+val broadcastMaster: Broadcast[Array[Row]] = spark.sparkContext.broadcast(masterData)
 
-// Create DataFrame
-val rdd = spark.sparkContext.parallelize(rows)
-val df = spark.createDataFrame(rdd, schema)
+// Step 3: Define schema (for reconstructing DataFrame inside foreachPartition)
+val masterSchema: StructType = masterDF.schema 
 
-// Write to HDFS
-df.write.mode("overwrite").csv("hdfs://path/to/output")
+// Example DataFrame to process
+val df = spark.read.parquet("/path/to/your/data.parquet")
+
+// Step 4: Use broadcasted data inside foreachPartition with conditions
+df.foreachPartition(partition => {
+  // Get broadcasted master data inside each partition
+  val masterList = broadcastMaster.value 
+
+  // Convert to RDD and recreate DataFrame
+  val masterRDD = spark.sparkContext.parallelize(masterList)
+  val masterDF = spark.createDataFrame(masterRDD, masterSchema)
+
+  partition.foreach(row => {
+    // Read values from the row
+    val sourceCount = row.getAs[Int]("source_count") // Replace with correct column name
+    val dtCount = row.getAs[Int]("dt_count")         // Replace with correct column name
+    val masterCount = masterDF.count().toInt         // Count rows in masterDF
+
+    // Apply your condition
+    if (sourceCount == dtCount) {
+      if (masterCount == dtCount) {
+        println("Condition met, using masterDF")
+        masterDF.show()  // Perform required operation on masterDF
+      }
+    }
+  })
+})
+
