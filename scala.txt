@@ -13,74 +13,108 @@ val jdbcUrl = "jdbc:mysql://your-db-host:3306/your-db"
 val dbUser = "your-username"
 val dbPassword = "your-password"
 
-// Define master table schema
+// Define master table schema (Make sure this matches your database table)
 val masterSchema = StructType(Seq(
-  StructField("col1", StringType, nullable = true),
-  StructField("col2", IntegerType, nullable = true)
+  StructField("alert_id", StringType, nullable = true),
+  StructField("alert_code", IntegerType, nullable = true),
+  StructField("category", StringType, nullable = true),
+  StructField("status", IntegerType, nullable = true),
+  StructField("priority", IntegerType, nullable = true),
+  StructField("timestamp", IntegerType, nullable = true)
 ))
 
 df.foreachPartition(partition => {
-  // Step 1: Open DB connection per partition
-  val conn: Connection = DriverManager.getConnection(jdbcUrl, dbUser, dbPassword)
-  val stmt: Statement = conn.createStatement()
+  var conn: Connection = null
+  var stmt: Statement = null
 
   try {
+    // Step 1: Establish DB connection per partition
+    conn = DriverManager.getConnection(jdbcUrl, dbUser, dbPassword)
+    stmt = conn.createStatement()
+
     partition.foreach(row => {
-      val sourceCount = row.getAs[Int]("source_count")
-      val dtCount = row.getAs[Int]("dt_count")
+      if (row == null) {
+        println("Skipping null row")
+      } else {
+        val sourceCount = row.getAs[Int]("source_count")
+        val dtCount = row.getAs[Int]("dt_count")
 
-      if (sourceCount == dtCount) {
-        println("Executing SQL script inside partition...")
+        if (sourceCount == dtCount) {
+          println("Executing SQL script inside partition...")
 
-        val isSqlSuccess = runSqlScript() // Execute SQL to load data
+          val isSqlSuccess = runSqlScript() // Execute SQL to load data
 
-        if (isSqlSuccess) {
-          println("SQL execution successful. Fetching master table data...")
+          if (isSqlSuccess) {
+            println("SQL execution successful. Fetching master table data...")
 
-          var masterList = new ListBuffer[Row]()
+            var masterList = new ListBuffer[Row]()
 
-          try {
-            // Step 2: Execute query using stmt
-            val resultSet: ResultSet = stmt.executeQuery("SELECT * FROM master_table")
+            try {
+              // Step 2: Execute query using stmt
+              val resultSet: ResultSet = stmt.executeQuery("SELECT * FROM master_table")
 
-            // Step 3: Collect data from ResultSet into List[Row]
-            while (resultSet.next()) {
-              val row = Row(resultSet.getString("col1"), resultSet.getInt("col2"))
-              masterList += row
+              // Step 3: Check if ResultSet is null (to prevent NPE)
+              if (resultSet == null) {
+                println("Query returned NULL ResultSet")
+              } else {
+                // Step 4: Collect data properly, ensuring each value is mapped correctly
+                while (resultSet.next()) {
+                  val alertId = resultSet.getString("alert_id")
+                  val alertCode = resultSet.getInt("alert_code")
+                  val category = resultSet.getString("category")
+                  val status = resultSet.getInt("status")
+                  val priority = resultSet.getInt("priority")
+                  val timestamp = resultSet.getInt("timestamp") 
+
+                  // Map all values correctly into their respective columns
+                  masterList += Row(alertId, alertCode, category, status, priority, timestamp)
+                }
+                resultSet.close()
+              }
+            } catch {
+              case e: Exception =>
+                println(s"DB Read Error: ${e.getMessage}")
             }
-            resultSet.close()
-          } catch {
-            case e: Exception =>
-              println(s"DB Read Error: ${e.getMessage}")
-          }
 
-          // Step 4: Broadcast the collected data (not DataFrame)
-          if (masterList.nonEmpty) {
-            println("Broadcasting master data...")
-            val broadcastMaster = spark.sparkContext.broadcast(masterList.toArray)
+            // Step 5: Check if masterList is empty before broadcasting
+            if (masterList.isEmpty) {
+              println("No data found in master_table. Skipping this partition.")
+            } else {
+              println("Broadcasting master data...")
+              val broadcastMaster = spark.sparkContext.broadcast(masterList.toArray)
 
-            // Step 5: Recreate the DataFrame inside the partition using schema
-            val masterRDD = spark.sparkContext.parallelize(broadcastMaster.value)
-            val masterDF = spark.createDataFrame(masterRDD, masterSchema)
+              // Step 6: Recreate the DataFrame inside the partition using schema
+              val masterRDD = spark.sparkContext.parallelize(broadcastMaster.value)
 
-            val masterCount = masterDF.count().toInt
+              // Debugging: Print RDD contents to ensure correct row structure
+              masterRDD.collect().foreach(println)  
 
-            if (masterCount == dtCount) {
-              println("Condition met, using masterDF")
-              masterDF.show()
+              val masterDF = spark.createDataFrame(masterRDD, masterSchema)
+
+              // Step 7: Ensure masterDF is not empty and has correct data
+              if (masterDF.isEmpty) {
+                println("masterDF is empty after broadcast.")
+              } else {
+                masterDF.show() // Show data to confirm correct structure
+
+                val masterCount = masterDF.count().toInt
+                if (masterCount == dtCount) {
+                  println("Condition met, using masterDF")
+                }
+              }
             }
           } else {
-            println("No data found in master_table. Skipping this partition.")
+            println("SQL script execution failed. Skipping this partition.")
           }
-        } else {
-          println("SQL script execution failed. Skipping this partition.")
         }
       }
     })
+  } catch {
+    case e: Exception =>
+      println(s"Database Connection Error: ${e.getMessage}")
   } finally {
-    // Step 6: Close DB connection after processing the partition
-    stmt.close()
-    conn.close()
+    // Step 8: Close DB connection after processing the partition
+    if (stmt != null) stmt.close()
+    if (conn != null) conn.close()
   }
 })
-
