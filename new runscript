@@ -1,121 +1,89 @@
+import java.sql.{Connection, DriverManager, Statement}
 import java.nio.file.{Files, Paths}
-import java.sql.{Connection, Statement}
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.SparkFiles
-import scala.io.Source
-import java.time.LocalDateTime
-import scala.util.matching.Regex
+import java.nio.charset.StandardCharsets
+import scala.util.{Try, Using}
 
-object SqlExecutorApp {
+def runSqlScript(
+    scriptPath: String,
+    jdbcUrl: String,
+    jdbcUser: String,
+    jdbcPassword: String,
+    jdbcDriver: String
+): Unit = {
+  
+  println(s"Running SQL script from: $scriptPath")
+  val logBuffer = new StringBuilder
 
-  // Generic function to send email notifications
-  def sendEmailNotification(alertCode: String, message: String, emailAddress: String, business: String): Unit = {
-    // Attempt to extract table name if the message contains a SQL statement
-    val tableName = extractTableNameFromMessage(message).getOrElse("Unknown")
-
-    val detailedMessage =
-      s"""
-         |Alert Code: $alertCode
-         |Message: $message
-         |Table Name: $tableName
-         |""".stripMargin
-
-    // Your email sending logic here
-    println(s"Sending email to $emailAddress: $detailedMessage")
+  // Load SQL script content
+  val scriptContent = Try(new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)).getOrElse {
+    println(s"[ERROR] Failed to read SQL script: $scriptPath")
+    return
   }
 
-  // Extract table name from the error message (if it contains a SQL statement)
-  def extractTableNameFromMessage(message: String): Option[String] = {
-    val sqlPattern: Regex = "(?i)(insert into|update|delete from|from)\\s+([a-zA-Z0-9_]+)".r
-    sqlPattern.findFirstMatchIn(message).map(_.group(2))
+  // Remove block comments
+  val scriptWithoutComments = removeBlockComments(scriptContent)
+  val lines = scriptWithoutComments.split("\n").toSeq
+
+  // Prepare valid SQL lines
+  val validLines = lines
+    .drop(4) // Skip first 4 lines
+    .dropRight(3) // Skip last 3 lines
+    .map(removeInlineComments)
+    .filter(_.nonEmpty)
+
+  // Check if DELETE statement exists in the script
+  val deleteStatement = "DELETE FROM master1_test"
+  val containsDelete = validLines.exists(_.toUpperCase.contains(deleteStatement))
+
+  // Add DELETE statement if it's not present
+  if (!containsDelete) {
+    println(s"[INFO] Adding DELETE statement at the start of the script.")
+    validLines.prepend(deleteStatement) // Add DELETE at the beginning
   }
 
-  // Function to get the SQL folder path based on frequency and location
-  def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
-    s"/path/to/sql/files/$frequency/$bteqLocation"
+  val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+  if (commands.isEmpty) {
+    println("[WARNING] No valid SQL commands found to execute.")
+    return
   }
 
-  // Function to remove inline comments from SQL
-  def removeInlineComments(line: String): String = {
-    line.split("--").head.trim
+  // Register JDBC driver and establish a connection
+  Try(Class.forName(jdbcDriver)).getOrElse {
+    println(s"[ERROR] JDBC Driver not found: $jdbcDriver")
+    return
   }
 
-  def main(args: Array[String]): Unit = {
-    val spark = SparkSession.builder.appName("SqlExecutorApp").getOrCreate()
+  Using.Manager { use =>
+    val connection = use(DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword))
+    connection.setAutoCommit(false) // Disable auto-commit for transactional consistency
+    val statement = use(connection.createStatement())
 
-    // Placeholder for SQL file location (assuming the file is added via --files in Spark-submit)
-    val sqlFilePath = SparkFiles.get("ra0387.sql")
+    commands.foreach { command =>
+      try {
+        println(s"Executing SQL: $command")
+        statement.execute(command)
+      } catch {
+        case ex: Exception =>
+          val tableName = extractTableName(command)
+          val errorMsg = s"[ERROR] Failed to execute SQL on table: $tableName\nMessage: ${ex.getMessage}"
+          println(errorMsg)
+          logBuffer.append(errorMsg).append("\n")
 
-    if (Files.exists(Paths.get(sqlFilePath))) {
-      val lines = Source.fromFile(sqlFilePath).getLines().toList
-
-      // Prepare and filter valid lines:
-      val validLines = lines
-        .drop(4) // Skip the first 4 lines
-        .dropRight(3) // Skip the last 3 lines
-        .map(removeInlineComments) // Remove inline comments
-        .filter(_.nonEmpty) // Remove empty lines
-
-      val cleanedSqlContent = validLines.mkString("\n")
-        .replaceAll("(?s)/\\*.*?\\*/", "") // Remove block comments
-
-      // Split SQL content into individual statements
-      val sqlStatements = cleanedSqlContent.split("(?<=;)").map(_.trim).filterNot(_.isEmpty)
-
-      // Example: Placeholder for source table count logic
-      val sourceTableCount: Long = 10  // Replace with actual source table count logic
-      val dtCount: Int = 10            // Replace with actual dtCount logic
-
-      // Proceed only if the counts match
-      if (sourceTableCount == dtCount) {
-        val conn_rss: Connection = ???  // Your database connection logic
-        val stmt_rss: Statement = conn_rss.createStatement()
-
-        try {
-          // Process each SQL statement
-          sqlStatements.foreach { sql =>
-            try {
-              println(s"Executing SQL: $sql")
-              stmt_rss.execute(sql)
-              conn_rss.commit()
-            } catch {
-              case ex: Exception =>
-                val alertCode = generateAlertCode(sql)
-                val message = s"SQL execution failed. Error: ${ex.getMessage}\nSQL: $sql"
-                sendEmailNotification(alertCode, message, "email@example.com", "BusinessName")
-                println(s"Error executing SQL: $sql\nError: ${ex.getMessage}")
-            }
-          }
-        } catch {
-          case ex: Exception =>
-            val message = s"Failed to execute SQL statements: ${ex.getMessage}"
-            sendEmailNotification("GENERAL_EXECUTION_ALERT", message, "email@example.com", "BusinessName")
-        } finally {
-          if (stmt_rss != null) stmt_rss.close()
-          if (conn_rss != null) conn_rss.close()
-        }
-      } else {
-        val message = s"Source table count $sourceTableCount does not match dtCount $dtCount"
-        sendEmailNotification("COUNT_MISMATCH_ALERT", message, "email@example.com", "BusinessName")
+          // Send email alert
+          sendEmailNotification("SQL_EXECUTION_ERROR", errorMsg, "email@example.com", "BusinessName")
       }
-    } else {
-      val message = "SQL file not found!"
-      sendEmailNotification("FILE_NOT_FOUND_ALERT", message, "email@example.com", "BusinessName")
     }
 
-    spark.stop()
-  }
+    // Commit only if all queries succeed
+    connection.commit()
+    println("✅ SQL script executed successfully.")
 
-  // Function to generate alert codes based on SQL statement type
-  def generateAlertCode(sql: String): String = {
-    if (sql.toLowerCase.startsWith("insert into")) {
-      "INSERT_ALERT"
-    } else if (sql.toLowerCase.startsWith("update")) {
-      "UPDATE_ALERT"
-    } else if (sql.toLowerCase.startsWith("select")) {
-      "SELECT_ALERT"
-    } else {
-      "GENERAL_ALERT"
-    }
+  }.recover {
+    case ex: Exception =>
+      val errorMsg = s"[CRITICAL ERROR] Script execution failed: ${ex.getMessage}"
+      println(errorMsg)
+      logBuffer.append(errorMsg).append("\n")
+      sendEmailNotification("SCRIPT_FAILURE", errorMsg, "email@example.com", "BusinessName")
   }
 }
