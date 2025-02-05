@@ -1,58 +1,87 @@
-import org.apache.spark.sql.{Row, SparkSession, DataFrame}
-import org.apache.spark.sql.types._
-import org.apache.spark.broadcast.Broadcast
-
-// Create Spark Session
-val spark = SparkSession.builder()
-  .appName("Broadcast Example")
-  .getOrCreate()
-
-// JDBC Connection Details
-val jdbcUrl = "jdbc:mysql://your-db-host:3306/your-database"
-val dbTable = "master_table"
-val dbUser = "your-username"
-val dbPassword = "your-password"
-
-// Step 1: Load master data before foreachPartition
-val masterDF = spark.read.format("jdbc")
-  .option("url", jdbcUrl)
-  .option("dbtable", dbTable)
-  .option("user", dbUser)
-  .option("password", dbPassword)
-  .load()
-
-// Step 2: Collect master data and broadcast it
-val masterData: Array[Row] = masterDF.collect() // Collects data from DataFrame as an Array of Rows
-val broadcastMaster: Broadcast[Array[Row]] = spark.sparkContext.broadcast(masterData)
-
-// Step 3: Define schema (for reconstructing DataFrame inside foreachPartition)
-val masterSchema: StructType = masterDF.schema 
-
-// Example DataFrame to process
-val df = spark.read.parquet("/path/to/your/data.parquet")
-
-// Step 4: Use broadcasted data inside foreachPartition with conditions
 df.foreachPartition(partition => {
-  // Get broadcasted master data inside each partition
-  val masterList = broadcastMaster.value 
+  // Step 1: Open DB connection per partition
+  val conn = DriverManager.getConnection(jdbcUrl, dbUser, dbPassword)
+  val stmt = conn.createStatement()
 
-  // Convert to RDD and recreate DataFrame
-  val masterRDD = spark.sparkContext.parallelize(masterList)
-  val masterDF = spark.createDataFrame(masterRDD, masterSchema)
+  try {
+    partition.foreach(row => {
+      val sourceCount = row.getAs[Int]("source_count")
+      val dtCount = row.getAs[Int]("dt_count")
 
-  partition.foreach(row => {
-    // Read values from the row
-    val sourceCount = row.getAs[Int]("source_count") // Replace with correct column name
-    val dtCount = row.getAs[Int]("dt_count")         // Replace with correct column name
-    val masterCount = masterDF.count().toInt         // Count rows in masterDF
+      if (sourceCount == dtCount) {
+        println("Executing SQL script inside partition...")
 
-    // Apply your condition
-    if (sourceCount == dtCount) {
-      if (masterCount == dtCount) {
-        println("Condition met, using masterDF")
-        masterDF.show()  // Perform required operation on masterDF
+        val isSqlSuccess = runSqlScript() // Run SQL inside partition
+
+        if (isSqlSuccess) {
+          println("SQL execution successful. Fetching master table data...")
+
+          var masterDF: DataFrame = null
+          var maxWaitTime = 300
+          var elapsedTime = 0
+          val checkInterval = 10
+
+          while (elapsedTime < maxWaitTime) {
+            try {
+              // Step 2: Execute query using stmt
+              val resultSet = stmt.executeQuery("SELECT * FROM master_table")
+
+              // Step 3: Convert ResultSet to DataFrame
+              val masterList = new ListBuffer[Row]()
+              val schema = StructType(Seq(
+                StructField("col1", StringType, true),
+                StructField("col2", IntegerType, true) // Define schema as per table
+              ))
+
+              while (resultSet.next()) {
+                val row = Row(resultSet.getString(1), resultSet.getInt(2))
+                masterList += row
+              }
+
+              resultSet.close()
+
+              if (masterList.nonEmpty) {
+                println(s"Data found in master_table after $elapsedTime seconds.")
+                masterDF = spark.createDataFrame(spark.sparkContext.parallelize(masterList), schema)
+                break // Exit loop
+              }
+            } catch {
+              case e: Exception =>
+                println(s"DB Read Error: ${e.getMessage}")
+            }
+
+            println(s"No data found. Retrying in $checkInterval seconds...")
+            Thread.sleep(checkInterval * 1000)
+            elapsedTime += checkInterval
+          }
+
+          if (masterDF == null || masterDF.count() == 0) {
+            println("Timeout reached or no data available. Skipping this partition.")
+          } else {
+            // Step 4: Broadcast master data inside partition
+            val masterData: Array[Row] = masterDF.collect()
+            val broadcastMaster = spark.sparkContext.broadcast(masterData)
+
+            // Step 5: Use broadcast data
+            val masterRDD = spark.sparkContext.parallelize(broadcastMaster.value)
+            val masterDF = spark.createDataFrame(masterRDD, masterDF.schema)
+
+            val masterCount = masterDF.count().toInt
+
+            if (masterCount == dtCount) {
+              println("Condition met, using masterDF")
+              masterDF.show()
+            }
+          }
+        } else {
+          println("SQL script execution failed. Skipping this partition.")
+        }
       }
-    }
-  })
+    })
+  } finally {
+    // Step 6: Close DB connection after processing the partition
+    stmt.close()
+    conn.close()
+  }
 })
 
