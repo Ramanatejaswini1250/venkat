@@ -1,45 +1,30 @@
-import org.apache.spark.sql.{SparkSession, Row}
-import org.apache.spark.sql.functions._
-import java.sql.{ResultSet, ResultSetMetaData}
+import org.apache.spark.sql.Row
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
-// Assuming you have an existing Spark session
 val spark = SparkSession.builder().getOrCreate()
 
-// Step 1: Execute the query and get the ResultSet
-val resultSet: ResultSet = stmt_rss.executeQuery("SELECT * FROM master")
+// Assuming `rows` is your ListBuffer of transformed rows
+val rows: scala.collection.mutable.ListBuffer[Row] = // your transformed rows here
 
-// Step 2: Retrieve the metadata of the ResultSet to understand the columns
-val metadata: ResultSetMetaData = resultSet.getMetaData
-val columnCount = metadata.getColumnCount
+// Convert each Row into a CSV line (String)
+val csvRows = rows.map { row =>
+  // Create a CSV line as a String
+  val eventTimestamp = row(3).toString  // 4th column (index 3)
+  val alertDueDate = row(5).toString    // 6th column (index 5)
 
-// Step 3: Read the data from ResultSet row by row
-val rows = new scala.collection.mutable.ListBuffer[Row]()
-while (resultSet.next()) {
-    // Collect data for each row
-    val row = (1 to columnCount).map(i => resultSet.getObject(i)).toArray
-    rows += Row.fromSeq(row)
+  // Apply transformations (e.g., date formatting)
+  val formattedEventTimestamp = LocalDateTime.parse(eventTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+    .format(DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a"))
+  val formattedAlertDueDate = LocalDateTime.parse(alertDueDate, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+    .format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+
+  // Create the CSV string (make sure to join all columns with commas)
+  s"${row(0)},${row(1)},${row(2)},$formattedEventTimestamp,${row(4)},$formattedAlertDueDate,${row(6)}"
 }
 
-// Step 4: Manually Apply Date Formatting and Other Transformations
-val formattedRows = rows.map { row =>
-  val eventTimestamp = row(2).toString  // Assuming event_timestamp is in the 3rd column
-  val alertDueDate = row(3).toString   // Assuming alert_due_date is in the 4th column
+// Convert ListBuffer to RDD
+val rdd = spark.sparkContext.parallelize(csvRows.toList)
 
-  // Manually apply transformations (e.g., date formatting)
-  val formattedEventTimestamp = java.time.LocalDateTime.parse(eventTimestamp, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-    .format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a"))
-  val formattedAlertDueDate = java.time.LocalDateTime.parse(alertDueDate, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-    .format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
-
-  // Rebuild the row with transformed values
-  Row.fromSeq(row.updated(2, formattedEventTimestamp).updated(3, formattedAlertDueDate))  // Replace transformed date columns
-}
-
-// Step 5: Count the Number of Records
-val recordCount = formattedRows.size
-
-// Step 6: Show Transformed Rows (Sample Display)
-formattedRows.take(5).foreach(println)  // Show the first 5 rows to verify the transformation
-
-// Step 7: Print the Total Record Count
-println(s"Total Record Count: $recordCount")
+// Save RDD as a CSV file to HDFS
+rdd.saveAsTextFile("hdfs://<namenode>/path/to/output/folder")
