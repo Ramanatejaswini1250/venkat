@@ -369,6 +369,10 @@ def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
   val cutoffTime = currentDateTime.withHour(16).withMinute(30).withSecond(0).withNano(0) // 16:30 cutoff time for today
 val aert_query=spark.sql("")
 val df=alert_query.toDF("alert_code","dt_count"....
+df.foreachparttion{parttion:Iterator[Row]) => 
+try {
+partition.foreach{ row =>
+{
 
 
         val alertCode = row.getAs[String]("alert_code")
