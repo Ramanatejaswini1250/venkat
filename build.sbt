@@ -1,103 +1,68 @@
-import java.sql.{Connection, DriverManager, Statement}
-import java.nio.file.{Files, Paths}
-import java.nio.charset.StandardCharsets
-import scala.util.{Try, Using}
+import java.sql.{Connection, DriverManager, Statement, ResultSet, ResultSetMetaData}
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import org.apache.spark.sql.{SparkSession, Row}
 import scala.collection.mutable.ListBuffer
 
-def runSqlScript(
-    scriptPath: String,
-    jdbcUrl: String,
-    jdbcUser: String,
-    jdbcPassword: String,
-    jdbcDriver: String
-): Unit = {
+val spark = SparkSession.builder().getOrCreate()
 
-  println(s"Running SQL script from: $scriptPath")
-  val errorLogs = ListBuffer[String]()
+// JDBC connection details
+val url = "jdbc:mysql://<hostname>:<port>/<database>"
+val user = "<username>"
+val password = "<password>"
 
-  // Load SQL script content
-  val scriptContent = Try(new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)).getOrElse {
-    println(s"[ERROR] Failed to read SQL script: $scriptPath")
-    return
-  }
+var conn: Connection = null
+var stmt_rss: Statement = null
+var resultSet: ResultSet = null
 
-  // Remove block comments
-  val scriptWithoutComments = removeBlockComments(scriptContent)
-  val lines = scriptWithoutComments.split("\n").toSeq
+try {
+  // Establish JDBC connection
+  conn = DriverManager.getConnection(url, user, password)
+  stmt_rss = conn.createStatement()
 
-  // Prepare valid SQL lines
-  var validLines = lines
-    .drop(4) // Skip first 4 lines
-    .dropRight(3) // Skip last 3 lines
-    .map(removeInlineComments)
-    .filter(_.nonEmpty)
+  // Execute query
+  resultSet = stmt_rss.executeQuery("SELECT * FROM your_table")
+  
+  // Process the ResultSet and transform data
+  val rows = new ListBuffer[Row]()
+  val metadata: ResultSetMetaData = resultSet.getMetaData
+  val columnCount = metadata.getColumnCount
 
-  // Define required DELETE statements
-  val deleteStatements = List(
-    "DELETE FROM master1_test;",
-    "DELETE FROM master2_test;"
-  )
+  // Iterate through the ResultSet
+  while (resultSet.next()) {
+    // Extract columns (assuming event_timestamp is 4th and alert_due_date is 6th)
+    val eventTimestamp = resultSet.getString(4)  // 4th column
+    val alertDueDate = resultSet.getString(6)    // 6th column
 
-  // Identify missing DELETE statements
-  val missingDeletes = deleteStatements.filterNot { deleteStmt =>
-    validLines.exists(_.toUpperCase.contains(deleteStmt.toUpperCase.replace(";", "")))
-  }
+    // Format the event_timestamp and alert_due_date
+    val formattedEventTimestamp = LocalDateTime.parse(eventTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+      .format(DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a"))
+    val formattedAlertDueDate = LocalDateTime.parse(alertDueDate, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+      .format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
 
-  // Execute DELETE statements first
-  val executionOrder = missingDeletes ++ validLines
-
-  val commands = executionOrder.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
-
-  if (commands.isEmpty) {
-    println("[WARNING] No valid SQL commands found to execute.")
-    return
-  }
-
-  // Register JDBC driver and establish connection
-  Try(Class.forName(jdbcDriver)).getOrElse {
-    println(s"[ERROR] JDBC Driver not found: $jdbcDriver")
-    return
-  }
-
-  Using.Manager { use =>
-    val connection = use(DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword))
-    connection.setAutoCommit(false)
-    val statement = use(connection.createStatement())
-
-    try {
-      for (command <- commands) {
-        try {
-          println(s"Executing SQL: $command")
-          statement.execute(command)
-        } catch {
-          case ex: Exception =>
-            val tableName = extractTableName(command)
-            val errorMsg = s"[ERROR] Failed to execute SQL on table: $tableName\nMessage: ${ex.getMessage}"
-            println(errorMsg)
-            errorLogs.append(errorMsg)
-            throw ex // Stop execution and rollback on first failure
-        }
-      }
-      
-      connection.commit()
-      println("✅ SQL script executed successfully.")
-      
-    } catch {
-      case _: Exception =>
-        println("[CRITICAL] Rolling back all changes due to error.")
-        connection.rollback()
-        errorLogs.append("[CRITICAL] Transaction rolled back due to execution failure.")
+    // Create a new row with formatted data
+    val row = (1 to columnCount).map { i =>
+      if (i == 4) formattedEventTimestamp  // Replace 4th column (event_timestamp)
+      else if (i == 6) formattedAlertDueDate // Replace 6th column (alert_due_date)
+      else resultSet.getObject(i) // Other columns remain unchanged
     }
 
-  }.recover {
-    case ex: Exception =>
-      val errorMsg = s"[CRITICAL ERROR] Script execution failed: ${ex.getMessage}"
-      println(errorMsg)
-      errorLogs.append(errorMsg)
+    // Add the row to ListBuffer
+    rows += Row(row: _*)
   }
 
-  // Send email notification if errors occurred
-  if (errorLogs.nonEmpty) {
-    sendEmailNotification("SQL_EXECUTION_ERROR", errorLogs.mkString("\n"), "email@example.com", "BusinessName")
-  }
+  // Convert ListBuffer to RDD and save as CSV
+  val rdd = spark.sparkContext.parallelize(rows.toList)
+  val outputPath = "hdfs://namenode:8020/user/hadoop/output/formatted_data.csv"
+  rdd.saveAsTextFile(outputPath)
+
+  println("Data has been saved to HDFS successfully.")
+
+} catch {
+  case e: Exception =>
+    println(s"An error occurred: ${e.getMessage}")
+} finally {
+  if (resultSet != null) resultSet.close() // Close resultSet when done
+  if (stmt_rss != null) stmt_rss.close()   // Close statement
+  if (conn != null) conn.close()           // Close connection
 }
