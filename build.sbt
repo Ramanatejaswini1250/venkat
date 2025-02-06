@@ -1,95 +1,103 @@
-import java.sql.{Connection, DriverManager, Statement, ResultSet, ResultSetMetaData}
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
-import org.apache.spark.sql.{SparkSession, Row}
+import java.sql.{Connection, DriverManager, Statement}
+import java.nio.file.{Files, Paths}
+import java.nio.charset.StandardCharsets
+import scala.util.{Try, Using}
 import scala.collection.mutable.ListBuffer
 
-// Initialize Spark session
-val spark = SparkSession.builder().getOrCreate()
+def runSqlScript(
+    scriptPath: String,
+    jdbcUrl: String,
+    jdbcUser: String,
+    jdbcPassword: String,
+    jdbcDriver: String
+): Unit = {
 
-// JDBC connection details (replace with your own)
-val url = "jdbc:mysql://<hostname>:<port>/<database>"
-val user = "<username>"
-val password = "<password>"
+  println(s"Running SQL script from: $scriptPath")
+  val errorLogs = ListBuffer[String]()
 
-// Establish JDBC connection
-val conn = DriverManager.getConnection(url, user, password)
-val stmt_rss = conn.createStatement()
-
-// Step 1: Execute query and get ResultSet
-val resultSet: ResultSet = stmt_rss.executeQuery("SELECT * FROM your_table")
-
-// Step 2: Process ResultSet and transform data
-val rows = new ListBuffer[Row]()
-val metadata: ResultSetMetaData = resultSet.getMetaData
-val columnCount = metadata.getColumnCount
-
-// Iterate through the ResultSet
-while (resultSet.next()) {
-  // Extract columns (assuming event_timestamp is 4th and alert_due_date is 6th)
-  val eventTimestamp = resultSet.getString(4)  // 4th column
-  val alertDueDate = resultSet.getString(6)    // 6th column
-
-  // Format the event_timestamp and alert_due_date
-  val formattedEventTimestamp = LocalDateTime.parse(eventTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-    .format(DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a"))
-  val formattedAlertDueDate = LocalDateTime.parse(alertDueDate, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-    .format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
-
-  // Create a new row with formatted data
-  val row = (1 to columnCount).map { i =>
-    if (i == 4) formattedEventTimestamp // Replace 4th column (event_timestamp)
-    else if (i == 6) formattedAlertDueDate // Replace 6th column (alert_due_date)
-    else resultSet.getObject(i) // Other columns remain unchanged
+  // Load SQL script content
+  val scriptContent = Try(new String(Files.readAllBytes(Paths.get(scriptPath)), StandardCharsets.UTF_8)).getOrElse {
+    println(s"[ERROR] Failed to read SQL script: $scriptPath")
+    return
   }
 
-  // Add the row to ListBuffer
-  rows += Row(row: _*)
-}
+  // Remove block comments
+  val scriptWithoutComments = removeBlockComments(scriptContent)
+  val lines = scriptWithoutComments.split("\n").toSeq
 
-// Step 3: Save transformed data as CSV to HDFS
+  // Prepare valid SQL lines
+  var validLines = lines
+    .drop(4) // Skip first 4 lines
+    .dropRight(3) // Skip last 3 lines
+    .map(removeInlineComments)
+    .filter(_.nonEmpty)
 
-// Convert ListBuffer to RDD
-val rdd = spark.sparkContext.parallelize(rows.toList)
+  // Define required DELETE statements
+  val deleteStatements = List(
+    "DELETE FROM master1_test;",
+    "DELETE FROM master2_test;"
+  )
 
-// Write the RDD as CSV to HDFS (make sure to replace with your HDFS path)
-val outputPath = "hdfs://namenode:8020/user/hadoop/output/formatted_data.csv"
-rdd.saveAsTextFile(outputPath)
+  // Identify missing DELETE statements
+  val missingDeletes = deleteStatements.filterNot { deleteStmt =>
+    validLines.exists(_.toUpperCase.contains(deleteStmt.toUpperCase.replace(";", "")))
+  }
 
-// Step 4: Validate by comparing data
+  // Execute DELETE statements first
+  val executionOrder = missingDeletes ++ validLines
 
-// Read the CSV data back into DataFrame
-val csvDf = spark.read.option("header", "false").csv(outputPath)
+  val commands = executionOrder.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
 
-// Step 5: Compare original data with CSV data row by row
+  if (commands.isEmpty) {
+    println("[WARNING] No valid SQL commands found to execute.")
+    return
+  }
 
-// Extracting the transformed data from the ListBuffer
-val originalData = rows.map { row =>
-  val formattedEventTimestamp = row(3).toString
-  val formattedAlertDueDate = row(5).toString
-  (row(0).toString, row(1).toString, row(2).toString, formattedEventTimestamp, row(4).toString, formattedAlertDueDate, row(6).toString)
-}
+  // Register JDBC driver and establish connection
+  Try(Class.forName(jdbcDriver)).getOrElse {
+    println(s"[ERROR] JDBC Driver not found: $jdbcDriver")
+    return
+  }
 
-// Extracting data from CSV
-val csvData = csvDf.collect().map { row =>
-  (row.getString(0), row.getString(1), row.getString(2), row.getString(3), row.getString(4), row.getString(5), row.getString(6))
-}
+  Using.Manager { use =>
+    val connection = use(DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword))
+    connection.setAutoCommit(false)
+    val statement = use(connection.createStatement())
 
-// Step 6: Compare each row of the original data with the corresponding row from the CSV file
-var dataConsistent = true
-for (i <- originalData.indices) {
-  if (originalData(i) != csvData(i)) {
-    println(s"Mismatch found at row $i: Original: ${originalData(i)} != CSV: ${csvData(i)}")
-    dataConsistent = false
+    try {
+      for (command <- commands) {
+        try {
+          println(s"Executing SQL: $command")
+          statement.execute(command)
+        } catch {
+          case ex: Exception =>
+            val tableName = extractTableName(command)
+            val errorMsg = s"[ERROR] Failed to execute SQL on table: $tableName\nMessage: ${ex.getMessage}"
+            println(errorMsg)
+            errorLogs.append(errorMsg)
+            throw ex // Stop execution and rollback on first failure
+        }
+      }
+      
+      connection.commit()
+      println("✅ SQL script executed successfully.")
+      
+    } catch {
+      case _: Exception =>
+        println("[CRITICAL] Rolling back all changes due to error.")
+        connection.rollback()
+        errorLogs.append("[CRITICAL] Transaction rolled back due to execution failure.")
+    }
+
+  }.recover {
+    case ex: Exception =>
+      val errorMsg = s"[CRITICAL ERROR] Script execution failed: ${ex.getMessage}"
+      println(errorMsg)
+      errorLogs.append(errorMsg)
+  }
+
+  // Send email notification if errors occurred
+  if (errorLogs.nonEmpty) {
+    sendEmailNotification("SQL_EXECUTION_ERROR", errorLogs.mkString("\n"), "email@example.com", "BusinessName")
   }
 }
-
-if (dataConsistent) {
-  println("Data is consistent between table and CSV.")
-} else {
-  println("Data mismatch found between table and CSV.")
-}
-
-// Close connection and statement
-stmt_rss.close()
-conn.close()
