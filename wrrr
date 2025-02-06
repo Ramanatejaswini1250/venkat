@@ -1,62 +1,103 @@
-df.foreachPartition { partition =>
-  // Establish JDBC connection for each partition (same as your original code)
-  var conn: Connection = null
-  var stmt_rss: Statement = null
-  var resultSet: ResultSet = null
-  val rows = new ListBuffer[String]()
+import java.io.{BufferedReader, FileReader}
+import java.sql.{Connection, DriverManager, Statement, ResultSet}
+import org.apache.spark.sql.{SparkSession, Row}
 
-  try {
-    conn = DriverManager.getConnection(url, user, password)
-    stmt_rss = conn.createStatement()
-    resultSet = stmt_rss.executeQuery("SELECT * FROM your_table")
+val spark = SparkSession.builder().getOrCreate()
 
-    // Process the ResultSet
-    while (resultSet.next()) {
-      val eventTimestamp = resultSet.getString(4)
-      val alertDueDate = resultSet.getString(6)
+// JDBC connection details (replace with your own)
+val url = "jdbc:mysql://<hostname>:<port>/<database>"
+val user = "<username>"
+val password = "<password>"
 
-      // Format the event_timestamp and alert_due_date
-      val formattedEventTimestamp = if (eventTimestamp != null) {
-        LocalDateTime.parse(eventTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-          .format(DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a"))
-      } else {
-        "Unknown"
-      }
+// Path to the CSV file
+val csvPath = "/path/to/output/formatted_data.csv"
 
-      val formattedAlertDueDate = if (alertDueDate != null) {
-        LocalDateTime.parse(alertDueDate, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-          .format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
-      } else {
-        "Unknown"
-      }
+// Step 1: Get the count of records in the table
+var conn: Connection = null
+var stmt_rss: Statement = null
+var resultSet: ResultSet = null
 
-      // Create a CSV row and add it to ListBuffer
-      val transformedRow = s"${resultSet.getString(1)},${resultSet.getString(2)},${resultSet.getString(3)},$formattedEventTimestamp,${resultSet.getInt(5)},$formattedAlertDueDate"
-      rows += transformedRow
-    }
+var tableCount = 0
+try {
+  // Establish JDBC connection
+  conn = DriverManager.getConnection(url, user, password)
+  stmt_rss = conn.createStatement()
 
-    // Write rows to CSV file for this partition (using BufferedWriter)
-    val outputPath = "/path/to/output/formatted_data.csv"
-    val writer = new BufferedWriter(new FileWriter(outputPath, true)) // true for append mode
+  // Execute query to get the count of rows in the table
+  resultSet = stmt_rss.executeQuery("SELECT COUNT(*) FROM your_table")
+  
+  if (resultSet.next()) {
+    tableCount = resultSet.getInt(1)  // Get the count from the resultSet
+  }
 
-    try {
-      // Write all rows from the ListBuffer to CSV
-      for (row <- rows) {
-        writer.write(row)
-        writer.newLine()
-      }
-    } finally {
-      writer.close()
-    }
+} catch {
+  case e: Exception =>
+    println(s"An error occurred: ${e.getMessage}")
+} finally {
+  if (resultSet != null) resultSet.close()
+  if (stmt_rss != null) stmt_rss.close()
+  if (conn != null) conn.close()
+}
 
-  } catch {
-    case e: Exception =>
-      println(s"An error occurred: ${e.getMessage}")
-  } finally {
-    if (resultSet != null) resultSet.close()
-    if (stmt_rss != null) stmt_rss.close()
-    if (conn != null) conn.close()
+println(s"Total records in table: $tableCount")
+
+// Step 2: Get the count of records in the CSV
+val csvDf = spark.read.option("header", "true").csv(csvPath)  // Assuming the CSV has headers
+val csvCount = csvDf.count()
+
+println(s"Total records in CSV: $csvCount")
+
+// Step 3: Compare counts
+if (tableCount == csvCount) {
+  println("Record counts match!")
+} else {
+  println(s"Record counts do not match! Table: $tableCount, CSV: $csvCount")
+}
+
+// Step 4: Compare data row by row
+val tableRows = new ListBuffer[String]()
+try {
+  // Establish JDBC connection again
+  conn = DriverManager.getConnection(url, user, password)
+  stmt_rss = conn.createStatement()
+  resultSet = stmt_rss.executeQuery("SELECT * FROM your_table")
+
+  // Process the ResultSet
+  while (resultSet.next()) {
+    // Assuming the same columns as before (alert_id, alert_code, etc.)
+    val row = s"${resultSet.getString(1)},${resultSet.getString(2)},${resultSet.getString(3)},${resultSet.getString(4)},${resultSet.getInt(5)},${resultSet.getString(6)}"
+    tableRows += row
+  }
+} catch {
+  case e: Exception =>
+    println(s"An error occurred while reading table data: ${e.getMessage}")
+} finally {
+  if (resultSet != null) resultSet.close()
+  if (stmt_rss != null) stmt_rss.close()
+  if (conn != null) conn.close()
+}
+
+// Read CSV data into a ListBuffer
+val csvRows = new ListBuffer[String]()
+val br = new BufferedReader(new FileReader(csvPath))
+var line = br.readLine()
+while (line != null) {
+  csvRows += line
+  line = br.readLine()
+}
+br.close()
+
+// Step 5: Compare table and CSV row by row
+var dataConsistent = true
+for (i <- 0 until tableRows.size) {
+  if (tableRows(i) != csvRows(i)) {
+    println(s"Mismatch found at row $i: Table: ${tableRows(i)} != CSV: ${csvRows(i)}")
+    dataConsistent = false
   }
 }
 
-println("Data has been saved to CSV successfully.")
+if (dataConsistent) {
+  println("Data is consistent between the table and the CSV.")
+} else {
+  println("Data mismatch found between the table and the CSV.")
+}
