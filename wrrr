@@ -1,103 +1,52 @@
-import java.io.{BufferedReader, FileReader}
-import java.sql.{Connection, DriverManager, Statement, ResultSet}
-import org.apache.spark.sql.{SparkSession, Row}
+#!/bin/bash
 
-val spark = SparkSession.builder().getOrCreate()
+# Load configuration
+CONFIG_FILE="./config.properties"
 
-// JDBC connection details (replace with your own)
-val url = "jdbc:mysql://<hostname>:<port>/<database>"
-val user = "<username>"
-val password = "<password>"
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "Configuration file $CONFIG_FILE not found. Exiting."
+  exit 1
+fi
 
-// Path to the CSV file
-val csvPath = "/path/to/output/formatted_data.csv"
+source "$CONFIG_FILE"
 
-// Step 1: Get the count of records in the table
-var conn: Connection = null
-var stmt_rss: Statement = null
-var resultSet: ResultSet = null
+# Validate variables
+if [ -z "$SOURCE_PATH" ] || [ -z "$TARGET_PATH_1" ] || [ -z "$TARGET_PATH_2" ]; then
+  echo "Missing configuration variables. Exiting."
+  exit 1
+fi
 
-var tableCount = 0
-try {
-  // Establish JDBC connection
-  conn = DriverManager.getConnection(url, user, password)
-  stmt_rss = conn.createStatement()
+# Check if RBSCC folders exist in the source path
+RBSCC_FOLDERS=($(find "$SOURCE_PATH" -maxdepth 1 -type d -name "RBSCC*"))
 
-  // Execute query to get the count of rows in the table
-  resultSet = stmt_rss.executeQuery("SELECT COUNT(*) FROM your_table")
+if [ ${#RBSCC_FOLDERS[@]} -eq 0 ]; then
+  echo "No RBSCC folders found in the source path. Skipping file transfer."
+  exit 1
+fi
+
+echo "Found RBSCC folders: ${RBSCC_FOLDERS[*]}"
+echo "Proceeding with file transfer..."
+
+TARGET_PATHS=($TARGET_PATH_1 $TARGET_PATH_2)
+
+for TARGET_PATH in "${TARGET_PATHS[@]}"; do
+  echo "Transferring RBSCC folders to $TARGET_PATH..."
+
+  sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r "${RBSCC_FOLDERS[@]}" user@remote-server:"$TARGET_PATH"
   
-  if (resultSet.next()) {
-    tableCount = resultSet.getInt(1)  // Get the count from the resultSet
-  }
+  if [ $? -eq 0 ]; then
+    echo "Files successfully transferred to $TARGET_PATH"
+  else
+    echo "Failed to transfer files to $TARGET_PATH"
+    exit 1
+  fi
+done
 
-} catch {
-  case e: Exception =>
-    println(s"An error occurred: ${e.getMessage}")
-} finally {
-  if (resultSet != null) resultSet.close()
-  if (stmt_rss != null) stmt_rss.close()
-  if (conn != null) conn.close()
-}
-
-println(s"Total records in table: $tableCount")
-
-// Step 2: Get the count of records in the CSV
-val csvDf = spark.read.option("header", "true").csv(csvPath)  // Assuming the CSV has headers
-val csvCount = csvDf.count()
-
-println(s"Total records in CSV: $csvCount")
-
-// Step 3: Compare counts
-if (tableCount == csvCount) {
-  println("Record counts match!")
-} else {
-  println(s"Record counts do not match! Table: $tableCount, CSV: $csvCount")
-}
-
-// Step 4: Compare data row by row
-val tableRows = new ListBuffer[String]()
-try {
-  // Establish JDBC connection again
-  conn = DriverManager.getConnection(url, user, password)
-  stmt_rss = conn.createStatement()
-  resultSet = stmt_rss.executeQuery("SELECT * FROM your_table")
-
-  // Process the ResultSet
-  while (resultSet.next()) {
-    // Assuming the same columns as before (alert_id, alert_code, etc.)
-    val row = s"${resultSet.getString(1)},${resultSet.getString(2)},${resultSet.getString(3)},${resultSet.getString(4)},${resultSet.getInt(5)},${resultSet.getString(6)}"
-    tableRows += row
-  }
-} catch {
-  case e: Exception =>
-    println(s"An error occurred while reading table data: ${e.getMessage}")
-} finally {
-  if (resultSet != null) resultSet.close()
-  if (stmt_rss != null) stmt_rss.close()
-  if (conn != null) conn.close()
-}
-
-// Read CSV data into a ListBuffer
-val csvRows = new ListBuffer[String]()
-val br = new BufferedReader(new FileReader(csvPath))
-var line = br.readLine()
-while (line != null) {
-  csvRows += line
-  line = br.readLine()
-}
-br.close()
-
-// Step 5: Compare table and CSV row by row
-var dataConsistent = true
-for (i <- 0 until tableRows.size) {
-  if (tableRows(i) != csvRows(i)) {
-    println(s"Mismatch found at row $i: Table: ${tableRows(i)} != CSV: ${csvRows(i)}")
-    dataConsistent = false
-  }
-}
-
-if (dataConsistent) {
-  println("Data is consistent between the table and the CSV.")
-} else {
-  println("Data mismatch found between the table and the CSV.")
-}
+# Cleanup transferred RBSCC folders
+rm -rf "${RBSCC_FOLDERS[@]}"
+if [ $? -eq 0 ]; then
+  echo "RBSCC folders cleaned up successfully."
+else
+  echo "Failed to clean up RBSCC folders."
+  exit 1
+fi
