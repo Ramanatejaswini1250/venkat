@@ -38,3 +38,12 @@ try {
     case e: Exception =>
         println(s"Error occurred: ${e.getMessage}")
 }
+
+val copiedFiles = localDir.listFiles
+if (copiedFiles != null && copiedFiles.nonEmpty) {
+    println(s"Copied files in $absoluteLocalPath:")
+    copiedFiles.foreach(file => println(file.getName))
+} else {
+    println(s"No files found in $absoluteLocalPath")
+}
+
