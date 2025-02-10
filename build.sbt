@@ -47,3 +47,26 @@ if (copiedFiles != null && copiedFiles.nonEmpty) {
     println(s"No files found in $absoluteLocalPath")
 }
 
+
+
+import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.spark.SparkContext
+
+val hdfsDirPath = "hdfs://your-cluster/path/to/hdfs/files"
+val fs = FileSystem.get(new java.net.URI(hdfsDirPath), SparkContext.getOrCreate().hadoopConfiguration)
+
+// Check if directory exists
+val hdfsPath = new Path(hdfsDirPath)
+if (fs.exists(hdfsPath)) {
+    println(s"HDFS path exists: $hdfsDirPath")
+    // Check if files are present and readable
+    val files = fs.listStatus(hdfsPath)
+    if (files.nonEmpty) {
+        files.foreach(file => println(s"File: ${file.getPath}, Permission: ${file.getPermission}"))
+    } else {
+        println("No files found in the HDFS path.")
+    }
+} else {
+    println(s"HDFS path does not exist: $hdfsDirPath")
+}
+
