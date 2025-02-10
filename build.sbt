@@ -1,74 +1,52 @@
-import org.apache.hadoop.fs.{FileSystem, Path, FileStatus, FSDataInputStream}
-import java.io.{BufferedOutputStream, FileOutputStream, File}
+import org.apache.hadoop.fs.{FileSystem, Path}
+import java.io.{BufferedOutputStream, FileOutputStream}
 import java.net.URI
 
-val hdfsFolderPath = "hdfs://nameservice1/tmp/venkat/current_timestamp_rbscc_mon/"
-val localFolderPath = "/disk1/ramp/output/current_timestamp_rbscc_mon/"
+val hdfsSrc = new Path("hdfs:///tmp/venkat/current_timestamp_rbscc_mon") // No trailing "/"
+val localDst = new File("/disk1/ramp/output/")
 
-val fs = FileSystem.get(new URI(hdfsFolderPath), spark.sparkContext.hadoopConfiguration)
+val fs = FileSystem.get(new URI("hdfs:///"), spark.sparkContext.hadoopConfiguration)
 
-try {
-  val hdfsPath = new Path(hdfsFolderPath)
-  val localPath = new File(localFolderPath)
-
-  if (!localPath.exists()) {
-    localPath.mkdirs() // Create root folder in local
+if (fs.exists(hdfsSrc) && fs.getFileStatus(hdfsSrc).isDirectory) {  
+  val finalLocalPath = new File(localDst, hdfsSrc.getName)
+  
+  if (!finalLocalPath.exists()) {
+    finalLocalPath.mkdirs() // ✅ Creates the directory
   }
 
-  if (fs.exists(hdfsPath) && fs.isDirectory(hdfsPath)) {
-    // ✅ Recursively list all files and folders
-    def copyRecursively(hdfsSrc: Path, localDst: File): Unit = {
-      val fileStatuses: Array[FileStatus] = fs.listStatus(hdfsSrc) // ✅ Fix: Ensure FileStatus is imported
+  // ✅ Copy all contents recursively
+  def copyRecursively(hdfsPath: Path, localPath: File)(implicit fs: FileSystem): Unit = {
+    val fileStatuses = fs.listStatus(hdfsPath)
 
-      for (fileStatus <- fileStatuses) {
-        val hdfsFilePath = fileStatus.getPath
-        val localFilePath = new File(localDst, hdfsFilePath.getName)
+    for (fileStatus <- fileStatuses) {
+      val hdfsFile = fileStatus.getPath
+      val localFile = new File(localPath, hdfsFile.getName)
 
-        if (fileStatus.isDirectory) {
-          // ✅ Create local subdirectory
-          if (!localFilePath.exists()) {
-            localFilePath.mkdirs()
+      if (fileStatus.isDirectory) {
+        localFile.mkdirs()
+        copyRecursively(hdfsFile, localFile) // Recursive copy for subdirectories
+      } else {
+        val inputStream = fs.open(hdfsFile)
+        val outputStream = new BufferedOutputStream(new FileOutputStream(localFile))
+
+        try {
+          val buffer = new Array[Byte](4 * 1024)
+          var bytesRead = inputStream.read(buffer)
+
+          while (bytesRead != -1) {
+            outputStream.write(buffer, 0, bytesRead)
+            bytesRead = inputStream.read(buffer)
           }
-          // ✅ Recursively copy subdirectory
-          copyRecursively(hdfsFilePath, localFilePath)
-        } else {
-          // ✅ Copy individual file
-          val inputStream: FSDataInputStream = fs.open(hdfsFilePath)
-          val outputStream = new BufferedOutputStream(new FileOutputStream(localFilePath))
-
-          try {
-            val buffer = new Array[Byte](4 * 1024) // 4KB buffer
-            var bytesRead = inputStream.read(buffer)
-
-            while (bytesRead != -1) {
-              outputStream.write(buffer, 0, bytesRead)
-              bytesRead = inputStream.read(buffer)
-            }
-
-            println(s"Copied file: $hdfsFilePath -> $localFilePath")
-          } finally {
-            inputStream.close()
-            outputStream.close()
-          }
+        } finally {
+          inputStream.close()
+          outputStream.close()
         }
       }
     }
-
-    // ✅ Start recursive copy
-    copyRecursively(hdfsPath, localPath)
-
-    // ✅ Verify all files copied before deleting HDFS folder
-    if (localPath.exists() && localPath.list().nonEmpty) {
-      fs.delete(hdfsPath, true)
-      println(s"Successfully moved HDFS folder to local: $localFolderPath")
-    } else {
-      println("File copy failed. Not deleting HDFS folder.")
-    }
-  } else {
-    println(s"HDFS path does not exist or is not a directory: $hdfsFolderPath")
   }
-} catch {
-  case e: Exception =>
-    println(s"Error occurred: ${e.getMessage}")
-    e.printStackTrace()
+
+  copyRecursively(hdfsSrc, finalLocalPath)(fs)
+  println(s"✅ Successfully moved folder: $hdfsSrc → $finalLocalPath")
+} else {
+  println(s"🚨 ERROR: $hdfsSrc is NOT a directory or does not exist!")
 }
