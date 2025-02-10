@@ -1,77 +1,24 @@
 #!/bin/bash
 
-# Define Spark home directory (update this path)
-SPARK_HOME="/path/to/spark"
+# Define HDFS parent path where folders are located
+HDFS_PARENT_DIR="/tmp/venkat"
 
-# Define the path to your compiled Scala application JAR file
-JAR_PATH="/path/to/your/scala-application.jar"
+# Define Local directory where folders should be copied
+LOCAL_PARENT_DIR="/disk1/ramp/output"
 
-# Spark job parameters
-MASTER_URL="spark://your-spark-master-url:7077"  # Change to your Spark master URL or use "local[*]"
-EXECUTOR_MEMORY="4g"
-DRIVER_MEMORY="2g"
-NUM_EXECUTORS="4"
-EXECUTOR_CORES="2"
-
-# Additional Spark configurations (optional)
-SPARK_CONF="--conf spark.sql.shuffle.partitions=10"
-
-# Define HDFS and local paths
-HDFS_PARENT_DIR="hdfs:///tmp/venkat/"   # HDFS directory containing "rbsc" folders
-LOCAL_PARENT_DIR="/disk1/ramp/output/"  # Local destination for copied folders
+# Define Remote Server details for SCP transfer
+REMOTE_USER="user"
+REMOTE_HOST="remote-server"
 TARGET_PATH="/etl/inbound"
 PASSWORD="your_password"
 
-echo "🚀 Starting Spark job..."
+# Find all HDFS folders matching the pattern "rbs"
+HDFS_FOLDERS=$(hdfs dfs -ls "$HDFS_PARENT_DIR" | awk '{print $NF}' | grep "rbs")
 
-# Step 1: Run the Spark job using spark-submit
-$SPARK_HOME/bin/spark-submit \
-  --class com.yourpackage.YourAppClass \
-  --master ${MASTER_URL} \
-  --executor-memory $EXECUTOR_MEMORY \
-  --driver-memory $DRIVER_MEMORY \
-  --num-executors $NUM_EXECUTORS \
-  --executor-cores $EXECUTOR_CORES \
-  $SPARK_CONF \
-  $JAR_PATH
-
-# Check if Spark job was successful
-if [ $? -eq 0 ]; then
-  echo "✅ Spark job completed successfully"
-
-  # Step 2: Find all folders containing "rbsc" in HDFS
-  echo "🔍 Searching for folders with 'rbsc' in HDFS..."
-  
-  HDFS_FOLDERS=$(hdfs dfs -ls "$HDFS_PARENT_DIR" | awk '{print $NF}' | grep "rbsc")
-
-  if [ -z "$HDFS_FOLDERS" ]; then
-    echo "❌ No folders with 'rbsc' found in HDFS."
-    exit 1
-  fi
-
-  echo "📂 Found folders: $HDFS_FOLDERS"
-
-  # Step 3: Move each folder to local
-  for folder in $HDFS_FOLDERS; do
+# Loop through each folder found
+for folder in $HDFS_FOLDERS; do
     folder_name=$(basename "$folder")  # Extract folder name
     echo "📥 Moving HDFS folder $folder to Local: $LOCAL_PARENT_DIR"
 
-    hdfs dfs -get "$folder" "$LOCAL_PARENT_DIR"
-
-    # Check if copy was successful
-    if [ $? -eq 0 ]; then
-      echo "✅ Folder $folder_name copied successfully to $LOCAL_PARENT_DIR"
-
-      # Step 4: SCP transfer after copying
-      echo "🚀 Transferring $folder_name to remote server..."
-      
-      sshpass -p "$PASSWORD" scp -r "$LOCAL_PARENT_DIR/$folder_name" user@remote-server:"$TARGET_PATH"
-
-      # Check if SCP command was successful
-      if [ $? -eq 0 ]; then
-        echo "✅ $folder_name transferred successfully to $TARGET_PATH"
-      else
-        echo "❌ SCP failed for $folder_name"
-      fi
-    else
-      echo "❌ Failed to copy $folder_name
+    # Copy the entire folder from HDFS to local
+   
