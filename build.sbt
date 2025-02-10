@@ -5,7 +5,6 @@ import java.net.URI
 val hdfsFolderPath = "hdfs://nameservice1/tmp/venkat/current_timestamp_rbscc_mon/"
 val localFolderPath = "/disk1/ramp/output/current_timestamp_rbscc_mon/"
 
-// Get HDFS FileSystem instance
 val fs = FileSystem.get(new URI(hdfsFolderPath), spark.sparkContext.hadoopConfiguration)
 
 try {
@@ -19,7 +18,7 @@ try {
   if (fs.exists(hdfsPath) && fs.isDirectory(hdfsPath)) {
     // ✅ Recursively list all files and folders
     def copyRecursively(hdfsSrc: Path, localDst: File): Unit = {
-      val fileStatuses: Array[FileStatus] = fs.listStatus(hdfsSrc)
+      val fileStatuses: Array[FileStatus] = fs.listStatus(hdfsSrc) // ✅ Fix: Ensure FileStatus is imported
 
       for (fileStatus <- fileStatuses) {
         val hdfsFilePath = fileStatus.getPath
@@ -58,4 +57,18 @@ try {
     // ✅ Start recursive copy
     copyRecursively(hdfsPath, localPath)
 
-    // ✅ Verify all files copied bef
+    // ✅ Verify all files copied before deleting HDFS folder
+    if (localPath.exists() && localPath.list().nonEmpty) {
+      fs.delete(hdfsPath, true)
+      println(s"Successfully moved HDFS folder to local: $localFolderPath")
+    } else {
+      println("File copy failed. Not deleting HDFS folder.")
+    }
+  } else {
+    println(s"HDFS path does not exist or is not a directory: $hdfsFolderPath")
+  }
+} catch {
+  case e: Exception =>
+    println(s"Error occurred: ${e.getMessage}")
+    e.printStackTrace()
+}
