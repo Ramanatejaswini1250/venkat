@@ -1,84 +1,40 @@
-import java.sql.{Connection, DriverManager, Statement, ResultSet, ResultSetMetaData}
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
-import org.apache.spark.sql.{SparkSession, Row}
-import java.io.{BufferedWriter, FileWriter}
+import org.apache.hadoop.fs.{FileSystem, Path}
+import java.io.File
 
-val spark = SparkSession.builder().getOrCreate()
+val hdfsDirPath = "hdfs://your-cluster/path/to/hdfs/files"
+val local_Location = "/relative/or/absolute/path/to/local/directory"
 
-// JDBC connection details
-val url = "jdbc:mysql://<hostname>:<port>/<database>"
-val user = "<username>"
-val password = "<password>"
+// Get the absolute path for the local directory
+val absoluteLocalPath = new java.io.File(local_Location).getAbsolutePath
 
-// Read DataFrame from the database
-val df = spark.read
-  .format("jdbc")
-  .option("url", url)
-  .option("dbtable", "your_table")
-  .option("user", user)
-  .option("password", password)
-  .load()
+// Print the absolute local path for verification
+println(s"Absolute Local Path: $absoluteLocalPath")
 
-// Write data to CSV without using parallelize
-df.foreachPartition { partition =>
-  // JDBC connection for each partition
-  var conn: Connection = null
-  var stmt_rss: Statement = null
-  var resultSet: ResultSet = null
+// Ensure the local directory exists
+new java.io.File(absoluteLocalPath).mkdirs()
 
-  try {
-    // Establish JDBC connection for each partition
-    conn = DriverManager.getConnection(url, user, password)
-    stmt_rss = conn.createStatement()
+// Initialize Hadoop FileSystem
+val fs = FileSystem.get(new java.net.URI(hdfsDirPath), SparkContext.getOrCreate().hadoopConfiguration)
 
-    // Execute the query to fetch data from the table
-    resultSet = stmt_rss.executeQuery("SELECT * FROM your_table")
+try {
+    // Copy files from HDFS to the local absolute path
+    fs.copyToLocalFile(false, new Path(hdfsDirPath), new Path(absoluteLocalPath), true)
+    println(s"Files copied successfully from HDFS to local path: $absoluteLocalPath")
 
-    // Prepare to write to CSV file
-    val outputPath = "hdfs://namenode:8020/user/hadoop/output/formatted_data.csv"
-    val writer = new BufferedWriter(new FileWriter(outputPath, true))  // Append mode
-
-    // Iterate through ResultSet and transform data
-    while (resultSet.next()) {
-      // Extract columns (assuming event_timestamp is 4th and alert_due_date is 6th)
-      val eventTimestamp = resultSet.getString(4)  // 4th column
-      val alertDueDate = resultSet.getString(6)    // 6th column
-
-      // Format the event_timestamp and alert_due_date
-      val formattedEventTimestamp = if (eventTimestamp != null) {
-        LocalDateTime.parse(eventTimestamp, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-          .format(DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a"))
-      } else {
-        "Unknown"
-      }
-
-      val formattedAlertDueDate = if (alertDueDate != null) {
-        LocalDateTime.parse(alertDueDate, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-          .format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
-      } else {
-        "Unknown"
-      }
-
-      // Create the transformed row in CSV format with the updated columns
-      val transformedRow = s"${resultSet.getString(1)},${resultSet.getString(2)},${resultSet.getString(3)},$formattedEventTimestamp,${resultSet.getInt(5)},$formattedAlertDueDate"
-      
-      // Write the transformed row to the CSV file
-      writer.write(transformedRow)
-      writer.newLine()
+    // Verify the copied files
+    val localDir = new File(absoluteLocalPath)
+    if (localDir.exists && localDir.isDirectory) {
+        val files = localDir.listFiles
+        if (files != null && files.nonEmpty) {
+            println(s"Copied Files in $absoluteLocalPath:")
+            files.foreach(file => println(file.getName))
+        } else {
+            println(s"No files found in $absoluteLocalPath")
+        }
+    } else {
+        println(s"Local directory does not exist: $absoluteLocalPath")
     }
-
-    // Close the writer
-    writer.close()
-
-  } catch {
+} catch {
     case e: Exception =>
-      println(s"An error occurred: ${e.getMessage}")
-  } finally {
-    if (resultSet != null) resultSet.close() // Close resultSet when done
-    if (stmt_rss != null) stmt_rss.close()   // Close statement
-    if (conn != null) conn.close()           // Close connection
-  }
+        println(s"Error occurred: ${e.getMessage}")
 }
-
-println("Data has been saved to CSV successfully.")
