@@ -1,72 +1,37 @@
 import org.apache.hadoop.fs.{FileSystem, Path}
-import java.io.File
+import java.io.{FileOutputStream, BufferedOutputStream}
+import java.net.URI
 
-val hdfsDirPath = "hdfs://your-cluster/path/to/hdfs/files"
-val local_Location = "/relative/or/absolute/path/to/local/directory"
+val hdfsPath = "hdfs://nameservice1/tmp/ramp/20250210232051_RBSCC_MON/"
+val localPath = "/disk1/bigdata/dev/source/ramp/testing/etl-ramp-automation/run/output"
 
-// Get the absolute path for the local directory
-val absoluteLocalPath = new java.io.File(local_Location).getAbsolutePath
-
-// Print the absolute local path for verification
-println(s"Absolute Local Path: $absoluteLocalPath")
-
-// Ensure the local directory exists
-new java.io.File(absoluteLocalPath).mkdirs()
-
-// Initialize Hadoop FileSystem
-val fs = FileSystem.get(new java.net.URI(hdfsDirPath), SparkContext.getOrCreate().hadoopConfiguration)
+val fs = FileSystem.get(new URI(hdfsPath), spark.sparkContext.hadoopConfiguration)
 
 try {
-    // Copy files from HDFS to the local absolute path
-    fs.copyToLocalFile(false, new Path(hdfsDirPath), new Path(absoluteLocalPath), true)
-    println(s"Files copied successfully from HDFS to local path: $absoluteLocalPath")
+  val files = fs.listStatus(new Path(hdfsPath)).map(_.getPath)
 
-    // Verify the copied files
-    val localDir = new File(absoluteLocalPath)
-    if (localDir.exists && localDir.isDirectory) {
-        val files = localDir.listFiles
-        if (files != null && files.nonEmpty) {
-            println(s"Copied Files in $absoluteLocalPath:")
-            files.foreach(file => println(file.getName))
-        } else {
-            println(s"No files found in $absoluteLocalPath")
-        }
-    } else {
-        println(s"Local directory does not exist: $absoluteLocalPath")
+  files.foreach { file =>
+    val inputStream = fs.open(file)
+    val outputFile = new java.io.File(s"$localPath/${file.getName}")
+    val outputStream = new BufferedOutputStream(new FileOutputStream(outputFile))
+
+    try {
+      val buffer = new Arrayfor reading data
+      var bytesRead = inputStream.read(buffer)
+
+      while (bytesRead != -1) {
+        outputStream.write(buffer, 0, bytesRead)
+        bytesRead = inputStream.read(buffer)
+      }
+
+      println(s"Copied file: ${file.getName} to $localPath")
+    } finally {
+      inputStream.close()
+      outputStream.close()
     }
+  }
 } catch {
-    case e: Exception =>
-        println(s"Error occurred: ${e.getMessage}")
+  case e: Exception =>
+    println(s"Error occurred: ${e.getMessage}")
+    e.printStackTrace()
 }
-
-val copiedFiles = localDir.listFiles
-if (copiedFiles != null && copiedFiles.nonEmpty) {
-    println(s"Copied files in $absoluteLocalPath:")
-    copiedFiles.foreach(file => println(file.getName))
-} else {
-    println(s"No files found in $absoluteLocalPath")
-}
-
-
-
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.SparkContext
-
-val hdfsDirPath = "hdfs://your-cluster/path/to/hdfs/files"
-val fs = FileSystem.get(new java.net.URI(hdfsDirPath), SparkContext.getOrCreate().hadoopConfiguration)
-
-// Check if directory exists
-val hdfsPath = new Path(hdfsDirPath)
-if (fs.exists(hdfsPath)) {
-    println(s"HDFS path exists: $hdfsDirPath")
-    // Check if files are present and readable
-    val files = fs.listStatus(hdfsPath)
-    if (files.nonEmpty) {
-        files.foreach(file => println(s"File: ${file.getPath}, Permission: ${file.getPermission}"))
-    } else {
-        println("No files found in the HDFS path.")
-    }
-} else {
-    println(s"HDFS path does not exist: $hdfsDirPath")
-}
-
