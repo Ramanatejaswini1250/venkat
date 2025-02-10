@@ -1,61 +1,77 @@
-import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.types._
-import scala.collection.mutable.ArrayBuffer
+#!/bin/bash
 
-// Create Spark session
-val spark = SparkSession.builder()
-  .appName("FixNullPointerException")
-  .getOrCreate()
+# Define Spark home directory (update this path)
+SPARK_HOME="/path/to/spark"
 
-// Define schema based on screenshot data
-val schema_master1 = StructType(Seq(
-  StructField("alert_id", StringType, nullable = true),
-  StructField("alert_code", StringType, nullable = true),
-  StructField("business_line", StringType, nullable = true),
-  StructField("event_timestamp", StringType, nullable = true),
-  StructField("priority", IntegerType, nullable = true),  // Ensure safe handling
-  StructField("alert_due_date", StringType, nullable = true)
-))
+# Define the path to your compiled Scala application JAR file
+JAR_PATH="/path/to/your/scala-application.jar"
 
-// Collect rows
-val rows_master1 = new ArrayBuffer[Row]()
+# Spark job parameters
+MASTER_URL="spark://your-spark-master-url:7077"  # Change to your Spark master URL or use "local[*]"
+EXECUTOR_MEMORY="4g"
+DRIVER_MEMORY="2g"
+NUM_EXECUTORS="4"
+EXECUTOR_CORES="2"
 
-if (masterTable1.next()) {  // Check for the first row
-  do {
-    val alertId = Option(masterTable1.getString("alert_id")).getOrElse(null)
-    val alertCode = Option(masterTable1.getString("alert_code")).getOrElse(null)
-    val businessLine = Option(masterTable1.getString("business_line")).getOrElse(null)
-    val eventTimestamp = Option(masterTable1.getString("event_timestamp")).getOrElse(null)
-    val alertDueDate = Option(masterTable1.getString("alert_due_date")).getOrElse(null)
+# Additional Spark configurations (optional)
+SPARK_CONF="--conf spark.sql.shuffle.partitions=10"
 
-    val priority = Option(masterTable1.getObject("priority")) match {
-      case Some(value: Int) => value
-      case _ => null
-    }
+# Define HDFS and local paths
+HDFS_PARENT_DIR="hdfs:///tmp/venkat/"   # HDFS directory containing "rbsc" folders
+LOCAL_PARENT_DIR="/disk1/ramp/output/"  # Local destination for copied folders
+TARGET_PATH="/etl/inbound"
+PASSWORD="your_password"
 
-    // Add the row to the buffer
-    rows_master1 += Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
-  } while (masterTable1.next())  // Keep iterating over all rows
-}
+echo "🚀 Starting Spark job..."
 
+# Step 1: Run the Spark job using spark-submit
+$SPARK_HOME/bin/spark-submit \
+  --class com.yourpackage.YourAppClass \
+  --master ${MASTER_URL} \
+  --executor-memory $EXECUTOR_MEMORY \
+  --driver-memory $DRIVER_MEMORY \
+  --num-executors $NUM_EXECUTORS \
+  --executor-cores $EXECUTOR_CORES \
+  $SPARK_CONF \
+  $JAR_PATH
 
-  // Create Row object
-  val row = Row(alertId, alertCode, businessLine, eventTimestamp, priority, alertDueDate)
-  rows_master1 += row
-}
+# Check if Spark job was successful
+if [ $? -eq 0 ]; then
+  echo "✅ Spark job completed successfully"
 
-// Debugging: Print collected rows before DataFrame creation
-println(s"Schema: $schema_master1")
-println(s"Row Count: ${rows_master1.size}")
-rows_master1.foreach(row => println(s"Row Data: $row"))
+  # Step 2: Find all folders containing "rbsc" in HDFS
+  echo "🔍 Searching for folders with 'rbsc' in HDFS..."
+  
+  HDFS_FOLDERS=$(hdfs dfs -ls "$HDFS_PARENT_DIR" | awk '{print $NF}' | grep "rbsc")
 
-// Ensure rows are not empty before creating DataFrame
-val masterTable1DF = if (rows_master1.isEmpty) {
-  println("Warning: No data found. Creating an empty DataFrame.")
-  spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema_master1)
-} else {
-  spark.createDataFrame(rows_master1.toSeq, schema_master1)  // Convert to immutable Seq
-}
+  if [ -z "$HDFS_FOLDERS" ]; then
+    echo "❌ No folders with 'rbsc' found in HDFS."
+    exit 1
+  fi
 
-// Show DataFrame contents
-masterTable1DF.show()
+  echo "📂 Found folders: $HDFS_FOLDERS"
+
+  # Step 3: Move each folder to local
+  for folder in $HDFS_FOLDERS; do
+    folder_name=$(basename "$folder")  # Extract folder name
+    echo "📥 Moving HDFS folder $folder to Local: $LOCAL_PARENT_DIR"
+
+    hdfs dfs -get "$folder" "$LOCAL_PARENT_DIR"
+
+    # Check if copy was successful
+    if [ $? -eq 0 ]; then
+      echo "✅ Folder $folder_name copied successfully to $LOCAL_PARENT_DIR"
+
+      # Step 4: SCP transfer after copying
+      echo "🚀 Transferring $folder_name to remote server..."
+      
+      sshpass -p "$PASSWORD" scp -r "$LOCAL_PARENT_DIR/$folder_name" user@remote-server:"$TARGET_PATH"
+
+      # Check if SCP command was successful
+      if [ $? -eq 0 ]; then
+        echo "✅ $folder_name transferred successfully to $TARGET_PATH"
+      else
+        echo "❌ SCP failed for $folder_name"
+      fi
+    else
+      echo "❌ Failed to copy $folder_name
