@@ -1,34 +1,62 @@
-import org.apache.hadoop.fs.{FileSystem, Path}
-import java.io.{FileOutputStream, BufferedOutputStream}
+import org.apache.hadoop.fs.{FileSystem, Path, FileStatus, FSDataInputStream}
+import java.io.{BufferedOutputStream, FileOutputStream}
 import java.net.URI
 
-val hdfsPath = "hdfs://nameservice1/tmp/ramp/20250210232051_RBSCC_MON/"
-val localPath = "/disk1/bigdata/dev/source/ramp/testing/etl-ramp-automation/run/output"
+val hdfsFolderPath = "hdfs://nameservice1/tmp/venkat/current_timestamp_rbscc_mon/"
+val localFolderPath = "/disk1/ramp/output/"
 
-val fs = FileSystem.get(new URI(hdfsPath), spark.sparkContext.hadoopConfiguration)
+// Get HDFS FileSystem instance
+val fs = FileSystem.get(new URI(hdfsFolderPath), spark.sparkContext.hadoopConfiguration)
 
 try {
-  val files = fs.listStatus(new Path(hdfsPath)).map(_.getPath)
+  val hdfsPath = new Path(hdfsFolderPath)
+  val localPath = new java.io.File(localFolderPath)
 
-  files.foreach { file =>
-    val inputStream = fs.open(file)
-    val outputFile = new java.io.File(s"$localPath/${file.getName}")
-    val outputStream = new BufferedOutputStream(new FileOutputStream(outputFile))
+  if (!localPath.exists()) {
+    localPath.mkdirs() // Create local directory if not exists
+  }
 
-    try {
-      val buffer = new Arrayfor reading data
-      var bytesRead = inputStream.read(buffer)
+  if (fs.exists(hdfsPath) && fs.isDirectory(hdfsPath)) {
+    // ✅ List all `.csv` files in HDFS folder
+    val hdfsFiles: Array[FileStatus] = fs.listStatus(hdfsPath).filter(_.getPath.getName.endsWith(".csv"))
 
-      while (bytesRead != -1) {
-        outputStream.write(buffer, 0, bytesRead)
-        bytesRead = inputStream.read(buffer)
+    for (fileStatus <- hdfsFiles) {
+      val hdfsFilePath = fileStatus.getPath
+      val localFilePath = new java.io.File(localFolderPath, hdfsFilePath.getName)
+
+      // ✅ Read file from HDFS
+      val inputStream: FSDataInputStream = fs.open(hdfsFilePath)
+      val outputStream = new BufferedOutputStream(new FileOutputStream(localFilePath))
+
+      try {
+        val buffer = new Array[Byte](4 * 1024) // 4KB buffer
+        var bytesRead = inputStream.read(buffer)
+
+        while (bytesRead != -1) { // Read until EOF
+          outputStream.write(buffer, 0, bytesRead) // Write to local file
+          bytesRead = inputStream.read(buffer)
+        }
+
+        println(s"Copied file: $hdfsFilePath -> $localFilePath")
+      } finally {
+        inputStream.close()
+        outputStream.close()
       }
-
-      println(s"Copied file: ${file.getName} to $localPath")
-    } finally {
-      inputStream.close()
-      outputStream.close()
     }
+
+    // ✅ Verify all `.csv` files are copied successfully
+    val localFiles = localPath.listFiles().filter(_.getName.endsWith(".csv"))
+    if (localFiles.length == hdfsFiles.length) {
+      println("All CSV files copied successfully.")
+
+      // ✅ Delete the HDFS folder after successful copy
+      fs.delete(hdfsPath, true)
+      println(s"Deleted HDFS folder: $hdfsFolderPath")
+    } else {
+      println("File count mismatch. Not deleting HDFS folder.")
+    }
+  } else {
+    println(s"HDFS path does not exist or is not a directory: $hdfsFolderPath")
   }
 } catch {
   case e: Exception =>
