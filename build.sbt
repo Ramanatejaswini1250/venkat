@@ -1,38 +1,35 @@
-import java.nio.file.{Files, Paths}
-import java.text.SimpleDateFormat
-import java.util.Date
-import scala.sys.process._
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.SparkFiles
+import org.apache.hadoop.fs.{FileUtil, FileSystem, Path}
+import org.apache.hadoop.conf.Configuration
+import java.io.File
 
-object HdfsToLocalCopy {
+object HDFSFileToLocal {
   def main(args: Array[String]): Unit = {
-    // Generate a dynamic timestamp
-    val timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
+    // 1️⃣ Initialize Spark Context
+    val conf = new SparkConf().setAppName("HDFS File to Local").setMaster("yarn") // Adjust master as needed
+    val sc = new SparkContext(conf)
 
-    // Define HDFS source path
-    val hdfsPath = "hdfs://nameservice1/tmp/ramp/20250211224800_RBSCC_TUE"
+    // 2️⃣ HDFS File Path
+    val hdfsFilePath = "hdfs:///tmp/ramp/20251010331122_RBSCCS_TUE"
 
-    // Define the local destination path dynamically
-    val localBasePath = "/disk1/bigdata/dev/source/ramp/hdfs_output"
-    val localPath = s"$localBasePath/hdfs_copy_$timestamp"
+    // 3️⃣ Add File to Spark Context
+    sc.addFile(hdfsFilePath)
 
-    // Step 1: Create the local directory dynamically using Java NIO
+    // 4️⃣ Get the Local File Path from SparkFiles (on worker node)
+    val localFilePath = SparkFiles.get("20251010331122_RBSCCS_TUE")
+
+    // 5️⃣ Define Destination Path in Local Filesystem
+    val localDestinationPath = "/home/user/20251010331122_RBSCCS_TUE"
+
     try {
-      Files.createDirectories(Paths.get(localPath))
-      println(s"✅ Created directory: $localPath")
-    } catch {
-      case e: Exception =>
-        println(s"❌ Failed to create directory: $localPath - ${e.getMessage}")
-        System.exit(1) // Exit if directory creation fails
-    }
+      // 6️⃣ Copy File to Local Using FileUtil.copy()
+      val hadoopConf = new Configuration()
+      val fs = FileSystem.get(hadoopConf)
+      val hdfsPath = new Path(localFilePath)  // Source (HDFS path on worker node)
+      val localPath = new Path(localDestinationPath) // Destination (Local path)
 
-    // Step 2: Copy files from HDFS to local using sys.process
-    val copyCommand = s"hadoop fs -copyToLocal $hdfsPath $localPath"
-    val copyExitCode = copyCommand.!
+      // Perform copy operation
+      val copied = FileUtil.copy(fs, hdfsPath, localPath, false, hadoopConf)
 
-    if (copyExitCode == 0) {
-      println(s"✅ Successfully copied $hdfsPath to $localPath")
-    } else {
-      println(s"❌ Failed to copy $hdfsPath to $localPath")
-    }
-  }
-}
+     
