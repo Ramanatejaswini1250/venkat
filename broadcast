@@ -4,47 +4,42 @@ import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.io.File
-import org.apache.commons.io.FileUtils
 
 object HdfsToLocalRecursiveCopy {
-  def main(args: Array[String]): Unit = {
-    val spark = SparkSession.builder()
-      .appName("HDFS to Local Recursive Copy with FileUtils")
-      .getOrCreate()
+  def copyHdfsToLocal(hdfs: FileSystem, hdfsPath: Path, localPath: File): Unit = {
+    if (!localPath.exists()) localPath.mkdirs() // Create local directory if not exists
 
-    val hadoopConf = spark.sparkContext.hadoopConfiguration
-    val hdfs = FileSystem.get(new URI("hdfs://nameservice1"), hadoopConf)
-    val localFs = FileSystem.getLocal(hadoopConf)
-
-    // Generate timestamp dynamically
-    val timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
-
-    // Define paths
-    val hdfsSourcePath = new Path("hdfs://nameservice1/tmp/ramp/2025021118")  // HDFS Source Directory
-    val localTargetPath = new File(s"/tmp/hdfs_output/hdfs_copy_$timestamp")  // Final Local Directory
-
-    // Create target directory if not exists
-    if (!localTargetPath.exists()) localTargetPath.mkdirs()
-
-    println(s"Copying recursively from HDFS: $hdfsSourcePath to Local: $localTargetPath")
-
-    // **Step 1: List all files and directories in the HDFS path**
-    val fileStatuses: Array[FileStatus] = hdfs.listStatus(hdfsSourcePath)
+    val fileStatuses: Array[FileStatus] = hdfs.listStatus(hdfsPath)
 
     fileStatuses.foreach { fileStatus =>
       val hdfsFilePath = fileStatus.getPath
-      val localFilePath = new Path(localTargetPath.getAbsolutePath, hdfsFilePath.getName)
+      val localFile = new File(localPath, hdfsFilePath.getName)
 
-      // **Step 2: Copy Each File Individually**
-      if (fileStatus.isFile) {
-        println(s"Copying file: $hdfsFilePath -> $localFilePath")
+      if (fileStatus.isFile) { // If it's a file, copy it directly
+        val localFilePath = new Path(localFile.getAbsolutePath)
+        println(s"📂 Copying file: $hdfsFilePath -> $localFilePath")
         hdfs.copyToLocalFile(false, hdfsFilePath, localFilePath)
-      } else {
-        println(s"Skipping directory (handled separately): $hdfsFilePath")
+      } else if (fileStatus.isDirectory) { // If it's a folder, recurse into it
+        println(s"📁 Creating local directory: $localFile")
+        localFile.mkdirs()
+        copyHdfsToLocal(hdfs, hdfsFilePath, localFile) // Recursive call for subdirectories
       }
     }
+  }
 
-    println(s"✅ All files copied successfully to: $localTargetPath")
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder().appName("HDFS to Local Recursive Copy").getOrCreate()
+    val hadoopConf = spark.sparkContext.hadoopConfiguration
+    val hdfs = FileSystem.get(new URI("hdfs://nameservice1"), hadoopConf)
+
+    // Generate a dynamic local folder
+    val timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
+    val hdfsSourcePath = new Path("hdfs://nameservice1/tmp/ramp/2025021118") // HDFS Source
+    val localTargetPath = new File(s"/tmp/hdfs_output/hdfs_copy_$timestamp") // Local Destination
+
+    println(s"🚀 Copying from HDFS: $hdfsSourcePath -> Local: $localTargetPath")
+    copyHdfsToLocal(hdfs, hdfsSourcePath, localTargetPath) // Start Copy
+    println(s"✅ Copy completed successfully to: $localTargetPath")
 
     spark.stop()
   }
