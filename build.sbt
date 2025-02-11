@@ -1,7 +1,6 @@
 import java.text.SimpleDateFormat
 import java.util.Date
 import scala.sys.process._
-import java.io.File
 
 object HdfsToLocalCopy {
   def main(args: Array[String]): Unit = {
@@ -16,12 +15,10 @@ object HdfsToLocalCopy {
     val localPath = s"$localBasePath/hdfs_copy_$timestamp"
 
     // Step 1: Create the local directory
-    val mkdirProcess = new ProcessBuilder("mkdir", "-p", localPath)
-      .inheritIO()
-      .start()
-    mkdirProcess.waitFor()
+    val mkdirCommand = s"mkdir -p $localPath"
+    val mkdirExitCode = mkdirCommand.!
 
-    if (mkdirProcess.exitValue() == 0) {
+    if (mkdirExitCode == 0) {
       println(s"✅ Created directory: $localPath")
     } else {
       println(s"❌ Failed to create directory: $localPath")
@@ -29,12 +26,10 @@ object HdfsToLocalCopy {
     }
 
     // Step 2: Copy files from HDFS to local
-    val copyProcess = new ProcessBuilder("hadoop", "fs", "-copyToLocal", hdfsPath, localPath)
-      .inheritIO()
-      .start()
-    copyProcess.waitFor()
+    val copyCommand = s"hadoop fs -copyToLocal $hdfsPath $localPath"
+    val copyExitCode = copyCommand.!
 
-    if (copyProcess.exitValue() == 0) {
+    if (copyExitCode == 0) {
       println(s"✅ Successfully copied $hdfsPath to $localPath")
     } else {
       println(s"❌ Failed to copy $hdfsPath to $localPath")
