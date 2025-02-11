@@ -1,25 +1,38 @@
-for folder in $HDFS_FOLDERS; do
-    folder_name=$(basename "$folder")  # Extract folder name
-    echo "📥 Moving HDFS folder $folder to Local: $LOCAL_PARENT_DIR"
+import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.spark.sql.SparkSession
+import java.net.URI
+import java.text.SimpleDateFormat
+import java.util.Date
 
-    hdfs dfs -get "$folder" "$LOCAL_PARENT_DIR"
+object HdfsToLocalCopy {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("HDFS to Local Copy")
+      .getOrCreate()
 
-    # Check if copy was successful
-    if [ $? -eq 0 ]; then
-      echo "✅ Folder $folder_name copied successfully to $LOCAL_PARENT_DIR"
+    val hadoopConf = spark.sparkContext.hadoopConfiguration
+    val hdfs = FileSystem.get(new URI("hdfs://nameservice1"), hadoopConf)
+    val localFs = FileSystem.getLocal(hadoopConf)
 
-      # Step 4: SCP transfer after copying
-      echo "🚀 Transferring $folder_name to remote server..."
-      
-      sshpass -p "$PASSWORD" scp -r "$LOCAL_PARENT_DIR/$folder_name" user@remote-server:"$TARGET_PATH"
+    // Generate timestamp dynamically
+    val timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
 
-      # Check if SCP command was successful
-      if [ $? -eq 0 ]; then
-        echo "✅ $folder_name transferred successfully to $TARGET_PATH"
-      else
-        echo "❌ SCP failed for $folder_name"
-      fi
-    else
-      echo "❌ Failed to copy $folder_name from HDFS!"
-    fi  # <-- Correctly closing the if statement
-done  # <-- Closing the for loop
+    // Define paths
+    val hdfsSourcePath = new Path("hdfs://nameservice1/tmp/ramp/2025021118") // Change this
+    val localBasePath = "/tmp/hdfs_output/"
+    val localTargetPath = new Path(localBasePath + s"hdfs_copy_$timestamp")
+
+    // Ensure local directory exists
+    if (!localFs.exists(new Path(localBasePath))) {
+      localFs.mkdirs(new Path(localBasePath))
+    }
+    localFs.mkdirs(localTargetPath)
+    println(s"Created local directory: $localTargetPath")
+
+    // Copy from HDFS to local
+    hdfs.copyToLocalFile(false, hdfsSourcePath, localTargetPath, true)
+    println(s"Successfully copied from HDFS to local: $localTargetPath")
+
+    spark.stop()
+  }
+}
