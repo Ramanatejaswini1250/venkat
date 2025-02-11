@@ -1,52 +1,17 @@
-import org.apache.hadoop.fs.{FileSystem, Path}
-import java.io.{BufferedOutputStream, FileOutputStream}
-import java.net.URI
+import java.io.File
 
-val hdfsSrc = new Path("hdfs:///tmp/venkat/current_timestamp_rbscc_mon") // No trailing "/"
-val localDst = new File("/disk1/ramp/output/")
+val hdfsPath = "hdfs://nameservice1/tmp/ramp/20250211224800_RBSCC_TUE"
+val localPath = "/disk1/bigdata/dev/source/ramp/hdfs_output/hdfs_copy_20250211224800"
 
-val fs = FileSystem.get(new URI("hdfs:///"), spark.sparkContext.hadoopConfiguration)
+val process = new ProcessBuilder("hadoop", "fs", "-copyToLocal", hdfsPath, localPath)
+  .directory(new File("/"))
+  .redirectErrorStream(true)
+  .start()
 
-if (fs.exists(hdfsSrc) && fs.getFileStatus(hdfsSrc).isDirectory) {  
-  val finalLocalPath = new File(localDst, hdfsSrc.getName)
-  
-  if (!finalLocalPath.exists()) {
-    finalLocalPath.mkdirs() // ✅ Creates the directory
-  }
+val exitCode = process.waitFor()
 
-  // ✅ Copy all contents recursively
-  def copyRecursively(hdfsPath: Path, localPath: File)(implicit fs: FileSystem): Unit = {
-    val fileStatuses = fs.listStatus(hdfsPath)
-
-    for (fileStatus <- fileStatuses) {
-      val hdfsFile = fileStatus.getPath
-      val localFile = new File(localPath, hdfsFile.getName)
-
-      if (fileStatus.isDirectory) {
-        localFile.mkdirs()
-        copyRecursively(hdfsFile, localFile) // Recursive copy for subdirectories
-      } else {
-        val inputStream = fs.open(hdfsFile)
-        val outputStream = new BufferedOutputStream(new FileOutputStream(localFile))
-
-        try {
-          val buffer = new Array[Byte](4 * 1024)
-          var bytesRead = inputStream.read(buffer)
-
-          while (bytesRead != -1) {
-            outputStream.write(buffer, 0, bytesRead)
-            bytesRead = inputStream.read(buffer)
-          }
-        } finally {
-          inputStream.close()
-          outputStream.close()
-        }
-      }
-    }
-  }
-
-  copyRecursively(hdfsSrc, finalLocalPath)(fs)
-  println(s"✅ Successfully moved folder: $hdfsSrc → $finalLocalPath")
+if (exitCode == 0) {
+  println(s"✅ Successfully copied $hdfsPath to $localPath")
 } else {
-  println(s"🚨 ERROR: $hdfsSrc is NOT a directory or does not exist!")
+  println(s"❌ Failed to copy $hdfsPath to $localPath")
 }
