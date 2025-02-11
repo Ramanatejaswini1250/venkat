@@ -1,3 +1,4 @@
+import java.nio.file.{Files, Paths}
 import java.text.SimpleDateFormat
 import java.util.Date
 import scala.sys.process._
@@ -14,18 +15,17 @@ object HdfsToLocalCopy {
     val localBasePath = "/disk1/bigdata/dev/source/ramp/hdfs_output"
     val localPath = s"$localBasePath/hdfs_copy_$timestamp"
 
-    // Step 1: Create the local directory
-    val mkdirCommand = s"mkdir -p $localPath"
-    val mkdirExitCode = mkdirCommand.!
-
-    if (mkdirExitCode == 0) {
+    // Step 1: Create the local directory dynamically using Java NIO
+    try {
+      Files.createDirectories(Paths.get(localPath))
       println(s"✅ Created directory: $localPath")
-    } else {
-      println(s"❌ Failed to create directory: $localPath")
-      System.exit(1) // Exit if directory creation fails
+    } catch {
+      case e: Exception =>
+        println(s"❌ Failed to create directory: $localPath - ${e.getMessage}")
+        System.exit(1) // Exit if directory creation fails
     }
 
-    // Step 2: Copy files from HDFS to local
+    // Step 2: Copy files from HDFS to local using sys.process
     val copyCommand = s"hadoop fs -copyToLocal $hdfsPath $localPath"
     val copyExitCode = copyCommand.!
 
