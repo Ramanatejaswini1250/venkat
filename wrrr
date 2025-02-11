@@ -1,52 +1,71 @@
-#!/bin/bash
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path, FSDataInputStream}
+import java.io.{File, FileOutputStream}
 
-# Load configuration
-CONFIG_FILE="./config.properties"
+val conf = new Configuration()
+val fs = FileSystem.get(conf)
 
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "Configuration file $CONFIG_FILE not found. Exiting."
-  exit 1
-fi
+val hdfsSourceDir = new Path("/user/hadoop/currentdatetime_Rbscc_Monday") // HDFS source
+val localTargetDir = new File("/disk/output") // Local destination
 
-source "$CONFIG_FILE"
+// Ensure local root directory exists
+if (!localTargetDir.exists()) {
+    localTargetDir.mkdirs()
+}
 
-# Validate variables
-if [ -z "$SOURCE_PATH" ] || [ -z "$TARGET_PATH_1" ] || [ -z "$TARGET_PATH_2" ]; then
-  echo "Missing configuration variables. Exiting."
-  exit 1
-fi
+// Function to copy directories and files recursively
+def copyHdfsDirToLocal(hdfsPath: Path, localPath: File): Unit = {
+    if (!fs.exists(hdfsPath)) {
+        println(s"Error: HDFS path does not exist: $hdfsPath")
+        return
+    }
 
-# Check if RBSCC folders exist in the source path
-RBSCC_FOLDERS=($(find "$SOURCE_PATH" -maxdepth 1 -type d -name "RBSCC*"))
+    val statuses = fs.listStatus(hdfsPath)
 
-if [ ${#RBSCC_FOLDERS[@]} -eq 0 ]; then
-  echo "No RBSCC folders found in the source path. Skipping file transfer."
-  exit 1
-fi
+    if (statuses.isEmpty) {
+        println(s"Warning: No files found in directory: $hdfsPath")
+    }
 
-echo "Found RBSCC folders: ${RBSCC_FOLDERS[*]}"
-echo "Proceeding with file transfer..."
+    statuses.foreach { status =>
+        val hdfsSubPath = status.getPath
+        val localSubPath = new File(localPath, hdfsSubPath.getName)
 
-TARGET_PATHS=($TARGET_PATH_1 $TARGET_PATH_2)
+        if (status.isDirectory) {
+            // Create local directory first
+            if (!localSubPath.exists()) {
+                localSubPath.mkdirs()
+                println(s"Created directory: ${localSubPath.getAbsolutePath}")
+            }
 
-for TARGET_PATH in "${TARGET_PATHS[@]}"; do
-  echo "Transferring RBSCC folders to $TARGET_PATH..."
+            // Recursively copy subdirectories
+            copyHdfsDirToLocal(hdfsSubPath, localSubPath)
+        } else {
+            // Copy individual file
+            println(s"Copying file: ${hdfsSubPath.toString} -> ${localSubPath.getAbsolutePath}")
 
-  sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r "${RBSCC_FOLDERS[@]}" user@remote-server:"$TARGET_PATH"
-  
-  if [ $? -eq 0 ]; then
-    echo "Files successfully transferred to $TARGET_PATH"
-  else
-    echo "Failed to transfer files to $TARGET_PATH"
-    exit 1
-  fi
-done
+            val hdfsInputStream: FSDataInputStream = fs.open(hdfsSubPath)
+            val localOutputStream = new FileOutputStream(localSubPath)
 
-# Cleanup transferred RBSCC folders
-rm -rf "${RBSCC_FOLDERS[@]}"
-if [ $? -eq 0 ]; then
-  echo "RBSCC folders cleaned up successfully."
-else
-  echo "Failed to clean up RBSCC folders."
-  exit 1
-fi
+            val buffer = new Arrayfer
+            var bytesRead = hdfsInputStream.read(buffer)
+
+            while (bytesRead > 0) {
+                localOutputStream.write(buffer, 0, bytesRead)
+                bytesRead = hdfsInputStream.read(buffer)
+            }
+
+            // Close streams
+            hdfsInputStream.close()
+            localOutputStream.close()
+            println(s"File copied: ${localSubPath.getAbsolutePath}")
+        }
+    }
+}
+
+// Start the recursive copy
+copyHdfsDirToLocal(hdfsSourceDir, localTargetDir)
+
+// Close the filesystem
+fs.close()
+
+println(s"Completed copying from HDFS: $hdfsSourceDir to Local: $localTargetDir")
