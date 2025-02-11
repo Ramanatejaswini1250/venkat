@@ -1,48 +1,50 @@
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileSystem, Path, FileStatus}
 import org.apache.spark.sql.SparkSession
 import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.io.File
-import org.apache.commons.io.FileUtils  // Import Apache Commons IO
+import org.apache.commons.io.FileUtils
 
-object HdfsToLocalWithFileUtils {
+object HdfsToLocalRecursiveCopy {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder()
-      .appName("HDFS to Local Copy with FileUtils")
+      .appName("HDFS to Local Recursive Copy with FileUtils")
       .getOrCreate()
 
     val hadoopConf = spark.sparkContext.hadoopConfiguration
     val hdfs = FileSystem.get(new URI("hdfs://nameservice1"), hadoopConf)
     val localFs = FileSystem.getLocal(hadoopConf)
 
-    // Generate a timestamp-based folder dynamically
+    // Generate timestamp dynamically
     val timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date())
 
     // Define paths
-    val hdfsSourcePath = new Path("hdfs://nameservice1/tmp/ramp/2025021118")  // HDFS Source
-    val localTempPath = new File("/tmp/hdfs_temp_copy/")  // Temporary Local Directory
-    val localFinalPath = new File(s"/tmp/hdfs_output/hdfs_copy_$timestamp")  // Final Local Directory
+    val hdfsSourcePath = new Path("hdfs://nameservice1/tmp/ramp/2025021118")  // HDFS Source Directory
+    val localTargetPath = new File(s"/tmp/hdfs_output/hdfs_copy_$timestamp")  // Final Local Directory
 
-    // Ensure local directories exist
-    if (!localTempPath.exists()) localTempPath.mkdirs()
-    if (!localFinalPath.exists()) localFinalPath.mkdirs()
+    // Create target directory if not exists
+    if (!localTargetPath.exists()) localTargetPath.mkdirs()
 
-    println(s"Copying from HDFS to temporary local directory: $localTempPath")
+    println(s"Copying recursively from HDFS: $hdfsSourcePath to Local: $localTargetPath")
 
-    // **Step 1: Copy from HDFS to Temporary Local Directory**
-    hdfs.copyToLocalFile(false, hdfsSourcePath, new Path(localTempPath.getAbsolutePath), true)
+    // **Step 1: List all files and directories in the HDFS path**
+    val fileStatuses: Array[FileStatus] = hdfs.listStatus(hdfsSourcePath)
 
-    println(s"Copying from temporary directory to final destination: $localFinalPath")
+    fileStatuses.foreach { fileStatus =>
+      val hdfsFilePath = fileStatus.getPath
+      val localFilePath = new Path(localTargetPath.getAbsolutePath, hdfsFilePath.getName)
 
-    // **Step 2: Use FileUtils to Copy from Temporary to Final Directory**
-    FileUtils.copyDirectory(localTempPath, localFinalPath)
+      // **Step 2: Copy Each File Individually**
+      if (fileStatus.isFile) {
+        println(s"Copying file: $hdfsFilePath -> $localFilePath")
+        hdfs.copyToLocalFile(false, hdfsFilePath, localFilePath)
+      } else {
+        println(s"Skipping directory (handled separately): $hdfsFilePath")
+      }
+    }
 
-    println(s"Successfully copied files to: $localFinalPath")
-
-    // Clean up temporary directory
-    FileUtils.deleteDirectory(localTempPath)
-    println(s"Deleted temporary directory: $localTempPath")
+    println(s"✅ All files copied successfully to: $localTargetPath")
 
     spark.stop()
   }
