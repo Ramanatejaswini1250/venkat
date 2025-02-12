@@ -1,41 +1,48 @@
-#!/bin/bash
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.LongAccumulator
+import sys.process._
 
-# HDFS directory where files are stored
-HDFS_DIR="/tmp/ramp"
+val spark = SparkSession.builder.appName("ConditionalCopy").getOrCreate()
 
-# Local directory to copy files to
-LOCAL_DIR="/tmp/ramp/hdfs_copy"
+// Step 1: Load your DataFrame
+val df = spark.read.format("parquet").load("hdfs://path/to/RAMP_MASTER_TARGET1")
 
-# Check if the local directory exists; if not, create it
-if [ ! -d "$LOCAL_DIR" ]; then
-  echo "Local directory $LOCAL_DIR does not exist. Creating it now..."
-  mkdir -p "$LOCAL_DIR"
+// Step 2: Create an accumulator for validation status
+val validationSuccessAccumulator: LongAccumulator = spark.sparkContext.longAccumulator("ValidationSuccess")
 
-  if [ $? -eq 0 ]; then
-    echo "Local directory $LOCAL_DIR created successfully."
-  else
-    echo "Failed to create local directory $LOCAL_DIR."
-    exit 1
-  fi
-else
-  echo "Local directory $LOCAL_DIR already exists."
-fi
+// Step 3: Perform validation inside df.foreachPartition
+df.foreachPartition { partition =>
+  var partitionValidationSuccess = true
 
-# Find the latest folder matching the pattern *_RBSCSS_Wed in HDFS
-LATEST_FOLDER=$(hadoop fs -ls "$HDFS_DIR" | grep '_RBSCSS_Wed' | awk '{print $8}' | sort | tail -n 1)
+  partition.foreach { row =>
+    // Your validation logic here
+    // If any row fails validation, set partitionValidationSuccess to false
+    if (/* validation fails for row */ false) {
+      partitionValidationSuccess = false
+    }
+  }
 
-# Check if a folder was found
-if [ -z "$LATEST_FOLDER" ]; then
-  echo "No folder found with pattern *_RBSCSS_Wed in $HDFS_DIR"
-  exit 1
-fi
+  // Update the accumulator only if validation fails
+  if (!partitionValidationSuccess) {
+    validationSuccessAccumulator.add(1)
+  }
+}
 
-# Copy the folder to the local directory
-hadoop fs -copyToLocal "$LATEST_FOLDER" "$LOCAL_DIR"
+// Step 4: Check the accumulator value in the driver
+if (validationSuccessAccumulator.value == 0) {
+  println("Validation passed for all partitions. Proceeding to copy data.")
 
-if [ $? -eq 0 ]; then
-  echo "Folder $LATEST_FOLDER copied successfully to $LOCAL_DIR"
-else
-  echo "Error copying folder $LATEST_FOLDER to $LOCAL_DIR"
-  exit 1
-fi
+  // Step 5: Copy the data from HDFS to the driver's local location
+  val hdfsPath = "hdfs://path/to/processed_output"
+  val localPath = "/driver/location/processed_output"
+  
+  // Save to HDFS first
+  df.write.mode("overwrite").csv(hdfsPath)
+
+  // Copy to the driver's local location
+  s"hadoop fs -copyToLocal $hdfsPath $localPath".!
+
+  println(s"Data successfully copied to $localPath")
+} else {
+  println("Validation failed. Skipping data copy.")
+}
