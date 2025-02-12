@@ -1,48 +1,35 @@
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.util.LongAccumulator
-import sys.process._
+#!/bin/bash
 
-val spark = SparkSession.builder.appName("ConditionalCopy").getOrCreate()
+# Set variables
+HDFS_PATH="/path/to/hdfs/directory"
+LOCAL_PATH="/path/to/local/directory"
+REMOTE_USER="remote_user"
+REMOTE_HOST="remote_host"
+REMOTE_PATH="/path/to/remote/directory"
 
-// Step 1: Load your DataFrame
-val df = spark.read.format("parquet").load("hdfs://path/to/RAMP_MASTER_TARGET1")
+# Check if RBCSS files exist in HDFS
+hadoop fs -ls "$HDFS_PATH" | grep "RBCSS"
+if [ $? -eq 0 ]; then
+  echo "RBCSS files found in HDFS. Copying to local..."
 
-// Step 2: Create an accumulator for validation status
-val validationSuccessAccumulator: LongAccumulator = spark.sparkContext.longAccumulator("ValidationSuccess")
+  # Copy RBCSS files from HDFS to local
+  hadoop fs -copyToLocal "$HDFS_PATH/*RBCSS*" "$LOCAL_PATH"
 
-// Step 3: Perform validation inside df.foreachPartition
-df.foreachPartition { partition =>
-  var partitionValidationSuccess = true
+  # Check if files with RBSCC exist in local
+  ls "$LOCAL_PATH" | grep "RBSCC"
+  if [ $? -eq 0 ]; then
+    echo "RBSCC files found in local. Transferring via SCP..."
 
-  partition.foreach { row =>
-    // Your validation logic here
-    // If any row fails validation, set partitionValidationSuccess to false
-    if (/* validation fails for row */ false) {
-      partitionValidationSuccess = false
-    }
-  }
-
-  // Update the accumulator only if validation fails
-  if (!partitionValidationSuccess) {
-    validationSuccessAccumulator.add(1)
-  }
-}
-
-// Step 4: Check the accumulator value in the driver
-if (validationSuccessAccumulator.value == 0) {
-  println("Validation passed for all partitions. Proceeding to copy data.")
-
-  // Step 5: Copy the data from HDFS to the driver's local location
-  val hdfsPath = "hdfs://path/to/processed_output"
-  val localPath = "/driver/location/processed_output"
-  
-  // Save to HDFS first
-  df.write.mode("overwrite").csv(hdfsPath)
-
-  // Copy to the driver's local location
-  s"hadoop fs -copyToLocal $hdfsPath $localPath".!
-
-  println(s"Data successfully copied to $localPath")
-} else {
-  println("Validation failed. Skipping data copy.")
-}
+    # Transfer RBSCC files using SCP
+    scp "$LOCAL_PATH/*RBSCC*" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH"
+    if [ $? -eq 0 ]; then
+      echo "Files transferred successfully via SCP."
+    else
+      echo "Failed to transfer files via SCP."
+    fi
+  else
+    echo "No RBSCC files found in local."
+  fi
+else
+  echo "No RBCSS files found in HDFS."
+fi
