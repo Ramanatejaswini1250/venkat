@@ -3,32 +3,47 @@
 # Set variables
 HDFS_PATH="/path/to/hdfs/directory"
 LOCAL_PATH="/path/to/local/directory"
-REMOTE_USER="remote_user"
-REMOTE_HOST="remote_host"
-REMOTE_PATH="/path/to/remote/directory"
 
-# Check if RBCSS files exist in HDFS
-hadoop fs -ls "$HDFS_PATH" | grep "RBCSS"
-if [ $? -eq 0 ]; then
-  echo "RBCSS files found in HDFS. Copying to local..."
+# Remote locations
+REMOTE_USER1="remote_user1"
+REMOTE_HOST1="remote_host1"
+REMOTE_PATH1="/path/to/remote/directory1"
 
-  # Copy RBCSS files from HDFS to local
-  hadoop fs -copyToLocal "$HDFS_PATH/*RBCSS*" "$LOCAL_PATH"
+REMOTE_USER2="remote_user2"
+REMOTE_HOST2="remote_host2"
+REMOTE_PATH2="/path/to/remote/directory2"
 
-  # Check if files with RBSCC exist in local
-  ls "$LOCAL_PATH" | grep "RBSCC"
-  if [ $? -eq 0 ]; then
-    echo "RBSCC files found in local. Transferring via SCP..."
+# Find the latest RBCSS file in HDFS
+LATEST_FILE=$(hadoop fs -ls "$HDFS_PATH" | grep "RBCSS" | awk '{print $6, $7, $8}' | sort -r | head -n 1 | awk '{print $3}')
 
-    # Transfer RBSCC files using SCP
-    scp "$LOCAL_PATH/*RBSCC*" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH"
+if [ -n "$LATEST_FILE" ]; then
+  echo "Latest RBCSS file found: $LATEST_FILE. Copying to local..."
+
+  # Copy the latest RBCSS file from HDFS to local
+  hadoop fs -copyToLocal "$LATEST_FILE" "$LOCAL_PATH"
+
+  # Check if the copied file contains "RBSCC"
+  FILE_NAME=$(basename "$LATEST_FILE")
+  if echo "$FILE_NAME" | grep -q "RBSCC"; then
+    echo "RBSCC file found. Transferring via SCP to both locations..."
+
+    # Transfer to first remote location
+    scp "$LOCAL_PATH/$FILE_NAME" "$REMOTE_USER1@$REMOTE_HOST1:$REMOTE_PATH1"
     if [ $? -eq 0 ]; then
-      echo "Files transferred successfully via SCP."
+      echo "File transferred successfully to $REMOTE_HOST1."
     else
-      echo "Failed to transfer files via SCP."
+      echo "Failed to transfer file to $REMOTE_HOST1."
+    fi
+
+    # Transfer to second remote location
+    scp "$LOCAL_PATH/$FILE_NAME" "$REMOTE_USER2@$REMOTE_HOST2:$REMOTE_PATH2"
+    if [ $? -eq 0 ]; then
+      echo "File transferred successfully to $REMOTE_HOST2."
+    else
+      echo "Failed to transfer file to $REMOTE_HOST2."
     fi
   else
-    echo "No RBSCC files found in local."
+    echo "Copied file does not contain 'RBSCC'. No transfer performed."
   fi
 else
   echo "No RBCSS files found in HDFS."
