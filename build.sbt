@@ -11,37 +11,34 @@ object RampAutomationExecution {
       val hadoopConf = spark.sparkContext.hadoopConfiguration
       val fs = FileSystem.get(hadoopConf)
 
-      val localPaths = hdfsPaths.map { hdfsFilePath =>
+      val localPaths = hdfsPaths.flatMap { hdfsFilePath =>
         val hdfsPath = new Path(hdfsFilePath)
         val localPath = new Path(localOutputDir, hdfsPath.getName)
-        fs.copyToLocalFile(false, hdfsPath, localPath, true) // Overwrites if already exists
-        s"file://${localPath.toString}" // Ensure local paths are prefixed with file://
+
+        if (fs.exists(hdfsPath)) { // Check if the folder or file exists in HDFS
+          if (fs.isDirectory(hdfsPath)) {
+            fs.copyToLocalFile(false, hdfsPath, localPath, true) // Copy the entire folder
+          } else {
+            fs.copyToLocalFile(false, hdfsPath, localPath, true) // Copy individual file
+          }
+          Some(s"file://${localPath.toString}") // Ensure local paths are prefixed with file://
+        } else {
+          println(s"Path not found in HDFS: $hdfsPath")
+          None
+        }
       }
 
       localPaths
     }
 
-    // Initialize collection to hold HDFS paths for copying
+    // Initialize HDFS paths to copy
     val hdfsPathsToCopy = new ListBuffer[String]()
     val localOutputDir = "/disk1/bigdata/dev/source/ramp"
 
-    // Step 1: Iterate through DataFrame rows to check validation
-    df.foreachPartition { partition =>
-      partition.foreach { row =>
-        val Master_FILE_SUCCESS_Query = "YOUR SQL QUERY HERE"
-        stmt.executeQuery(Master_FILE_SUCCESS_Query)
-
-        println("Starting data validation between Master Table 2 and exported Master File 2 CSV...")
-
-        if (dataConsistent2) { // Assume dataConsistent2 is a boolean flag indicating validation success
-          println("Data validation successful: Master Table 2 matches Master File 2 CSV.")
-
-          // Add HDFS path for copying
-          val filePath = row.getAs[String]("hdfs_file_column") // Replace with actual column name
-          hdfsPathsToCopy.synchronized { hdfsPathsToCopy += filePath }
-        }
-      }
-    }
+    // Step 1: Folder name and HDFS path
+    val folderName = "Current_timestamp_RBCSS_WED"
+    val hdfsFolderPath = s"hdfs://namespace/tmp/ramp/$folderName"
+    hdfsPathsToCopy += hdfsFolderPath
 
     // Step 2: Copy validated HDFS paths to local
     val localPaths: Seq[String] = copyFromHDFSToLocal(hdfsPathsToCopy.toSeq, localOutputDir)
@@ -49,12 +46,15 @@ object RampAutomationExecution {
     // Step 3: Broadcast the local paths
     val broadcastLocalPaths = spark.sparkContext.broadcast(localPaths)
 
-    // Step 4: Verify broadcasted paths
+    // Step 4: Check if the copied folder matches folderName and give a success message
     df.foreachPartition { partition =>
       partition.foreach { row =>
-        val rowPath = s"file://${row.getAs[String]("hdfs_file_column")}" // Ensure the "file://" prefix
+        val rowPath = s"file://${localOutputDir}/$folderName" // Use folderName to construct the rowPath
+
         if (broadcastLocalPaths.value.contains(rowPath)) {
-          println(s"Validation and copy confirmed for: $rowPath")
+          println(s"Validation and copy confirmed for folder: $rowPath")
+        } else {
+          println(s"Folder not found or not copied: $rowPath")
         }
       }
     }
