@@ -1,5 +1,5 @@
 import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Row, SparkSession}
 import scala.collection.mutable.ListBuffer
 
 // Function to perform data validation (compare CSV and table data)
@@ -15,11 +15,17 @@ def validateData(tableDataPath: String, csvFilePath: String): Boolean = {
 }
 
 // Function to copy from HDFS to local
-def copyFromHDFSToLocal(fs: FileSystem, hdfsPath: String, localOutputDir: String): String = {
-  val hdfsFilePath = new Path(hdfsPath)
-  val localPath = new Path(localOutputDir, hdfsFilePath.getName)
-  fs.copyToLocalFile(false, hdfsFilePath, localPath, true) // Overwrites if already exists
-  s"file://${localPath.toString}" // Ensure local paths are prefixed with file://
+def copyFromHDFSToLocal(hdfsPaths: Seq[String], localOutputDir: String): Seq[String] = {
+  val spark = SparkSession.builder().getOrCreate()
+  val hadoopConf = spark.sparkContext.hadoopConfiguration
+  val fs = FileSystem.get(hadoopConf)
+
+  hdfsPaths.map { path =>
+    val hdfsPath = new Path(path)
+    val localPath = new Path(localOutputDir, hdfsPath.getName)
+    fs.copyToLocalFile(false, hdfsPath, localPath, true) // Overwrites if already exists
+    s"file://${localPath.toString}" // Ensure local paths are prefixed with file://
+  }
 }
 
 // Main Logic
@@ -28,28 +34,26 @@ val spark = SparkSession.builder().appName("ConditionalCopyExample").getOrCreate
 // Step 1: Load DataFrame
 val df = spark.read.format("parquet").load("/path/to/hdfs/data")
 
-// Step 2: Collect and validate paths, copy files to local, and store paths in a broadcast variable
-val localOutputDir = "/path/to/local/driver/destination"
-val hadoopConf = spark.sparkContext.hadoopConfiguration
-val fs = FileSystem.get(hadoopConf)
+// Step 2: Collect and validate paths inside a single `df.foreachPartition`
+val hdfsPathsToCopy = new ListBuffer[String]()
 
-// Step 3: Validate and copy within a single `foreachPartition`
-val localPaths = df.rdd.mapPartitions { partition =>
-  val copiedPaths = new ListBuffer[String]()
+df.foreachPartition { partition =>
   partition.foreach { row =>
     val csvFilePath = "/path/to/local/csv/data.csv"
     val tableDataPath = "/path/to/table/data" // Replace with actual path or query
 
     // Perform validation
     if (validateData(tableDataPath, csvFilePath)) {
-      // Copy validated file to local
+      // Collect paths for copying
       val filePath = row.getAs[String]("file_path_column") // Replace with actual column
-      val localPath = copyFromHDFSToLocal(fs, filePath, localOutputDir)
-      copiedPaths += localPath
+      hdfsPathsToCopy.synchronized { hdfsPathsToCopy += filePath }
     }
   }
-  copiedPaths.iterator
-}.collect()
+}
+
+// Step 3: Copy files from HDFS to local after validation
+val localOutputDir = "/path/to/local/driver/destination"
+val localPaths = copyFromHDFSToLocal(hdfsPathsToCopy.toSeq, localOutputDir)
 
 // Step 4: Broadcast the copied local paths
 val broadcastLocalPaths = spark.sparkContext.broadcast(localPaths)
