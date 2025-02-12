@@ -1,64 +1,29 @@
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.sql.{Row, SparkSession}
-import scala.collection.mutable.ListBuffer
+#!/bin/bash
 
-object RampAutomationExecution {
-  def main(args: Array[String]): Unit = {
-    val spark = SparkSession.builder().appName("Ramp Automation Execution").getOrCreate()
+# HDFS directory where files are stored
+HDFS_DIR="/tmp/ramp"
 
-    // Function to copy from HDFS to Local
-    def copyFromHDFSToLocal(hdfsPaths: Seq[String], localOutputDir: String): Seq[String] = {
-      val hadoopConf = spark.sparkContext.hadoopConfiguration
-      val fs = FileSystem.get(hadoopConf)
+# Local directory to copy files to
+LOCAL_DIR="/tmp/ramp/hdfs_copy"
 
-      val localPaths = hdfsPaths.flatMap { hdfsFilePath =>
-        val hdfsPath = new Path(hdfsFilePath)
-        val localPath = new Path(localOutputDir, hdfsPath.getName)
+# Ensure the local directory exists
+mkdir -p "$LOCAL_DIR"
 
-        if (fs.exists(hdfsPath)) { // Check if the folder or file exists in HDFS
-          if (fs.isDirectory(hdfsPath)) {
-            fs.copyToLocalFile(false, hdfsPath, localPath, true) // Copy the entire folder
-          } else {
-            fs.copyToLocalFile(false, hdfsPath, localPath, true) // Copy individual file
-          }
-          Some(s"file://${localPath.toString}") // Ensure local paths are prefixed with file://
-        } else {
-          println(s"Path not found in HDFS: $hdfsPath")
-          None
-        }
-      }
+# Find the latest folder matching the pattern *_RBSCSS_Wed in HDFS
+LATEST_FOLDER=$(hadoop fs -ls "$HDFS_DIR" | grep '_RBSCSS_Wed' | awk '{print $8}' | sort | tail -n 1)
 
-      localPaths
-    }
+# Check if a folder was found
+if [ -z "$LATEST_FOLDER" ]; then
+  echo "No folder found with pattern *_RBSCSS_Wed in $HDFS_DIR"
+  exit 1
+fi
 
-    // Initialize HDFS paths to copy
-    val hdfsPathsToCopy = new ListBuffer[String]()
-    val localOutputDir = "/disk1/bigdata/dev/source/ramp"
+# Copy the folder to the local directory
+hadoop fs -copyToLocal "$LATEST_FOLDER" "$LOCAL_DIR"
 
-    // Step 1: Folder name and HDFS path
-    val folderName = "Current_timestamp_RBCSS_WED"
-    val hdfsFolderPath = s"hdfs://namespace/tmp/ramp/$folderName"
-    hdfsPathsToCopy += hdfsFolderPath
-
-    // Step 2: Copy validated HDFS paths to local
-    val localPaths: Seq[String] = copyFromHDFSToLocal(hdfsPathsToCopy.toSeq, localOutputDir)
-
-    // Step 3: Broadcast the local paths
-    val broadcastLocalPaths = spark.sparkContext.broadcast(localPaths)
-
-    // Step 4: Check if the copied folder matches folderName and give a success message
-    df.foreachPartition { partition =>
-      partition.foreach { row =>
-        val rowPath = s"file://${localOutputDir}/$folderName" // Use folderName to construct the rowPath
-
-        if (broadcastLocalPaths.value.contains(rowPath)) {
-          println(s"Validation and copy confirmed for folder: $rowPath")
-        } else {
-          println(s"Folder not found or not copied: $rowPath")
-        }
-      }
-    }
-
-    spark.stop()
-  }
-}
+if [ $? -eq 0 ]; then
+  echo "Folder $LATEST_FOLDER copied successfully to $LOCAL_DIR"
+else
+  echo "Error copying folder $LATEST_FOLDER to $LOCAL_DIR"
+  exit 1
+fi
