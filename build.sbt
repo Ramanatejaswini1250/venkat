@@ -6,8 +6,20 @@ HDFS_DIR="/tmp/ramp"
 # Local directory to copy files to
 LOCAL_DIR="/tmp/ramp/hdfs_copy"
 
-# Ensure the local directory exists
-mkdir -p "$LOCAL_DIR"
+# Check if the local directory exists; if not, create it
+if [ ! -d "$LOCAL_DIR" ]; then
+  echo "Local directory $LOCAL_DIR does not exist. Creating it now..."
+  mkdir -p "$LOCAL_DIR"
+
+  if [ $? -eq 0 ]; then
+    echo "Local directory $LOCAL_DIR created successfully."
+  else
+    echo "Failed to create local directory $LOCAL_DIR."
+    exit 1
+  fi
+else
+  echo "Local directory $LOCAL_DIR already exists."
+fi
 
 # Find the latest folder matching the pattern *_RBSCSS_Wed in HDFS
 LATEST_FOLDER=$(hadoop fs -ls "$HDFS_DIR" | grep '_RBSCSS_Wed' | awk '{print $8}' | sort | tail -n 1)
