@@ -1,51 +1,72 @@
-import org.apache.spark.sql.SparkSession
-import org.apache.hadoop.fs.{FileSystem, Path, FileStatus}
-import java.io.File
+#!/bin/bash
 
-object HdfsToLocalMirror {
-  def main(args: Array[String]): Unit = {
-    // Step 1: Initialize SparkSession
-    val spark = SparkSession.builder()
-      .appName("HDFS to Local Mirror")
-      .master("local[*]") // Adjust as necessary
-      .getOrCreate()
+# Set variables
+HDFS_PATH="/path/to/hdfs/directory"
+LOCAL_PATH="/path/to/local/directory"
 
-    // Step 2: Define HDFS and local paths
-    val hdfsDirPath = "hdfs://your-hdfs-path/currenttimestamp_rbsc_we’d"
-    val localDirPath = "/local/path/currenttimestamp_rbsc_we’d"
+# Remote locations
+REMOTE_USER1="remote_user1"
+REMOTE_HOST1="remote_host1"
+REMOTE_PATH1="/path/to/remote/directory1"
 
-    // Step 3: Create the mirrored local directory
-    val localDir = new File(localDirPath)
-    if (!localDir.exists()) {
-      localDir.mkdirs()
-    }
+REMOTE_USER2="remote_user2"
+REMOTE_HOST2="remote_host2"
+REMOTE_PATH2="/path/to/remote/directory2"
 
-    // Step 4: List all files in the HDFS directory
-    val hadoopConf = spark.sparkContext.hadoopConfiguration
-    val fs = FileSystem.get(hadoopConf)
-    val hdfsPath = new Path(hdfsDirPath)
+# Find the latest RBCSS file in HDFS
+LATEST_FILE=$(hadoop fs -ls "$HDFS_PATH" | grep "RBCSS" | awk '{print $6, $7, $8}' | sort -r | head -n 1 | awk '{print $3}')
 
-    // Check if the path exists in HDFS
-    if (fs.exists(hdfsPath)) {
-      val fileStatusList: Array[FileStatus] = fs.listStatus(hdfsPath)
+if [ -n "$LATEST_FILE" ]; then
+  echo "Latest RBCSS file found: $LATEST_FILE. Copying to local..."
+  
+  # Copy the latest RBCSS file from HDFS to local
+  hadoop fs -copyToLocal "$LATEST_FILE" "$LOCAL_PATH"
+  
+  # Get the file name from the full path
+  FILE_NAME=$(basename "$LATEST_FILE")
+  
+  if echo "$FILE_NAME" | grep -q "RBSCC"; then
+    echo "RBSCC file found. Transferring via SCP to both locations..."
 
-      // Step 5: Filter and copy only .csv files
-      fileStatusList.foreach { fileStatus =>
-        if (fileStatus.isFile && fileStatus.getPath.getName.endsWith(".csv")) {
-          val hdfsFilePath = fileStatus.getPath
-          val localFilePath = new Path(localDirPath + "/" + hdfsFilePath.getName)
+    # Transfer to first remote location
+    scp "$LOCAL_PATH/$FILE_NAME" "$REMOTE_USER1@$REMOTE_HOST1:$REMOTE_PATH1"
+    if [ $? -eq 0 ]; then
+      echo "File transferred successfully to $REMOTE_HOST1."
+    else
+      echo "Failed to transfer file to $REMOTE_HOST1."
+      exit 1
+    fi
 
-          // Correct usage of copyToLocalFile
-          fs.copyToLocalFile(false, hdfsFilePath, localFilePath, true)
-          println(s"Copied ${hdfsFilePath} to ${localFilePath}")
-        }
-      }
-    } else {
-      println(s"HDFS directory $hdfsDirPath does not exist.")
-    }
+    # Transfer to second remote location
+    scp "$LOCAL_PATH/$FILE_NAME" "$REMOTE_USER2@$REMOTE_HOST2:$REMOTE_PATH2"
+    if [ $? -eq 0 ]; then
+      echo "File transferred successfully to $REMOTE_HOST2."
+    else
+      echo "Failed to transfer file to $REMOTE_HOST2."
+      exit 1
+    fi
 
-    // Step 6: Stop SparkSession
-    spark.stop()
-  }
-}
+    # Verify that the file exists on both remote hosts
+    ssh "$REMOTE_USER1@$REMOTE_HOST1" "test -f '$REMOTE_PATH1/$FILE_NAME'"
+    ret1=$?
+    ssh "$REMOTE_USER2@$REMOTE_HOST2" "test -f '$REMOTE_PATH2/$FILE_NAME'"
+    ret2=$?
 
+    if [ $ret1 -eq 0 ] && [ $ret2 -eq 0 ]; then
+      echo "File exists on both remote locations. Deleting file from HDFS..."
+      hadoop fs -rm "$LATEST_FILE"
+      if [ $? -eq 0 ]; then
+        echo "File deleted successfully from HDFS."
+      else
+        echo "Failed to delete file from HDFS."
+      fi
+    else
+      echo "File not found on one or both remote locations. Source file will not be deleted."
+    fi
+
+  else
+    echo "Copied file does not contain 'RBSCC'. No remote transfer performed."
+  fi
+else
+  echo "No RBCSS files found in HDFS."
+fi
