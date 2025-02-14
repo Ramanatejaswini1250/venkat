@@ -1,6 +1,8 @@
 def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): Unit = {
   println(s"Running SQL script from: $scriptPath")
 
+  var currentCommand: Option[String] = None // To track the currently executing command
+
   try {
     val logBuffer = new StringBuilder
     conn_rss.setAutoCommit(false)
@@ -25,6 +27,7 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     // Step 4: Execute DELETE statements for master tables
     val deleteStatements = masterTables.map(table => s"DELETE FROM $table;")
     deleteStatements.foreach { deleteStmt =>
+      currentCommand = Some(deleteStmt) // Track the current command
       println(s"Executing DELETE statement: $deleteStmt")
       stmt_rss.execute(deleteStmt)
     }
@@ -36,6 +39,7 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
 
     // Step 6: Execute remaining valid SQL commands
     remainingCommands.foreach { command =>
+      currentCommand = Some(command) // Track the current command
       println(s"Executing command: $command")
       stmt_rss.execute(command)
       logBuffer.append(s"Executed: $command\n")
@@ -46,7 +50,16 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
   } catch {
     case e: Exception =>
       e.printStackTrace()
+      val failedCommand = currentCommand.getOrElse("Unknown Command")
+      val failedTableName = extractTableName(failedCommand)
+      println(s"Rolled back due to an error while executing command: $failedCommand")
+      println(s"Table involved: ${failedTableName.getOrElse("Unknown Table")}")
       conn_rss.rollback()
-      println("Rolled back due to an error.")
   }
+}
+
+// Function to extract table name from an SQL command
+def extractTableName(command: String): Option[String] = {
+  val tableRegex = "(?i)(?:from|join)\\s+([\\w_\\.]+)".r
+  tableRegex.findFirstMatchIn(command).map(_.group(1)) // Return the first match if found
 }
