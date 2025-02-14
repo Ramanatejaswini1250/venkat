@@ -1,122 +1,63 @@
-import java.sql.Statement
-import java.time.{LocalDate, LocalTime}
+// Mutable lists to hold alert statuses
+val successAlerts = scala.collection.mutable.ListBuffer[String]()
+val failureAlerts = scala.collection.mutable.ListBuffer[String]()
+val allProcessedAlerts = scala.collection.mutable.ListBuffer[String]()
+val missedAlerts = scala.collection.mutable.ListBuffer[String]()
 
-object RampAutomationExecution {
+// Process partition and track alert statuses
+df.foreachPartition { partition =>
+  partition.foreach { row =>
+    val alertCode = row.getAs[String]("alert_code")
+    val frequency = row.getAs[String]("frequency").toLowerCase
 
-  def main(args: Array[String]): Unit = {
-    df.foreachPartition(partition => {
-      var stmt_rss: Statement = null
-      var stmt: Statement = null
+    // Track all processed alerts
+    allProcessedAlerts += alertCode
 
-      var successAlerts: Seq[String] = Seq()
-      var failureAlerts: Seq[String] = Seq()
-      var missedAlertsDaily: Seq[String] = Seq()
-      var missedAlertsWeekly: Seq[String] = Seq()
-      var missedAlertsMonthly: Seq[String] = Seq()
-      var missedAlertsQuarterly: Seq[String] = Seq()
-
-      try {
-        stmt_rss = conn_rss.createStatement()
-        stmt = conn.createStatement()
-
-        partition.foreach { row =>
-          val alertCode = row.getAs[String]("alert_code")
-          val dtCount = row.getAs[Int]("dt_count")
-          val targetDate = row.getAs[String]("date_to_load") // Expected load date
-          val frequency = row.getAs[String]("frequency")
-          val currentDate = LocalDate.now().toString
-          val cutoffTime = "16:00" // 4:00 PM cutoff
-
-          // Track success and failure alerts
-          if (dtCount > 0) {
-            // Mark as success if data is loaded
-            successAlerts = successAlerts :+ alertCode
-            println(s"Success alert $alertCode added to Success list.")
-          } else {
-            // Mark as failure if data is missing
-            failureAlerts = failureAlerts :+ alertCode
-            println(s"Failure alert $alertCode added to Failure list.")
-          }
-
-          // Check for missed alerts based on frequency and cutoff time
-          val currentTime = LocalTime.now().toString.substring(0, 5)
-          if (currentDate == targetDate && currentTime >= cutoffTime && dtCount == 0) {
-            frequency match {
-              case "daily"    => missedAlertsDaily = missedAlertsDaily :+ alertCode
-              case "weekly"   => missedAlertsWeekly = missedAlertsWeekly :+ alertCode
-              case "monthly"  => missedAlertsMonthly = missedAlertsMonthly :+ alertCode
-              case "quarterly" => missedAlertsQuarterly = missedAlertsQuarterly :+ alertCode
-              case _ => println(s"Unknown frequency for alert $alertCode")
-            }
-          }
-        }
-
-        // Send consolidated email after processing partition
-        sendConsolidatedEmail(
-          successAlerts,
-          failureAlerts,
-          missedAlertsDaily,
-          missedAlertsWeekly,
-          missedAlertsMonthly,
-          missedAlertsQuarterly,
-          LocalDate.now().toString
-        )
-      } catch {
-        case e: Exception => println(s"Error processing partition: ${e.getMessage}")
-      } finally {
-        if (stmt_rss != null) stmt_rss.close()
-        if (stmt != null) stmt.close()
+    // Handle success and failure alerts
+    if (frequency == "daily") { // Change as needed for other frequencies
+      if (/* condition for successful validation */) {
+        successAlerts += alertCode
+      } else if (/* condition for validation failure */) {
+        failureAlerts += alertCode
       }
-    })
-  }
-
-  // Function to send a consolidated email with success, failure, and missed alerts
-  def sendConsolidatedEmail(
-    success: Seq[String],
-    failure: Seq[String],
-    missedDaily: Seq[String],
-    missedWeekly: Seq[String],
-    missedMonthly: Seq[String],
-    missedQuarterly: Seq[String],
-    currentDate: String
-  ): Unit = {
-    val subject = s"Consolidated Alert Report for $currentDate"
-
-    val message =
-      s"""
-         |<html>
-         |<head>
-         |  <style>
-         |    table { width: 100%; border-collapse: collapse; }
-         |    th, td { border: 1px solid black; padding: 8px; text-align: left; }
-         |    th { background-color: #4CAF50; color: white; }
-         |    .success { background-color: #d4edda; color: #155724; }
-         |    .failure { background-color: #f8d7da; color: #721c24; }
-         |  </style>
-         |</head>
-         |<body>
-         |  <h2>Consolidated Alert Report for $currentDate</h2>
-         |  <h3>Success Alerts</h3>
-         |  <table><tr><th>Alert</th></tr>${success.map(alert => s"<tr class='success'><td>$alert</td></tr>").mkString("\n")}</table>
-         |
-         |  <h3>Failure Alerts</h3>
-         |  <table><tr><th>Alert</th></tr>${failure.map(alert => s"<tr class='failure'><td>$alert</td></tr>").mkString("\n")}</table>
-         |
-         |  <h3>Missed Daily Alerts</h3>
-         |  <table><tr><th>Alert</th></tr>${missedDaily.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
-         |
-         |  <h3>Missed Weekly Alerts</h3>
-         |  <table><tr><th>Alert</th></tr>${missedWeekly.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
-         |
-         |  <h3>Missed Monthly Alerts</h3>
-         |  <table><tr><th>Alert</th></tr>${missedMonthly.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
-         |
-         |  <h3>Missed Quarterly Alerts</h3>
-         |  <table><tr><th>Alert</th></tr>${missedQuarterly.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
-         |</body>
-         |</html>
-         |""".stripMargin
-
-    EmailService.sendEmail(subject, message)
+    }
   }
 }
+
+// Step 1: Dynamically retrieve expected alerts from the DataFrame
+val expectedAlertsDF = yourDataFrame
+  .filter($"frequency" === "daily")
+  .select("alert_code")
+  .distinct()
+
+val expectedAlertCodes = expectedAlertsDF.collect().map(_.getString(0)).toSeq
+
+// Step 2: Identify missed alerts
+missedAlerts ++= expectedAlertCodes.diff(allProcessedAlerts)
+
+// Step 3: Consolidate and send the email
+def sendConsolidatedEmail(
+  successAlerts: Seq[String],
+  failureAlerts: Seq[String],
+  missedAlerts: Seq[String],
+  date: String,
+  emailAddress: String
+): Unit = {
+  val subject = s"Consolidated Alert Status for $date"
+  val message =
+    s"""
+       |<h3>Consolidated Alert Status</h3>
+       |<p><b>Success Alerts:</b> ${successAlerts.mkString(", ")}</p>
+       |<p><b>Failure Alerts:</b> ${failureAlerts.mkString(", ")}</p>
+       |<p><b>Missed Alerts:</b> ${missedAlerts.mkString(", ")}</p>
+     """.stripMargin
+
+  sendEmail(subject, message, emailAddress)
+}
+
+// Current date formatted for the email
+val currentDate = LocalDate.now()
+val formattedDate = currentDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+
+// Send consolidated email with success, failure, and missed alerts
+sendConsolidatedEmail(successAlerts, failureAlerts, missedAlerts, formattedDate, "cdao@gmail.com")
