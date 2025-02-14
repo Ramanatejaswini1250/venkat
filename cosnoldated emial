@@ -27,25 +27,41 @@ def sendConsolidatedEmail(allSuccess: Seq[String], allFailures: Seq[String], cur
       |      background-color: #f8d7da;
       |      color: #721c24;
       |    }
+      |    .container {
+      |      display: flex;
+      |      justify-content: space-between;
+      |    }
+      |    .half-width {
+      |      width: 48%;
+      |    }
       |  </style>
       |</head>
       |<body>
       |  <h2>Consolidated Alert Report for $currentDate</h2>
-      |  <h3>Success Alerts</h3>
-      |  <table>
-      |    <tr>
-      |      <th>Alert</th>
-      |    </tr>
-      |    ${allSuccess.map(alert => s"<tr class='success'><td>$alert</td></tr>").mkString("\n")}
-      |  </table>
       |
-      |  <h3>Failure Alerts</h3>
-      |  <table>
-      |    <tr>
-      |      <th>Alert</th>
-      |    </tr>
-      |    ${allFailures.map(alert => s"<tr class='failure'><td>$alert</td></tr>").mkString("\n")}
-      |  </table>
+      |  <div class="container">
+      |    <!-- Success Alerts Table -->
+      |    <div class="half-width">
+      |      <h3>Success Alerts</h3>
+      |      <table>
+      |        <tr>
+      |          <th>Alert</th>
+      |        </tr>
+      |        ${allSuccess.map(alert => s"<tr class='success'><td>$alert</td></tr>").mkString("\n")}
+      |      </table>
+      |    </div>
+      |
+      |    <!-- Failure Alerts Table -->
+      |    <div class="half-width">
+      |      <h3>Failure Alerts</h3>
+      |      <table>
+      |        <tr>
+      |          <th>Alert</th>
+      |        </tr>
+      |        ${allFailures.map(alert => s"<tr class='failure'><td>$alert</td></tr>").mkString("\n")}
+      |      </table>
+      |    </div>
+      |  </div>
       |</body>
       |</html>
       |""".stripMargin
