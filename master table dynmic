@@ -1,0 +1,76 @@
+import scala.util.matching.Regex
+
+// Function to extract table name from SQL statements
+def extractTableName(command: String): String = {
+  val tableRegex = "(?i)(?:INSERT INTO|FROM|JOIN)\\s+([\\w.]+)".r
+  tableRegex.findFirstMatchIn(command) match {
+    case Some(matched) => matched.group(1)
+    case None          => "Unknown Table"
+  }
+}
+
+// Function to extract all master tables matching the pattern "_MASTER_TARGET1_TEST"
+def extractMasterTables(commands: Seq[String]): Seq[String] = {
+  val masterTablePattern = "(?i).*_MASTER_TARGET[0-9]+_TEST".r
+  commands.flatMap { command =>
+    val tableName = extractTableName(command)
+    if (masterTablePattern.matches(tableName)) Some(tableName) else None
+  }.distinct
+}
+
+// Modified runSqlScript to dynamically handle master tables
+def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): Unit = {
+  println(s"Running SQL script from: $scriptPath")
+
+  try {
+    val logBuffer = new StringBuilder
+    conn_rss.setAutoCommit(false)
+    stmt_rss.setQueryTimeout(30) // Set 30 seconds timeout for each query
+
+    println("Reading SQL script...")
+    val scriptContent = readFileAsString(scriptPath)
+
+    // Remove block comments (/* ... */) from the script
+    val scriptWithoutComments = removeBlockComments(scriptContent)
+
+    // Split the script into lines and filter valid ones
+    val lines = scriptWithoutComments.split("\n").toList
+    var validLines = lines
+      .map(_.trim)
+      .filter(_.toUpperCase.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;".toUpperCase))
+      .filter(_.nonEmpty)
+
+    // Extract master tables dynamically
+    val masterTables = extractMasterTables(validLines)
+
+    // Log the extracted master tables
+    println(s"Extracted master tables: ${masterTables.mkString(", ")}")
+
+    // Execute master table DELETEs first
+    val deleteStatements = masterTables.map(table => s"DELETE FROM $table;")
+
+    // Ensure DELETEs are executed first
+    val executionOrder = deleteStatements ++ validLines
+
+    // Execute all SQL commands
+    val commands = executionOrder.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+    // Extract and log all table names
+    val tableNames = commands.map(extractTableName).distinct
+    println(s"Extracted table names: ${tableNames.mkString(", ")}")
+
+    // Begin transaction
+    commands.foreach { command =>
+      stmt_rss.execute(command)
+      logBuffer.append(s"Executed: $command\n")
+    }
+
+    conn_rss.commit()
+    println("SQL script executed successfully.")
+  } catch {
+    case e: Exception =>
+      e.printStackTrace()
+      conn_rss.rollback()
+      println("Rolled back due to an error.")
+  }
+}
