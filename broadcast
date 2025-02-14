@@ -1,72 +1,122 @@
-#!/bin/bash
+import java.sql.Statement
+import java.time.{LocalDate, LocalTime}
 
-# Set variables
-HDFS_PATH="/path/to/hdfs/directory"
-LOCAL_PATH="/path/to/local/directory"
+object RampAutomationExecution {
 
-# Remote locations
-REMOTE_USER1="remote_user1"
-REMOTE_HOST1="remote_host1"
-REMOTE_PATH1="/path/to/remote/directory1"
+  def main(args: Array[String]): Unit = {
+    df.foreachPartition(partition => {
+      var stmt_rss: Statement = null
+      var stmt: Statement = null
 
-REMOTE_USER2="remote_user2"
-REMOTE_HOST2="remote_host2"
-REMOTE_PATH2="/path/to/remote/directory2"
+      var successAlerts: Seq[String] = Seq()
+      var failureAlerts: Seq[String] = Seq()
+      var missedAlertsDaily: Seq[String] = Seq()
+      var missedAlertsWeekly: Seq[String] = Seq()
+      var missedAlertsMonthly: Seq[String] = Seq()
+      var missedAlertsQuarterly: Seq[String] = Seq()
 
-# Find the latest RBCSS file in HDFS
-LATEST_FILE=$(hadoop fs -ls "$HDFS_PATH" | grep "RBCSS" | awk '{print $6, $7, $8}' | sort -r | head -n 1 | awk '{print $3}')
+      try {
+        stmt_rss = conn_rss.createStatement()
+        stmt = conn.createStatement()
 
-if [ -n "$LATEST_FILE" ]; then
-  echo "Latest RBCSS file found: $LATEST_FILE. Copying to local..."
-  
-  # Copy the latest RBCSS file from HDFS to local
-  hadoop fs -copyToLocal "$LATEST_FILE" "$LOCAL_PATH"
-  
-  # Get the file name from the full path
-  FILE_NAME=$(basename "$LATEST_FILE")
-  
-  if echo "$FILE_NAME" | grep -q "RBSCC"; then
-    echo "RBSCC file found. Transferring via SCP to both locations..."
+        partition.foreach { row =>
+          val alertCode = row.getAs[String]("alert_code")
+          val dtCount = row.getAs[Int]("dt_count")
+          val targetDate = row.getAs[String]("date_to_load") // Expected load date
+          val frequency = row.getAs[String]("frequency")
+          val currentDate = LocalDate.now().toString
+          val cutoffTime = "16:00" // 4:00 PM cutoff
 
-    # Transfer to first remote location
-    scp "$LOCAL_PATH/$FILE_NAME" "$REMOTE_USER1@$REMOTE_HOST1:$REMOTE_PATH1"
-    if [ $? -eq 0 ]; then
-      echo "File transferred successfully to $REMOTE_HOST1."
-    else
-      echo "Failed to transfer file to $REMOTE_HOST1."
-      exit 1
-    fi
+          // Track success and failure alerts
+          if (dtCount > 0) {
+            // Mark as success if data is loaded
+            successAlerts = successAlerts :+ alertCode
+            println(s"Success alert $alertCode added to Success list.")
+          } else {
+            // Mark as failure if data is missing
+            failureAlerts = failureAlerts :+ alertCode
+            println(s"Failure alert $alertCode added to Failure list.")
+          }
 
-    # Transfer to second remote location
-    scp "$LOCAL_PATH/$FILE_NAME" "$REMOTE_USER2@$REMOTE_HOST2:$REMOTE_PATH2"
-    if [ $? -eq 0 ]; then
-      echo "File transferred successfully to $REMOTE_HOST2."
-    else
-      echo "Failed to transfer file to $REMOTE_HOST2."
-      exit 1
-    fi
+          // Check for missed alerts based on frequency and cutoff time
+          val currentTime = LocalTime.now().toString.substring(0, 5)
+          if (currentDate == targetDate && currentTime >= cutoffTime && dtCount == 0) {
+            frequency match {
+              case "daily"    => missedAlertsDaily = missedAlertsDaily :+ alertCode
+              case "weekly"   => missedAlertsWeekly = missedAlertsWeekly :+ alertCode
+              case "monthly"  => missedAlertsMonthly = missedAlertsMonthly :+ alertCode
+              case "quarterly" => missedAlertsQuarterly = missedAlertsQuarterly :+ alertCode
+              case _ => println(s"Unknown frequency for alert $alertCode")
+            }
+          }
+        }
 
-    # Verify that the file exists on both remote hosts
-    ssh "$REMOTE_USER1@$REMOTE_HOST1" "test -f '$REMOTE_PATH1/$FILE_NAME'"
-    ret1=$?
-    ssh "$REMOTE_USER2@$REMOTE_HOST2" "test -f '$REMOTE_PATH2/$FILE_NAME'"
-    ret2=$?
+        // Send consolidated email after processing partition
+        sendConsolidatedEmail(
+          successAlerts,
+          failureAlerts,
+          missedAlertsDaily,
+          missedAlertsWeekly,
+          missedAlertsMonthly,
+          missedAlertsQuarterly,
+          LocalDate.now().toString
+        )
+      } catch {
+        case e: Exception => println(s"Error processing partition: ${e.getMessage}")
+      } finally {
+        if (stmt_rss != null) stmt_rss.close()
+        if (stmt != null) stmt.close()
+      }
+    })
+  }
 
-    if [ $ret1 -eq 0 ] && [ $ret2 -eq 0 ]; then
-      echo "File exists on both remote locations. Deleting file from HDFS..."
-      hadoop fs -rm "$LATEST_FILE"
-      if [ $? -eq 0 ]; then
-        echo "File deleted successfully from HDFS."
-      else
-        echo "Failed to delete file from HDFS."
-      fi
-    else
-      echo "File not found on one or both remote locations. Source file will not be deleted."
-    fi
+  // Function to send a consolidated email with success, failure, and missed alerts
+  def sendConsolidatedEmail(
+    success: Seq[String],
+    failure: Seq[String],
+    missedDaily: Seq[String],
+    missedWeekly: Seq[String],
+    missedMonthly: Seq[String],
+    missedQuarterly: Seq[String],
+    currentDate: String
+  ): Unit = {
+    val subject = s"Consolidated Alert Report for $currentDate"
 
-  else
-    echo "Copied file does not contain 'RBSCC'. No remote transfer performed."
-  fi
-else
-  echo "No RBCSS files found in HDFS."
-fi
+    val message =
+      s"""
+         |<html>
+         |<head>
+         |  <style>
+         |    table { width: 100%; border-collapse: collapse; }
+         |    th, td { border: 1px solid black; padding: 8px; text-align: left; }
+         |    th { background-color: #4CAF50; color: white; }
+         |    .success { background-color: #d4edda; color: #155724; }
+         |    .failure { background-color: #f8d7da; color: #721c24; }
+         |  </style>
+         |</head>
+         |<body>
+         |  <h2>Consolidated Alert Report for $currentDate</h2>
+         |  <h3>Success Alerts</h3>
+         |  <table><tr><th>Alert</th></tr>${success.map(alert => s"<tr class='success'><td>$alert</td></tr>").mkString("\n")}</table>
+         |
+         |  <h3>Failure Alerts</h3>
+         |  <table><tr><th>Alert</th></tr>${failure.map(alert => s"<tr class='failure'><td>$alert</td></tr>").mkString("\n")}</table>
+         |
+         |  <h3>Missed Daily Alerts</h3>
+         |  <table><tr><th>Alert</th></tr>${missedDaily.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
+         |
+         |  <h3>Missed Weekly Alerts</h3>
+         |  <table><tr><th>Alert</th></tr>${missedWeekly.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
+         |
+         |  <h3>Missed Monthly Alerts</h3>
+         |  <table><tr><th>Alert</th></tr>${missedMonthly.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
+         |
+         |  <h3>Missed Quarterly Alerts</h3>
+         |  <table><tr><th>Alert</th></tr>${missedQuarterly.map(alert => s"<tr><td>$alert</td></tr>").mkString("\n")}</table>
+         |</body>
+         |</html>
+         |""".stripMargin
+
+    EmailService.sendEmail(subject, message)
+  }
+}
