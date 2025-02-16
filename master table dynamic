@@ -19,12 +19,12 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
 
     // Split the script into lines and filter valid ones
     val lines = scriptWithoutComments.split("\n").toList
-    var validLines = lines
+    val validLines = lines
       .map(_.trim)
       .filter(_.toUpperCase.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;".toUpperCase))
       .filter(_.nonEmpty)
 
-    // Extract master tables dynamically
+    // Extract master tables dynamically using extractMasterTables
     val masterTables = extractMasterTables(validLines)
 
     // Assign master tables for later use
@@ -52,9 +52,10 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     // Begin executing commands
     commands.foreach { command =>
       currentCommand = Some(command) // Track the current command
-      println(s"Executing: $command")
-      stmt_rss.execute(command)
-      logBuffer.append(s"Executed: $command\n")
+      val transformedCommand = transformInsertToIncludeColumns(command) // Transform the command
+      println(s"Executing: $transformedCommand")
+      stmt_rss.execute(transformedCommand)
+      logBuffer.append(s"Executed: $transformedCommand\n")
     }
 
     // Commit transaction if all commands succeed
@@ -70,12 +71,42 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
   } finally {
     // Log completion
     println("runSqlScript function completed.")
-  }(masterTable1,masterTable2)
+  }
+}
 
+// Function to extract table names after FROM or JOIN
+def extractTableName(command: String): String = {
+  // Regex to capture table names after 'FROM' or 'JOIN' (case insensitive)
+  val tableRegex = """(?i)(?:INSERT INTO|FROM|JOIN)\s+([\w.]+)""".r
+
+  // Find the first match in the SQL command
+  tableRegex.findFirstMatchIn(command) match {
+    case Some(matched) => matched.group(1) // Return the captured group (table name)
+    case None => "Unknown Table" // Default if no table is found
+  }
+}
+
+// Function to extract all master tables matching the pattern "_MASTER_TARGET1_"
+def extractMasterTables(commands: Seq[String]): Seq[String] = {
+  val masterTablePattern = "(?i).*MASTER_TARGET[0-9]+.*".r
+  commands.flatMap { command =>
+    val tableName = extractTableName(command)
+    if (masterTablePattern.findFirstIn(tableName).isDefined) Some(tableName) else None
+  }.distinct
 }
 
 // Helper function to remove block comments
 def removeBlockComments(script: String): String = {
   val blockCommentRegex = "/\\*.*?\\*/".r
   blockCommentRegex.replaceAllIn(script, "")
+}
+
+// Helper function to transform INSERT INTO ... SELECT to include column names
+def transformInsertToIncludeColumns(query: String): String = {
+  val insertSelectPattern = """(?i)INSERT INTO\s+(\w+)\s+SELECT\s+(.+?)\s+FROM\s+(\w+)""".r
+  query match {
+    case insertSelectPattern(tableName, columns, selectTable) =>
+      s"INSERT INTO $tableName ($columns) SELECT $columns FROM $selectTable"
+    case _ => query // Return the original query if it doesn't match
+  }
 }
