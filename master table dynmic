@@ -70,7 +70,8 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
   } finally {
     // Log completion
     println("runSqlScript function completed.")
-  }
+  }(masterTable1,masterTable2)
+
 }
 
 // Helper function to remove block comments
