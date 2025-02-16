@@ -1,8 +1,10 @@
-// Modified runSqlScript to dynamically handle master tables and errors
+// Enhanced runSqlScript function
 def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): Unit = {
   println(s"Running SQL script from: $scriptPath")
 
   var currentCommand: Option[String] = None // Track the current command
+  var masterTable1: String = ""
+  var masterTable2: String = ""
 
   try {
     val logBuffer = new StringBuilder
@@ -25,8 +27,14 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     // Extract master tables dynamically
     val masterTables = extractMasterTables(validLines)
 
+    // Assign master tables for later use
+    masterTable1 = masterTables.find(_.contains("MASTER_TARGET1")).getOrElse("Unknown_Master_Target1")
+    masterTable2 = masterTables.find(_.contains("MASTER_TARGET2")).getOrElse("Unknown_Master_Target2")
+
     // Log the extracted master tables
     println(s"Extracted master tables: ${masterTables.mkString(", ")}")
+    println(s"Assigned Master Table 1: $masterTable1")
+    println(s"Assigned Master Table 2: $masterTable2")
 
     // Execute DELETE statements for master tables first
     val deleteStatements = masterTables.map(table => s"DELETE FROM $table;")
@@ -59,6 +67,14 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
       println(s"Rolled back due to an error while executing: ${currentCommand.getOrElse("Unknown Command")}")
       val failedTable = currentCommand.map(extractTableName).getOrElse("Unknown Table")
       println(s"Table involved in error: $failedTable")
+  } finally {
+    // Log completion
+    println("runSqlScript function completed.")
   }
 }
-ChatGPT said:
+
+// Helper function to remove block comments
+def removeBlockComments(script: String): String = {
+  val blockCommentRegex = "/\\*.*?\\*/".r
+  blockCommentRegex.replaceAllIn(script, "")
+}
