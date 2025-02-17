@@ -1,92 +1,74 @@
-// Enhanced runSqlScript function
+import java.sql.{Connection, Statement}
+import java.util.Properties
+import javax.mail._
+import javax.mail.internet._
+
 def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): Unit = {
   println(s"Running SQL script from: $scriptPath")
 
   var currentCommand: Option[String] = None // Track the current command
-  var masterTable1: String = ""
-  var masterTable2: String = ""
+  val logBuffer = new StringBuilder
+  conn_rss.setAutoCommit(false)
 
   try {
-    val logBuffer = new StringBuilder
-    conn_rss.setAutoCommit(false)
-    stmt_rss.setQueryTimeout(30) // Set 30 seconds timeout for each query
-
     println("Reading SQL script...")
     val scriptContent = readFileAsString(scriptPath)
 
-    // Remove block comments (/* ... */) from the script
+    // Remove block comments (/* ... */)
     val scriptWithoutComments = removeBlockComments(scriptContent)
 
-    // Split the script into lines and filter valid ones
-    val lines = scriptWithoutComments.split("\n").toList
-    val validLines = lines
-      .map(_.trim)
-      .filter(_.toUpperCase.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;".toUpperCase))
-      .filter(_.nonEmpty)
+    // Split the script into lines
+    val lines = scriptWithoutComments.split("\n").map(_.trim).filter(_.nonEmpty).toList
 
-    // Extract master tables dynamically using extractMasterTables
-    val masterTables = extractMasterTables(validLines)
+    // Extract master tables dynamically
+    val masterTables = extractMasterTables(lines)
 
-    // Assign master tables for later use
-    masterTable1 = masterTables.find(_.contains("MASTER_TARGET1")).getOrElse("Unknown_Master_Target1")
-    masterTable2 = masterTables.find(_.contains("MASTER_TARGET2")).getOrElse("Unknown_Master_Target2")
-
-    // Log the extracted master tables
+    // Log extracted master tables
     println(s"Extracted master tables: ${masterTables.mkString(", ")}")
-    println(s"Assigned Master Table 1: $masterTable1")
-    println(s"Assigned Master Table 2: $masterTable2")
 
     // Execute DELETE statements for master tables first
-    val deleteStatements = masterTables.map(table => s"DELETE FROM $table;")
+    masterTables.foreach { table =>
+      val deleteStmt = s"DELETE FROM $table;"
+      println(s"Executing: $deleteStmt")
+      stmt_rss.execute(deleteStmt)
+    }
 
-    // Ensure DELETEs are executed first, followed by valid SQL commands
-    val executionOrder = deleteStatements ++ validLines
+    // Process remaining SQL queries
+    val queries = lines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
 
-    // Execute all SQL commands
-    val commands = executionOrder.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+    queries.foreach { query =>
+      currentCommand = Some(query) // Track the current command
 
-    // Extract and log all table names
-    val tableNames = commands.map(extractTableName).distinct
-    println(s"Extracted table names: ${tableNames.mkString(", ")}")
+      val transformedQuery = transformInsertToIncludeColumns(query)
 
-    // Begin executing commands
-    commands.foreach { command =>
-      currentCommand = Some(command) // Track the current command
-      val transformedCommand = transformInsertToIncludeColumns(command) // Transform the command
-      println(s"Executing: $transformedCommand")
-      stmt_rss.execute(transformedCommand)
-      logBuffer.append(s"Executed: $transformedCommand\n")
+      println(s"Executing: $transformedQuery")
+      stmt_rss.execute(transformedQuery)
+      logBuffer.append(s"Executed: $transformedQuery\n")
     }
 
     // Commit transaction if all commands succeed
     conn_rss.commit()
     println("SQL script executed successfully.")
+
   } catch {
     case e: Exception =>
       e.printStackTrace()
       conn_rss.rollback()
-      println(s"Rolled back due to an error while executing: ${currentCommand.getOrElse("Unknown Command")}")
-      val failedTable = currentCommand.map(extractTableName).getOrElse("Unknown Table")
-      println(s"Table involved in error: $failedTable")
+      val failedQuery = currentCommand.getOrElse("Unknown Query")
+      println(s"Rolled back due to error in query: $failedQuery")
+      sendFailureEmail(failedQuery, e.getMessage)
   } finally {
-    // Log completion
     println("runSqlScript function completed.")
   }
 }
 
-// Function to extract table names after FROM or JOIN
+// Extract table names after FROM, JOIN, or INSERT INTO
 def extractTableName(command: String): String = {
-  // Regex to capture table names after 'FROM' or 'JOIN' (case insensitive)
   val tableRegex = """(?i)(?:INSERT INTO|FROM|JOIN)\s+([\w.]+)""".r
-
-  // Find the first match in the SQL command
-  tableRegex.findFirstMatchIn(command) match {
-    case Some(matched) => matched.group(1) // Return the captured group (table name)
-    case None => "Unknown Table" // Default if no table is found
-  }
+  tableRegex.findFirstMatchIn(command).map(_.group(1)).getOrElse("Unknown Table")
 }
 
-// Function to extract all master tables matching the pattern "_MASTER_TARGET1_"
+// Extract master tables dynamically
 def extractMasterTables(commands: Seq[String]): Seq[String] = {
   val masterTablePattern = "(?i).*MASTER_TARGET[0-9]+.*".r
   commands.flatMap { command =>
@@ -95,18 +77,20 @@ def extractMasterTables(commands: Seq[String]): Seq[String] = {
   }.distinct
 }
 
-// Helper function to remove block comments
+// Remove block comments (/* ... */)
 def removeBlockComments(script: String): String = {
   val blockCommentRegex = "/\\*.*?\\*/".r
   blockCommentRegex.replaceAllIn(script, "")
 }
 
-// Helper function to transform INSERT INTO ... SELECT to include column names
+// Transform INSERT INTO ... SELECT to include column names
 def transformInsertToIncludeColumns(query: String): String = {
   val insertSelectPattern = """(?i)INSERT INTO\s+(\w+)\s+SELECT\s+(.+?)\s+FROM\s+(\w+)""".r
   query match {
     case insertSelectPattern(tableName, columns, selectTable) =>
       s"INSERT INTO $tableName ($columns) SELECT $columns FROM $selectTable"
-    case _ => query // Return the original query if it doesn't match
+    case _ => query // Return original if no transformation needed
   }
+}
+
 }
