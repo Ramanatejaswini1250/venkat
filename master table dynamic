@@ -1,7 +1,7 @@
 import java.sql.{Connection, ResultSet, Statement}
 
 // Main function to execute SQL script
-def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): Unit = {
+def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): (String, String) = {
   println(s"Running SQL script from: $scriptPath")
   var currentCommand: Option[String] = None // Track the currently executing SQL command
   val logBuffer = new StringBuilder
@@ -18,6 +18,9 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     // Step 1: Extract master tables and delete them first
     val masterTables = extractMasterTables(lines)
     println(s"Extracted master tables: ${masterTables.mkString(", ")}")
+
+    val mastertable1 = if (masterTables.nonEmpty) masterTables.head else "default_mastertable1"
+    val mastertable2 = if (masterTables.length > 1) masterTables(1) else "default_mastertable2"
 
     masterTables.foreach { table =>
       val deleteStmt = s"DELETE FROM $table;"
@@ -46,6 +49,7 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     // Step 3: Commit transaction if all commands succeed
     conn_rss.commit()
     println("SQL script executed successfully.")
+    (mastertable1, mastertable2)
 
   } catch {
     case e: Exception =>
@@ -54,6 +58,7 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
       val failedQuery = currentCommand.getOrElse("Unknown Query")
       println(s"Rolled back due to error in query: $failedQuery")
       sendFailureEmail(failedQuery, e.getMessage)
+      ("", "") // Return empty values in case of failure
   } finally {
     println("runSqlScript function completed.")
   }
