@@ -1,9 +1,13 @@
 import java.sql.{Connection, ResultSet, Statement}
+import scala.collection.mutable.ListBuffer
 
 // Main function to execute SQL script
 def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): (String, String) = {
   println(s"Running SQL script from: $scriptPath")
   var currentCommand: Option[String] = None // Track the currently executing SQL command
+  val executedQueries = ListBuffer[String]() // To track executed queries
+  val failedQueries = ListBuffer[String]() // To track failed queries
+  val skippedQueries = ListBuffer[String]() // To track skipped queries
   val logBuffer = new StringBuilder
   conn_rss.setAutoCommit(false)
 
@@ -15,40 +19,52 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     val scriptWithoutComments = removeBlockComments(scriptContent)
     val lines = scriptWithoutComments.split("\n").map(_.trim).filter(_.nonEmpty).toList
 
-    // Step 1: Extract master tables and delete them first
+    // Step 1: Extract master tables dynamically from the script
     val masterTables = extractMasterTables(lines)
     println(s"Extracted master tables: ${masterTables.mkString(", ")}")
 
     val mastertable1 = if (masterTables.nonEmpty) masterTables.head else "default_mastertable1"
     val mastertable2 = if (masterTables.length > 1) masterTables(1) else "default_mastertable2"
 
+    // Step 2: Delete existing data from master tables before insertion
     masterTables.foreach { table =>
       val deleteStmt = s"DELETE FROM $table;"
       println(s"Executing: $deleteStmt")
       stmt_rss.execute(deleteStmt)
+      executedQueries += deleteStmt // Log the executed delete command
     }
 
-    // Step 2: Process and execute remaining queries
+    // Step 3: Execute all SQL queries in the order they appear, including commands for master tables
     val queries = lines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
 
     queries.foreach { query =>
-      currentCommand = Some(query) // Track current query
+      println(s"Processing query: $query")
+      currentCommand = Some(query)
 
-      // If it's an INSERT statement, transform it by adding column names
       val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
         transformInsertToIncludeColumns(query, stmt_rss)
       } else {
         query
       }
 
-      println(s"Executing: $transformedQuery")
-      stmt_rss.execute(transformedQuery)
-      logBuffer.append(s"Executed: $transformedQuery\n")
+      // Log the query that will be executed
+      println(s"Executing transformed query: $transformedQuery")
+      try {
+        stmt_rss.execute(transformedQuery)
+        executedQueries += transformedQuery // Log the executed query
+      } catch {
+        case e: Exception =>
+          // Log failed query
+          failedQueries += transformedQuery
+          println(s"Failed to execute query: $transformedQuery\nError: ${e.getMessage}")
+      }
     }
 
-    // Step 3: Commit transaction if all commands succeed
+    // Step 4: Commit the transaction after successful execution of all queries
     conn_rss.commit()
     println("SQL script executed successfully.")
+
+    // Return table names as part of the result
     (mastertable1, mastertable2)
 
   } catch {
@@ -61,6 +77,11 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
       ("", "") // Return empty values in case of failure
   } finally {
     println("runSqlScript function completed.")
+
+    // Log the executed, failed, and skipped queries
+    println(s"\nExecuted Queries:\n${executedQueries.mkString("\n")}")
+    println(s"\nFailed Queries:\n${failedQueries.mkString("\n")}")
+    println(s"\nSkipped Queries:\n${skippedQueries.mkString("\n")}")
   }
 }
 
