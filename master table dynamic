@@ -1,12 +1,9 @@
-import java.sql.{Connection, Statement}
-import java.util.Properties
-import javax.mail._
-import javax.mail.internet._
+import java.sql.{Connection, ResultSet, Statement}
 
+// Main function to execute SQL script
 def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String): Unit = {
   println(s"Running SQL script from: $scriptPath")
-
-  var currentCommand: Option[String] = None // Track the current command
+  var currentCommand: Option[String] = None // Track the currently executing SQL command
   val logBuffer = new StringBuilder
   conn_rss.setAutoCommit(false)
 
@@ -14,39 +11,39 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
     println("Reading SQL script...")
     val scriptContent = readFileAsString(scriptPath)
 
-    // Remove block comments (/* ... */)
+    // Remove block comments (/* ... */) and split script into lines
     val scriptWithoutComments = removeBlockComments(scriptContent)
-
-    // Split the script into lines
     val lines = scriptWithoutComments.split("\n").map(_.trim).filter(_.nonEmpty).toList
 
-    // Extract master tables dynamically
+    // Step 1: Extract master tables and delete them first
     val masterTables = extractMasterTables(lines)
-
-    // Log extracted master tables
     println(s"Extracted master tables: ${masterTables.mkString(", ")}")
 
-    // Execute DELETE statements for master tables first
     masterTables.foreach { table =>
       val deleteStmt = s"DELETE FROM $table;"
       println(s"Executing: $deleteStmt")
       stmt_rss.execute(deleteStmt)
     }
 
-    // Process remaining SQL queries
+    // Step 2: Process and execute remaining queries
     val queries = lines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
 
     queries.foreach { query =>
-      currentCommand = Some(query) // Track the current command
+      currentCommand = Some(query) // Track current query
 
-      val transformedQuery = transformInsertToIncludeColumns(query)
+      // If it's an INSERT statement, transform it by adding column names
+      val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
+        transformInsertToIncludeColumns(query, stmt_rss)
+      } else {
+        query
+      }
 
       println(s"Executing: $transformedQuery")
       stmt_rss.execute(transformedQuery)
       logBuffer.append(s"Executed: $transformedQuery\n")
     }
 
-    // Commit transaction if all commands succeed
+    // Step 3: Commit transaction if all commands succeed
     conn_rss.commit()
     println("SQL script executed successfully.")
 
@@ -62,13 +59,30 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String):
   }
 }
 
-// Extract table names after FROM, JOIN, or INSERT INTO
-def extractTableName(command: String): String = {
-  val tableRegex = """(?i)(?:INSERT INTO|FROM|JOIN)\s+([\w.]+)""".r
-  tableRegex.findFirstMatchIn(command).map(_.group(1)).getOrElse("Unknown Table")
+// Function to transform INSERT INTO ... SELECT queries to include column names
+def transformInsertToIncludeColumns(query: String, stmt_rss: Statement): String = {
+  val insertSelectPattern = """(?i)INSERT INTO\s+(\w+)\s+SELECT\s+(.+?)\s+FROM\s+(\w+)""".r
+  query match {
+    case insertSelectPattern(tableName, selectColumns, selectTable) =>
+      val columnNames = getColumnNames(tableName, stmt_rss)
+      s"INSERT INTO $tableName ($columnNames) SELECT $selectColumns FROM $selectTable"
+    case _ => query // Return original if no transformation needed
+  }
 }
 
-// Extract master tables dynamically
+// Function to get column names using SHOW COLUMNS FROM
+def getColumnNames(tableName: String, stmt_rss: Statement): String = {
+  val query = s"SHOW COLUMNS FROM $tableName"
+  val rs: ResultSet = stmt_rss.executeQuery(query)
+  val columns = new scala.collection.mutable.ListBuffer[String]()
+  while (rs.next()) {
+    columns += rs.getString(1) // Get column name from the result set
+  }
+  rs.close()
+  columns.mkString(", ") // Return comma-separated column names
+}
+
+// Function to extract master tables dynamically
 def extractMasterTables(commands: Seq[String]): Seq[String] = {
   val masterTablePattern = "(?i).*MASTER_TARGET[0-9]+.*".r
   commands.flatMap { command =>
@@ -77,20 +91,25 @@ def extractMasterTables(commands: Seq[String]): Seq[String] = {
   }.distinct
 }
 
-// Remove block comments (/* ... */)
+// Function to extract table name from SQL statements
+def extractTableName(command: String): String = {
+  val tableRegex = """(?i)(?:INSERT INTO|FROM|JOIN)\s+([\w.]+)""".r
+  tableRegex.findFirstMatchIn(command) match {
+    case Some(matched) => matched.group(1)
+    case None => "Unknown Table"
+  }
+}
+
+// Function to remove block comments from SQL script
 def removeBlockComments(script: String): String = {
   val blockCommentRegex = "/\\*.*?\\*/".r
   blockCommentRegex.replaceAllIn(script, "")
 }
 
-// Transform INSERT INTO ... SELECT to include column names
-def transformInsertToIncludeColumns(query: String): String = {
-  val insertSelectPattern = """(?i)INSERT INTO\s+(\w+)\s+SELECT\s+(.+?)\s+FROM\s+(\w+)""".r
-  query match {
-    case insertSelectPattern(tableName, columns, selectTable) =>
-      s"INSERT INTO $tableName ($columns) SELECT $columns FROM $selectTable"
-    case _ => query // Return original if no transformation needed
-  }
-}
-
+// Function to send email if query execution fails
+def sendFailureEmail(failedQuery: String, errorMessage: String): Unit = {
+  val emailSubject = s"SQL Execution Failure: $failedQuery"
+  val emailBody = s"Query Failed: $failedQuery\nError: $errorMessage"
+  println(s"Sending failure email...\nSubject: $emailSubject\nBody: $emailBody")
+  // Implement actual email sending logic here (SMTP, API, etc.)
 }
