@@ -1,9 +1,8 @@
-while (masterTable2_format.next()) {
-  // Quote fields inline if they contain commas
-  val Master2TransformedRow = s"${if (masterTable2_format.getString(1).contains(",")) "\"" + masterTable2_format.getString(1) + "\"" else masterTable2_format.getString(1)}," +
-                              s"${if (masterTable2_format.getString(2).contains(",")) "\"" + masterTable2_format.getString(2) + "\"" else masterTable2_format.getString(2)}," +
-                              s"${if (masterTable2_format.getString(3).contains(",")) "\"" + masterTable2_format.getString(3) + "\"" else masterTable2_format.getString(3)}," +
-                              s"${if (masterTable2_format.getString(4).contains(",")) "\"" + masterTable2_format.getString(4) + "\"" else masterTable2_format.getString(4)}"
-
-  MasterTable2DF += Master2TransformedRow
+def transformInsertToIncludeColumns(query: String): String = {
+  val insertSelectPattern = """(?i)INSERT INTO\s+(\w+)\s*\((.*?)\)\s*SELECT\s+(.+)""".r
+  query match {
+    case insertSelectPattern(tableName, columns, selectStatement) =>
+      s"INSERT INTO $tableName ($columns) SELECT $columns FROM ($selectStatement)"
+    case _ => query // Return original query if it doesn't match
+  }
 }
