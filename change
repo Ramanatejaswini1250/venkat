@@ -1,14 +1,31 @@
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, FileUtil, Path}
+import java.io.{BufferedWriter, OutputStreamWriter}
 
 val conf = new Configuration()
-val hdfsPath = new Path("/user/hadoop/currentdatetime_Rbscc_Monday")  // HDFS source
-val localPath = new Path("file:///home/user/local_backup/")  // Local destination
-
 val fs = FileSystem.get(conf)
 
-// Copy directory from HDFS to Local
-FileUtil.copy(fs, hdfsPath, FileSystem.getLocal(conf), localPath, false, conf)
+// Path to your CSV file
+val csvPath1 = new Path("/output/path/combined_master_table.csv")
 
-fs.close()
-println(s"Copied HDFS directory $hdfsPath to local path $localPath")
+// Open the file in append mode if it exists, otherwise create a new file
+val outputStream = if (fs.exists(csvPath1)) {
+  fs.append(csvPath1)  // This opens the file in append mode
+} else {
+  fs.create(csvPath1)  // This creates a new file
+}
+
+// Create a BufferedWriter to write the data
+val writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
+
+// Write the data for the alert code to the file
+val alertCodes = List("RA0387", "DC0019", "ALERT_X")  // Example list of alert codes
+
+alertCodes.foreach { alertCode =>
+  val dataToWrite = s"Data for alertCode: $alertCode\n" // Replace with your actual data
+  writer.write(dataToWrite)
+}
+
+// Close the writer after all data is written
+writer.close()
+println(s"Data written to $csvPath1")
