@@ -1,77 +1,57 @@
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.conf.Configuration
-import java.io.{BufferedWriter, OutputStreamWriter, BufferedReader, InputStreamReader}
-import scala.collection.mutable.ListBuffer
-import org.apache.spark.sql.Row
+import java.io.{BufferedReader, InputStreamReader}
+import scala.collection.mutable.{Map, ListBuffer}
 
-// Sample DataFrame to represent mastertable1df
-val mastertable1df = Seq(
-  Row("1", "DC0019"),
-  Row("2", "DC0019"),
-  Row("3", "RA0387"),
-  Row("4", "RA0387")
-)
-
-// Transform data to "alert_id,Alert-code" format
-val formattedMasterTable1 = ListBuffer[String]()
-mastertable1df.foreach { row =>
-  val transformedRow = s"${row.getString(0)},${row.getString(1)}"
-  formattedMasterTable1 += transformedRow
-}
-
-// Hadoop Configuration
+// Initialize Hadoop FileSystem and Path
 val conf = new Configuration()
 val fs = FileSystem.get(conf)
-val csvPath1 = new Path("/output/path/master1.csv")
+val csvPath1 = new Path("/output/path/master1.csv")  // Path to the CSV file
 
-// Function to check if the file has a header
-def fileHasHeader(filePath: Path, expectedHeader: String): Boolean = {
-  if (!fs.exists(filePath)) return false
+// Function to read the CSV file and count the records for each alertCode
+def readCsvAndCount(filePath: Path): Map[String, Int] = {
   val reader = new BufferedReader(new InputStreamReader(fs.open(filePath), "UTF-8"))
-  val firstLine = reader.readLine()
+  var line = reader.readLine() // Read the header (we'll discard it)
+  val alertCodeCountMap = Map[String, Int]()
+
+  // Loop through each line in the file and count occurrences of alertCode
+  while (line != null) {
+    val fields = line.split(",")
+    if (fields.length >= 2) {  // Ensure we have both alert_id and alert_code
+      val alertCode = fields(1).trim
+      alertCodeCountMap(alertCode) = alertCodeCountMap.getOrElse(alertCode, 0) + 1
+    }
+    line = reader.readLine()
+  }
+
   reader.close()
-  println(s"Header found: $firstLine")
-  firstLine == expectedHeader
+  alertCodeCountMap
 }
 
-// Define header
-val header = "alert_id,Alert-code"
+// Read CSV data and get the counts for each alertCode
+val csvAlertCodeCounts = readCsvAndCount(csvPath1)
 
-// Check if the file already has the header
-val headerPresent = fileHasHeader(csvPath1, header)
-println(s"Header present: $headerPresent")
+// Sample mastertable1df to compare (you would already have this in your case)
+val mastertable1df = Seq(
+  ("1", "DC0019"),
+  ("2", "DC0019"),
+  ("3", "RA0387"),
+  ("4", "RA0387"),
+  ("5", "RA0387"),
+  ("6", "RA0387")
+)
 
-// Open file in append mode or create a new one
-val outputStream = if (fs.exists(csvPath1)) fs.append(csvPath1) else fs.create(csvPath1)
-val writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
-
-// Write header only if it's not already present
-if (!headerPresent) {
-  println("Writing header...")
-  writer.write(header)
-  writer.newLine()
-} else {
-  println("Skipping header...")
+// Group and count records by alertCode from mastertable1df
+val mastertableAlertCodeCounts = mastertable1df.groupBy(_._2).map {
+  case (alertCode, records) => (alertCode, records.length)
 }
 
-// Write all formatted alert data
-// Check if we are writing the first alert's data (for ensuring no skip of first records)
-var firstAlertWritten = false
-
-formattedMasterTable1.foreach { data =>
-  // Ensure first record from all alerts gets written
-  if (!firstAlertWritten) {
-    println(s"Writing first record: $data")
-    writer.write(data)
-    writer.newLine()
-    firstAlertWritten = true
+// Now, compare the counts from CSV and mastertable
+csvAlertCodeCounts.foreach { case (alertCode, csvCount) =>
+  val masterCount = mastertableAlertCodeCounts.getOrElse(alertCode, 0)
+  if (csvCount == masterCount) {
+    println(s"Alert $alertCode: Counts match - $csvCount records")
   } else {
-    println(s"Writing subsequent record: $data")
-    writer.write(data)
-    writer.newLine()
+    println(s"Alert $alertCode: Counts do not match - CSV: $csvCount, Master: $masterCount")
   }
 }
-
-// Close the writer
-writer.close()
-println(s"Data written to $csvPath1")
