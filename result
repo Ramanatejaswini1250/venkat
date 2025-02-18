@@ -1,42 +1,48 @@
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types._
-import java.sql.ResultSet
+import java.io.{BufferedReader, FileReader}
+import scala.collection.mutable.ListBuffer
 
-// Function to convert ResultSet to DataFrame
-def resultSetToDataFrame(resultSet: ResultSet, spark: SparkSession): DataFrame = {
-  val metadata = resultSet.getMetaData
-  val columnCount = metadata.getColumnCount
+val filePath = "/output/path/combined_master_table.csv"  // Path to your CSV file
 
-  val schema = StructType((1 to columnCount).map { i =>
-    StructField(metadata.getColumnName(i), StringType, nullable = true)
-  })
+// List to store the filtered rows for each alertCode
+val filteredRowsByAlertCode = scala.collection.mutable.Map[String, ListBuffer[String]]()
 
-  val rows = new scala.collection.mutable.ListBuffer[Row]()
-  while (resultSet.next()) {
-    val row = (1 to columnCount).map(i => resultSet.getString(i))
-    rows += Row.fromSeq(row)
+// Create a BufferedReader to read the CSV file
+val reader = new BufferedReader(new FileReader(filePath))
+
+// Read the header first and discard it
+val header = reader.readLine()  // Read and discard the header row
+
+// Initialize a set to track unique alertCodes
+val uniqueAlertCodes = scala.collection.mutable.Set[String]()
+
+// Loop through each line (row) in the file and extract alertCodes
+var line = reader.readLine()
+while (line != null) {
+  // Extract alertCode from each row (assuming alertCode is the first column)
+  val alertCode = line.split(",")(0)  // Assuming the alertCode is in the first column
+
+  // Add the alertCode to the set of unique alertCodes
+  uniqueAlertCodes += alertCode
+
+  // Initialize a list for each alertCode if not already present
+  if (!filteredRowsByAlertCode.contains(alertCode)) {
+    filteredRowsByAlertCode(alertCode) = ListBuffer[String]()
   }
 
-  spark.createDataFrame(spark.sparkContext.parallelize(rows.toList), schema)
+  // Add the row to the corresponding alertCode list
+  filteredRowsByAlertCode(alertCode) += line
+
+  // Read the next line
+  line = reader.readLine()
 }
 
-// Your main logic
-val masterTable1Query =
-  s"""
-     |SELECT * FROM U_D_DSV_001_RSS_0.RAMP_MASTER_TARGET1_TEST
-     |WHERE alert_code = '$alertCode' ORDER BY 1
-     |""".stripMargin
+// Close the reader after reading the file
+reader.close()
 
-val resultSet: ResultSet = stmt_rss.executeQuery(masterTable1Query)
-val masterTable1DF = resultSetToDataFrame(resultSet, spark)
-
-// Perform transformations
-val formattedMasterTable1DF = masterTable1DF
-  .withColumn("EVENT_TIMESTAMP",
-    date_format(to_timestamp(col("EVENT_TIMESTAMP"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
-  .withColumn("ALERT_DUE_DATE",
-    date_format(to_timestamp(col("ALERT_DUE_DATE"), "dd-MM-yyyy hh:mm:ss a"), "dd/MM/yyyy HH:mm"))
-
-// Save the data
-formattedMasterTable1DF.write.format("parquet").save("/path/to/output")
+// Process each alertCode
+uniqueAlertCodes.foreach { alertCode =>
+  println(s"Filtered data for alertCode: $alertCode")
+  filteredRowsByAlertCode(alertCode).foreach(println)
+  val count = filteredRowsByAlertCode(alertCode).size
+  println(s"Count for alertCode $alertCode: $count")
+}
