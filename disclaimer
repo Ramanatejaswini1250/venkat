@@ -1,13 +1,18 @@
-# Get a list of all .sql files in the Daily directory
-sqlFiles=$(ls /disk1/bigdata/dev/source/ramp/testing2/etl-ramp-automation/run/sql/Daily/*.sql)
+#!/bin/bash
 
-# List your properties files
+# Directory containing your .sql files
+sqlDirectory="/disk1/bigdata/dev/source/ramp/testing2/etl-ramp-automation/run/sql/Daily"
+
+# List all .sql files in the directory and create a comma-separated list
+sqlFiles=$(ls $sqlDirectory/*.sql | tr '\n' ',' | sed 's/,$//')
+
+# List other properties files if needed
 propertiesFiles="/disk1/bigdata/dev/source/ramp/testing2/etl-ramp-automation/run/sql/jdbc_properties.properties,/disk1/bigdata/dev/source/ramp/testing2/etl-ramp-automation/run/sql/email_properties.properties"
 
-# Combine all the files
+# Combine SQL files with properties files
 filesToInclude="$sqlFiles,$propertiesFiles"
 
-# Submit your Spark job with all the files
+# Submit the Spark job with all files
 spark-submit \
   --class your.main.class.name \
   --master yarn \
