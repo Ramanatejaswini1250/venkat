@@ -1,0 +1,4 @@
+INSERT INTO scn_table_backup
+SELECT * 
+FROM scn_table
+WHERE alert_id NOT IN (SELECT alert_id FROM scn_table_backup);
