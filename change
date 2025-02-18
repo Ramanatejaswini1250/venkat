@@ -1,31 +1,77 @@
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.conf.Configuration
-import java.io.{BufferedWriter, OutputStreamWriter}
+import java.io.{BufferedWriter, OutputStreamWriter, BufferedReader, InputStreamReader}
+import scala.collection.mutable.ListBuffer
+import org.apache.spark.sql.Row
 
+// Sample DataFrame to represent mastertable1df
+val mastertable1df = Seq(
+  Row("1", "DC0019"),
+  Row("2", "DC0019"),
+  Row("3", "RA0387"),
+  Row("4", "RA0387")
+)
+
+// Transform data to "alert_id,Alert-code" format
+val formattedMasterTable1 = ListBuffer[String]()
+mastertable1df.foreach { row =>
+  val transformedRow = s"${row.getString(0)},${row.getString(1)}"
+  formattedMasterTable1 += transformedRow
+}
+
+// Hadoop Configuration
 val conf = new Configuration()
 val fs = FileSystem.get(conf)
+val csvPath1 = new Path("/output/path/master1.csv")
 
-// Path to your CSV file
-val csvPath1 = new Path("/output/path/combined_master_table.csv")
-
-// Open the file in append mode if it exists, otherwise create a new file
-val outputStream = if (fs.exists(csvPath1)) {
-  fs.append(csvPath1)  // This opens the file in append mode
-} else {
-  fs.create(csvPath1)  // This creates a new file
+// Function to check if the file has a header
+def fileHasHeader(filePath: Path, expectedHeader: String): Boolean = {
+  if (!fs.exists(filePath)) return false
+  val reader = new BufferedReader(new InputStreamReader(fs.open(filePath), "UTF-8"))
+  val firstLine = reader.readLine()
+  reader.close()
+  println(s"Header found: $firstLine")
+  firstLine == expectedHeader
 }
 
-// Create a BufferedWriter to write the data
+// Define header
+val header = "alert_id,Alert-code"
+
+// Check if the file already has the header
+val headerPresent = fileHasHeader(csvPath1, header)
+println(s"Header present: $headerPresent")
+
+// Open file in append mode or create a new one
+val outputStream = if (fs.exists(csvPath1)) fs.append(csvPath1) else fs.create(csvPath1)
 val writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
 
-// Write the data for the alert code to the file
-val alertCodes = List("RA0387", "DC0019", "ALERT_X")  // Example list of alert codes
-
-alertCodes.foreach { alertCode =>
-  val dataToWrite = s"Data for alertCode: $alertCode\n" // Replace with your actual data
-  writer.write(dataToWrite)
+// Write header only if it's not already present
+if (!headerPresent) {
+  println("Writing header...")
+  writer.write(header)
+  writer.newLine()
+} else {
+  println("Skipping header...")
 }
 
-// Close the writer after all data is written
+// Write all formatted alert data
+// Check if we are writing the first alert's data (for ensuring no skip of first records)
+var firstAlertWritten = false
+
+formattedMasterTable1.foreach { data =>
+  // Ensure first record from all alerts gets written
+  if (!firstAlertWritten) {
+    println(s"Writing first record: $data")
+    writer.write(data)
+    writer.newLine()
+    firstAlertWritten = true
+  } else {
+    println(s"Writing subsequent record: $data")
+    writer.write(data)
+    writer.newLine()
+  }
+}
+
+// Close the writer
 writer.close()
 println(s"Data written to $csvPath1")
