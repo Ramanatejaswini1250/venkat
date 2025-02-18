@@ -1,48 +1,54 @@
-import java.io.{BufferedReader, FileReader}
-import scala.collection.mutable.ListBuffer
+import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.conf.Configuration
+import java.io.{BufferedWriter, OutputStreamWriter, BufferedReader, InputStreamReader}
 
-val filePath = "/output/path/combined_master_table.csv"  // Path to your CSV file
+val conf = new Configuration()
+val fs = FileSystem.get(conf)
 
-// List to store the filtered rows for each alertCode
-val filteredRowsByAlertCode = scala.collection.mutable.Map[String, ListBuffer[String]]()
+// Path to your CSV file
+val csvPath1 = new Path("/output/path/master1.csv")
 
-// Create a BufferedReader to read the CSV file
-val reader = new BufferedReader(new FileReader(filePath))
-
-// Read the header first and discard it
-val header = reader.readLine()  // Read and discard the header row
-
-// Initialize a set to track unique alertCodes
-val uniqueAlertCodes = scala.collection.mutable.Set[String]()
-
-// Loop through each line (row) in the file and extract alertCodes
-var line = reader.readLine()
-while (line != null) {
-  // Extract alertCode from each row (assuming alertCode is the first column)
-  val alertCode = line.split(",")(0)  // Assuming the alertCode is in the first column
-
-  // Add the alertCode to the set of unique alertCodes
-  uniqueAlertCodes += alertCode
-
-  // Initialize a list for each alertCode if not already present
-  if (!filteredRowsByAlertCode.contains(alertCode)) {
-    filteredRowsByAlertCode(alertCode) = ListBuffer[String]()
-  }
-
-  // Add the row to the corresponding alertCode list
-  filteredRowsByAlertCode(alertCode) += line
-
-  // Read the next line
-  line = reader.readLine()
+// Function to check if the file has a header
+def fileHasHeader(filePath: Path, expectedHeader: String): Boolean = {
+  if (!fs.exists(filePath)) return false  // File does not exist, so no header
+  val reader = new BufferedReader(new InputStreamReader(fs.open(filePath), "UTF-8"))
+  val firstLine = reader.readLine()
+  reader.close()
+  firstLine == expectedHeader  // Check if the first line matches the expected header
 }
 
-// Close the reader after reading the file
-reader.close()
+// Define the header
+val header = "alert_id,Alert-code"
 
-// Process each alertCode
-uniqueAlertCodes.foreach { alertCode =>
-  println(s"Filtered data for alertCode: $alertCode")
-  filteredRowsByAlertCode(alertCode).foreach(println)
-  val count = filteredRowsByAlertCode(alertCode).size
-  println(s"Count for alertCode $alertCode: $count")
+// Check if the file already has the header
+val headerPresent = fileHasHeader(csvPath1, header)
+
+// Open the file in append mode if it exists, otherwise create a new file
+val outputStream = if (fs.exists(csvPath1)) {
+  fs.append(csvPath1)  // Append to the existing file
+} else {
+  fs.create(csvPath1)  // Create a new file
 }
+
+// Create a BufferedWriter using the correct OutputStreamWriter constructor
+val writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
+
+// Write the header only if it's not already present
+if (!headerPresent) {
+  writer.write(header)
+  writer.newLine()
+}
+
+// Example alert data
+val alertData1 = List("1,DC0019", "2,DC0019")
+val alertData2 = List("3,RA0387", "4,RA0387")
+
+// Append data for each alert to the file
+(alertData1 ++ alertData2).foreach { data =>
+  writer.write(data)
+  writer.newLine()
+}
+
+// Close the writer after all data is written
+writer.close()
+println(s"Data written to $csvPath1")
