@@ -1,45 +1,49 @@
 import java.nio.file.{Files, Paths}
 import scala.collection.JavaConverters._
 
-// Ensure cleanFolderPath is defined
-if (cleanFolderPath != null && cleanFolderPath.nonEmpty) {
-  println(s"Checking Folder at: $cleanFolderPath")
+// Function to get the SQL folder path based on frequency and bteqlocation
+def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
+  s"$bteqLocation/$frequency"
+}
 
-  // List all SQL files in the specified folder
-  val sqlFiles = Files.list(Paths.get(cleanFolderPath))
-    .iterator()
-    .asScala
-    .filter(path => path.toString.endsWith(".sql"))
-    .toList
+// Example inputs for frequency and bteqLocation
+val frequency = "Daily"
+val bteqLocation = "/disk1/bigdata/dev/source/ramp/testing2/etl-ramp-automation/run/sql"
 
-  println(s"Found ${sqlFiles.size} SQL files to process.")
+// Dynamically derive the folder path
+val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
 
-  // Process each SQL file
-  sqlFiles.foreach { filePath =>
-    val cleanSqlFilePath = filePath.toString.stripSuffix(".")
-    println(s"SQL FILEPATH on Driver: $cleanSqlFilePath")
+// List all `.sql` files in the dynamically determined directory
+val sqlFiles = Files.list(Paths.get(sqlFolderPath))
+  .iterator()
+  .asScala
+  .filter(file => file.getFileName.toString.endsWith(".sql"))
+  .map(_.getFileName.toString.stripSuffix(".sql")) // Extract alert codes
+  .toList
 
-    // Use SparkFiles to get the file path on the executor
-    val sqlFilePath = SparkFiles.get(filePath.getFileName.toString)
-    println(s"SQL FILEPATH on executor: $sqlFilePath")
+// Loop through each alert code and process its corresponding SQL file
+for (alertCode <- sqlFiles) {
+  var cleanSqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
 
-    var masterTable1: String = ""
-    var masterTable2: String = ""
+  // Remove any unwanted suffix like ".sql."
+  cleanSqlFilePath = cleanSqlFilePath.replaceAll("\\.sql\\.$", ".sql").stripSuffix(".")
+  println(s"Cleaned SQL FILEPATH on Driver: $cleanSqlFilePath")
 
-    // Check if the file exists
-    if (Files.exists(Paths.get(cleanSqlFilePath))) {
-      try {
-        val (table1, table2) = runSqlScript(conn_rss, stmt_rss, cleanSqlFilePath)
-        masterTable1 = table1
-        masterTable2 = table2
-        println(s"Successfully processed SQL file: $cleanSqlFilePath")
-      } catch {
-        case e: Exception =>
-          println(s"SQL Execution failed for file: $cleanSqlFilePath, Error: ${e.getMessage}")
-          e.printStackTrace()
-      }
-    } else {
-      println(s"File not found: $cleanSqlFilePath")
+  // Dynamically load the SQL file
+  val sqlFilePath = SparkFiles.get(s"${alertCode}.sql")
+  println(s"SQL FILEPATH on executor: $sqlFilePath")
+
+  if (Files.exists(Paths.get(cleanSqlFilePath))) {
+    try {
+      // Execute the SQL file for the current alert code
+      val (table1, table2) = runSqlScript(conn_rss, stmt_rss, cleanSqlFilePath)
+      println(s"Successfully processed Alert: $alertCode, Tables: $table1, $table2")
+    } catch {
+      case e: Exception =>
+        println(s"SQL Execution failed for Alert: $alertCode. Error: ${e.getMessage}")
+        e.printStackTrace()
     }
+  } else {
+    println(s"File not found for Alert: $alertCode at path: $cleanSqlFilePath")
   }
 }
