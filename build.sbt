@@ -1,67 +1,99 @@
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Row, SparkSession}
 import java.io.{BufferedReader, FileReader}
+import javax.mail._
+import javax.mail.internet._
+import java.util.Properties
 import scala.collection.mutable
 
-object AlertCodeComparison {
+object AlertCodeDataComparison {
 
   def main(args: Array[String]): Unit = {
     // Initialize Spark session
     val spark = SparkSession.builder()
-      .appName("Alert Code Comparison")
-      .master("local[*]") // Adjust as needed for your environment
+      .appName("Alert Code Data Comparison with Email Notification")
+      .master("local[*]") // Adjust as needed
       .getOrCreate()
 
-    // Step 1: Load the master table from the database
+    // Step 1: Load data from master_table1
     val masterTableDF = spark.sql("SELECT * FROM master_table1")
 
-    // Step 2: Count occurrences of each alert_code in the master table
-    val masterAlertCodeCounts = masterTableDF.groupBy("alert_code")
-      .count()
-      .collect() // Collect to driver for comparison
-      .map(row => (row.getString(0), row.getLong(1).toInt))
-      .toMap
+    // Collect the data as a map with alert_code as the key
+    val masterDataMap = masterTableDF.collect().groupBy(row => row.getString(1))
 
-    // Step 3: Read and count alert codes from the CSV file
+    // Step 2: Read data from the CSV file
     val csvFilePath = "/path/to/master1.csv"
-    val csvAlertCodeCounts = readCsvAlertCodeCounts(csvFilePath)
+    val csvDataMap = readCsvData(csvFilePath)
 
-    // Step 4: Compare counts
-    val mismatchedAlertCodes = mutable.ArrayBuffer[String]()
-    masterAlertCodeCounts.foreach { case (alertCode, masterCount) =>
-      val csvCount = csvAlertCodeCounts.getOrElse(alertCode, 0)
-      if (masterCount != csvCount) {
-        mismatchedAlertCodes += s"Alert Code: $alertCode, Master Count: $masterCount, CSV Count: $csvCount"
+    // Step 3: Compare data for each alert code
+    val mismatchedRecords = mutable.ArrayBuffer[String]()
+
+    // Compare each alert code in the master table with the CSV
+    masterDataMap.foreach { case (alertCode, masterRows) =>
+      val csvRows = csvDataMap.getOrElse(alertCode, Array.empty[Array[String]])
+
+      // Compare row-by-row
+      if (masterRows.length != csvRows.length) {
+        mismatchedRecords += s"Alert Code: $alertCode - Row count mismatch. Master Count: ${masterRows.length}, CSV Count: ${csvRows.length}"
+      } else {
+        // Compare row contents
+        for (i <- masterRows.indices) {
+          val masterRow = masterRows(i)
+          val csvRow = csvRows(i)
+
+          if (masterRow.toSeq.map(_.toString) != csvRow) {
+            mismatchedRecords += s"Alert Code: $alertCode - Mismatch found. Master Row: ${masterRow.mkString(",")}, CSV Row: ${csvRow.mkString(",")}"
+          }
+        }
       }
     }
 
-    // Step 5: Output results
-    if (mismatchedAlertCodes.isEmpty) {
-      println("All alert counts match successfully.")
+    // Step 4: Send email if mismatches are found
+    if (mismatchedRecords.nonEmpty) {
+      val subject = "Alert Code Data Mismatch Detected"
+      val body = "The following data mismatches were found:\n" + mismatchedRecords.mkString("\n")
+      sendEmail("your_email@example.com", subject, body)
     } else {
-      println("Mismatched Alert Codes Found:")
-      mismatchedAlertCodes.foreach(println)
+      println("Data comparison successful. No mismatches found.")
     }
-
-    spark.stop()
   }
 
-  // Function to read a CSV file and count occurrences of alert codes
-  def readCsvAlertCodeCounts(filePath: String): mutable.Map[String, Int] = {
-    val alertCodeCountMap = mutable.Map[String, Int]()
-    val bufferedReader = new BufferedReader(new FileReader(filePath))
-    bufferedReader.readLine() // Skip header
+  // Function to read data from the CSV and group it by alert code
+  def readCsvData(csvFilePath: String): Map[String, Array[Array[String]]] = {
+    val bufferedReader = new BufferedReader(new FileReader(csvFilePath))
+    val csvData = mutable.Map[String, mutable.ArrayBuffer[Array[String]]]()
 
-    var line: String = bufferedReader.readLine()
+    var line = bufferedReader.readLine() // Read the header
+    line = bufferedReader.readLine() // Start from the first data line
+
     while (line != null) {
-      val columns = line.split(",") // Assuming CSV is comma-separated
-      if (columns.length > 0) {
-        val alertCode = columns(0).trim // Assuming alert code is in the first column
-        val count = alertCodeCountMap.getOrElse(alertCode, 0)
-        alertCodeCountMap.update(alertCode, count + 1)
-      }
+      val columns = line.split(",").map(_.trim)
+      val alertCode = columns(1) // Assuming the second column is alert_code
+      csvData.getOrElseUpdate(alertCode, mutable.ArrayBuffer()) += columns
       line = bufferedReader.readLine()
     }
+
     bufferedReader.close()
-    alertCodeCountMap
+    csvData.mapValues(_.toArray).toMap
+  }
+
+  // Function to send email
+  def sendEmail(to: String, subject: String, body: String): Unit = {
+    val from = "your_email@example.com"
+    val host = "smtp.example.com"
+    val properties = System.getProperties
+    properties.setProperty("mail.smtp.host", host)
+
+    val session = Session.getDefaultInstance(properties)
+    try {
+      val message = new MimeMessage(session)
+      message.setFrom(new InternetAddress(from))
+      message.addRecipient(Message.RecipientType.TO, new InternetAddress(to))
+      message.setSubject(subject)
+      message.setText(body)
+      Transport.send(message)
+      println("Email sent successfully.")
+    } catch {
+      case e: Exception => e.printStackTrace()
+    }
   }
 }
