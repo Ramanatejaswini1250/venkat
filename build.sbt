@@ -1,43 +1,51 @@
+import org.apache.spark.sql.SparkSession
 import java.io.{BufferedReader, FileReader}
-import java.util.Properties
-import javax.mail.{Message, Session, Transport}
-import javax.mail.internet.{InternetAddress, MimeMessage}
 import scala.collection.mutable
-import scala.io.Source
 
-object AlertCodeValidator {
+object AlertCodeComparison {
 
   def main(args: Array[String]): Unit = {
+    // Initialize Spark session
+    val spark = SparkSession.builder()
+      .appName("Alert Code Comparison")
+      .master("local[*]") // Adjust as needed for your environment
+      .getOrCreate()
+
+    // Step 1: Load the master table from the database
+    val masterTableDF = spark.sql("SELECT * FROM master_table1")
+
+    // Step 2: Count occurrences of each alert_code in the master table
+    val masterAlertCodeCounts = masterTableDF.groupBy("alert_code")
+      .count()
+      .collect() // Collect to driver for comparison
+      .map(row => (row.getString(0), row.getLong(1).toInt))
+      .toMap
+
+    // Step 3: Read and count alert codes from the CSV file
     val csvFilePath = "/path/to/master1.csv"
-    val masterTableFilePath = "/path/to/masterTable1.csv"
+    val csvAlertCodeCounts = readCsvAlertCodeCounts(csvFilePath)
 
-    // Step 1: Read CSV file and count alert codes
-    val csvAlertCodeCountMap = readCsvAlertCodeCounts(csvFilePath)
-
-    // Step 2: Read master table CSV file and count alert codes
-    val masterAlertCodeCountMap = readCsvAlertCodeCounts(masterTableFilePath)
-
-    // Step 3: Compare CSV counts with master table counts
+    // Step 4: Compare counts
     val mismatchedAlertCodes = mutable.ArrayBuffer[String]()
-
-    csvAlertCodeCountMap.foreach { case (alertCode, csvCount) =>
-      val masterCount = masterAlertCodeCountMap.getOrElse(alertCode, 0)
-      if (csvCount != masterCount) {
-        mismatchedAlertCodes += s"Alert Code: $alertCode, CSV Count: $csvCount, Master Count: $masterCount"
+    masterAlertCodeCounts.foreach { case (alertCode, masterCount) =>
+      val csvCount = csvAlertCodeCounts.getOrElse(alertCode, 0)
+      if (masterCount != csvCount) {
+        mismatchedAlertCodes += s"Alert Code: $alertCode, Master Count: $masterCount, CSV Count: $csvCount"
       }
     }
 
-    // Step 4: Send email or print success
+    // Step 5: Output results
     if (mismatchedAlertCodes.isEmpty) {
       println("All alert counts match successfully.")
     } else {
       println("Mismatched Alert Codes Found:")
       mismatchedAlertCodes.foreach(println)
-      sendEmail(mismatchedAlertCodes)
     }
+
+    spark.stop()
   }
 
-  // Method to read CSV file using BufferedReader and count alert codes
+  // Function to read a CSV file and count occurrences of alert codes
   def readCsvAlertCodeCounts(filePath: String): mutable.Map[String, Int] = {
     val alertCodeCountMap = mutable.Map[String, Int]()
     val bufferedReader = new BufferedReader(new FileReader(filePath))
@@ -47,7 +55,7 @@ object AlertCodeValidator {
     while (line != null) {
       val columns = line.split(",") // Assuming CSV is comma-separated
       if (columns.length > 0) {
-        val alertCode = columns(0).trim
+        val alertCode = columns(0).trim // Assuming alert code is in the first column
         val count = alertCodeCountMap.getOrElse(alertCode, 0)
         alertCodeCountMap.update(alertCode, count + 1)
       }
@@ -55,25 +63,5 @@ object AlertCodeValidator {
     }
     bufferedReader.close()
     alertCodeCountMap
-  }
-
-  // Method to send an email notification with mismatched alert codes
-  def sendEmail(mismatchedAlertCodes: Seq[String]): Unit = {
-    val smtpHost = "smtp.example.com" // Replace with actual SMTP host
-    val fromEmail = "alerts@example.com"
-    val toEmail = "recipient@example.com"
-
-    val properties = new Properties()
-    properties.put("mail.smtp.host", smtpHost)
-    val session = Session.getDefaultInstance(properties)
-
-    val message = new MimeMessage(session)
-    message.setFrom(new InternetAddress(fromEmail))
-    message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
-    message.setSubject("Alert Code Count Mismatch Detected")
-    message.setText("The following alert codes have count mismatches:\n" + mismatchedAlertCodes.mkString("\n"))
-
-    Transport.send(message)
-    println("Mismatch email sent successfully.")
   }
 }
