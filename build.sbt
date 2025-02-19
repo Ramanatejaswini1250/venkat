@@ -3,37 +3,31 @@ import java.util.Properties
 import javax.mail.{Message, Session, Transport}
 import javax.mail.internet.{InternetAddress, MimeMessage}
 import scala.collection.mutable
-import org.apache.spark.sql.{SparkSession, DataFrame}
+import scala.io.Source
 
 object AlertCodeValidator {
 
   def main(args: Array[String]): Unit = {
     val csvFilePath = "/path/to/master1.csv"
-    val masterTablePath = "/path/to/masterTable1" // Replace with actual master table path or JDBC connection details
+    val masterTableFilePath = "/path/to/masterTable1.csv"
 
     // Step 1: Read CSV file and count alert codes
-    val alertCodeCountMap = readCsvAlertCodeCounts(csvFilePath)
+    val csvAlertCodeCountMap = readCsvAlertCodeCounts(csvFilePath)
 
-    // Step 2: Read master table (Assuming Spark DataFrame here)
-    val spark = SparkSession.builder().appName("Alert Code Validator").getOrCreate()
-    val masterTableDF = spark.read.option("header", "true").csv(masterTablePath) // Replace with actual table read method
+    // Step 2: Read master table CSV file and count alert codes
+    val masterAlertCodeCountMap = readCsvAlertCodeCounts(masterTableFilePath)
 
-    // Step 3: Group master table by alert code and count records
-    val masterTableAlertCodeCounts = masterTableDF.groupBy("alert_code").count().collect().map(row =>
-      row.getString(0) -> row.getLong(1).toInt
-    ).toMap
-
-    // Step 4: Compare CSV counts with master table counts
+    // Step 3: Compare CSV counts with master table counts
     val mismatchedAlertCodes = mutable.ArrayBuffer[String]()
 
-    alertCodeCountMap.foreach { case (alertCode, csvCount) =>
-      val masterCount = masterTableAlertCodeCounts.getOrElse(alertCode, 0)
+    csvAlertCodeCountMap.foreach { case (alertCode, csvCount) =>
+      val masterCount = masterAlertCodeCountMap.getOrElse(alertCode, 0)
       if (csvCount != masterCount) {
         mismatchedAlertCodes += s"Alert Code: $alertCode, CSV Count: $csvCount, Master Count: $masterCount"
       }
     }
 
-    // Step 5: Send email or print success
+    // Step 4: Send email or print success
     if (mismatchedAlertCodes.isEmpty) {
       println("All alert counts match successfully.")
     } else {
@@ -41,9 +35,6 @@ object AlertCodeValidator {
       mismatchedAlertCodes.foreach(println)
       sendEmail(mismatchedAlertCodes)
     }
-
-    // Stop Spark session
-    spark.stop()
   }
 
   // Method to read CSV file using BufferedReader and count alert codes
