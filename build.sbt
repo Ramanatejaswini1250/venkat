@@ -1,41 +1,88 @@
+import java.io.{BufferedReader, FileReader}
+import java.util.Properties
+import javax.mail.{Message, Session, Transport}
+import javax.mail.internet.{InternetAddress, MimeMessage}
 import scala.collection.mutable
-import org.apache.spark.sql.{DataFrame, SparkSession}
-import org.apache.spark.sql.functions._
+import org.apache.spark.sql.{SparkSession, DataFrame}
 
-object AlertCodeComparison {
+object AlertCodeValidator {
+
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession.builder()
-      .appName("Alert Code Comparison")
-      .master("local[*]") // Change this to the correct cluster mode
-      .getOrCreate()
+    val csvFilePath = "/path/to/master1.csv"
+    val masterTablePath = "/path/to/masterTable1" // Replace with actual master table path or JDBC connection details
 
-    // Sample MasterTable1 DataFrame (Replace with actual data loading)
-    val masterTable1DF: DataFrame = spark.read
-      .option("header", "true") // Ensures the first line is treated as header
-      .csv("path/to/mastertable1.csv")
+    // Step 1: Read CSV file and count alert codes
+    val alertCodeCountMap = readCsvAlertCodeCounts(csvFilePath)
 
-    // Group by alert code and calculate record counts
-    val masterTable1AlertCodeCounts = masterTable1DF
-      .groupBy("alert_code")
-      .count()
-      .collect()
-      .map(row => (row.getString(0), row.getLong(1).toInt)) // Ensures proper type conversion to Int
-      .toMap
+    // Step 2: Read master table (Assuming Spark DataFrame here)
+    val spark = SparkSession.builder().appName("Alert Code Validator").getOrCreate()
+    val masterTableDF = spark.read.option("header", "true").csv(masterTablePath) // Replace with actual table read method
 
-    // Initialize mutable Map to hold alert code counts
+    // Step 3: Group master table by alert code and count records
+    val masterTableAlertCodeCounts = masterTableDF.groupBy("alert_code").count().collect().map(row =>
+      row.getString(0) -> row.getLong(1).toInt
+    ).toMap
+
+    // Step 4: Compare CSV counts with master table counts
+    val mismatchedAlertCodes = mutable.ArrayBuffer[String]()
+
+    alertCodeCountMap.foreach { case (alertCode, csvCount) =>
+      val masterCount = masterTableAlertCodeCounts.getOrElse(alertCode, 0)
+      if (csvCount != masterCount) {
+        mismatchedAlertCodes += s"Alert Code: $alertCode, CSV Count: $csvCount, Master Count: $masterCount"
+      }
+    }
+
+    // Step 5: Send email or print success
+    if (mismatchedAlertCodes.isEmpty) {
+      println("All alert counts match successfully.")
+    } else {
+      println("Mismatched Alert Codes Found:")
+      mismatchedAlertCodes.foreach(println)
+      sendEmail(mismatchedAlertCodes)
+    }
+
+    // Stop Spark session
+    spark.stop()
+  }
+
+  // Method to read CSV file using BufferedReader and count alert codes
+  def readCsvAlertCodeCounts(filePath: String): mutable.Map[String, Int] = {
     val alertCodeCountMap = mutable.Map[String, Int]()
+    val bufferedReader = new BufferedReader(new FileReader(filePath))
+    bufferedReader.readLine() // Skip header
 
-    // Sample logic to update map
-    masterTable1AlertCodeCounts.foreach { case (alertCode, count) =>
-      val currentCount = alertCodeCountMap.getOrElse(alertCode, 0)
-      alertCodeCountMap.update(alertCode, currentCount + count)
+    var line: String = bufferedReader.readLine()
+    while (line != null) {
+      val columns = line.split(",") // Assuming CSV is comma-separated
+      if (columns.length > 0) {
+        val alertCode = columns(0).trim
+        val count = alertCodeCountMap.getOrElse(alertCode, 0)
+        alertCodeCountMap.update(alertCode, count + 1)
+      }
+      line = bufferedReader.readLine()
     }
+    bufferedReader.close()
+    alertCodeCountMap
+  }
 
-    // Debug print for verification
-    alertCodeCountMap.foreach { case (alertCode, count) =>
-      println(s"Alert Code: $alertCode, Count: $count")
-    }
+  // Method to send an email notification with mismatched alert codes
+  def sendEmail(mismatchedAlertCodes: Seq[String]): Unit = {
+    val smtpHost = "smtp.example.com" // Replace with actual SMTP host
+    val fromEmail = "alerts@example.com"
+    val toEmail = "recipient@example.com"
 
-    // Additional comparisons or validations can be performed here
-    // For example: Compare masterTable1 counts with another table or CSV
+    val properties = new Properties()
+    properties.put("mail.smtp.host", smtpHost)
+    val session = Session.getDefaultInstance(properties)
 
+    val message = new MimeMessage(session)
+    message.setFrom(new InternetAddress(fromEmail))
+    message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail))
+    message.setSubject("Alert Code Count Mismatch Detected")
+    message.setText("The following alert codes have count mismatches:\n" + mismatchedAlertCodes.mkString("\n"))
+
+    Transport.send(message)
+    println("Mismatch email sent successfully.")
+  }
+}
