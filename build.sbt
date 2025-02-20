@@ -1,63 +1,101 @@
-import java.io.File
+import org.apache.spark.sql.SparkSession
+import scala.collection.mutable
+import java.util.{Date, Properties, Calendar}
+import javax.mail._
+import javax.mail.internet._
 import java.text.SimpleDateFormat
-import java.util.{Calendar, Timer, TimerTask}
 
-object RampAutomationExecution {
+// Initialize Spark session
+val spark = SparkSession.builder().appName("Alert Status Tracking").getOrCreate()
 
-  def main(args: Array[String]): Unit = {
-    scheduleConsolidatedEmail()
-    spark.stop() // Ensure proper stopping of Spark
-  }
+// Sample DataFrame (replace with your actual DataFrame)
+val alertsDF = spark.read.format("jdbc")
+  .option("url", "jdbc:mysql://your-db-host/your-db")
+  .option("dbtable", "alerts_table")
+  .option("user", "your-username")
+  .option("password", "your-password")
+  .load()
 
-  def scheduleConsolidatedEmail(): Unit = {
-    val dateFormat = new SimpleDateFormat("yyyy-MM-dd")
-    val today = dateFormat.format(Calendar.getInstance().getTime)
-    val flagFile = new File(s"/path/to/flags/consolidated_email_sent_$today.flag")
+// Collections to track alert statuses
+val successAlerts = mutable.Set[String]()
+val failedAlerts = mutable.Set[String]()
+val receivedAlerts = mutable.Set[String]() // Track all alerts received
 
-    // Check if the email has already been sent today
-    if (flagFile.exists()) {
-      println(s"Consolidated email already sent for $today. Skipping.")
-      return
+// Use synchronized blocks to ensure thread safety when updating shared collections
+alertsDF.foreachPartition(partition => {
+  partition.foreach(row => {
+    val alertCode = row.getAs[String]("alert_code")
+    val dtCount = row.getAs[Int]("dt_count")
+    val sourceCount = row.getAs[Int]("source_count")
+
+    // Track received alerts
+    receivedAlerts.synchronized {
+      receivedAlerts += alertCode
     }
 
-    // Schedule the email for 4:00 PM AEST
-    println(s"Scheduling consolidated email for 4:00 PM AEST on $today")
-    val timer = new Timer()
-    val scheduledTime = getScheduledTime(16, 0, 0) // 4:00 PM
-
-    timer.schedule(new TimerTask {
-      override def run(): Unit = {
-        sendConsolidatedEmail()
-        markEmailAsSent(flagFile)
-      }
-    }, scheduledTime)
-  }
-
-  def getScheduledTime(hour: Int, minute: Int, second: Int): java.util.Date = {
-    val calendar = Calendar.getInstance()
-    calendar.set(Calendar.HOUR_OF_DAY, hour)
-    calendar.set(Calendar.MINUTE, minute)
-    calendar.set(Calendar.SECOND, second)
-    calendar.getTime
-  }
-
-  def sendConsolidatedEmail(): Unit = {
-    // Your email-sending logic
-    println("Sending consolidated email...")
-  }
-
-  def markEmailAsSent(flagFile: File): Unit = {
-    try {
-      if (flagFile.createNewFile()) {
-        println(s"Flag file created: ${flagFile.getAbsolutePath}")
+    // Check validation conditions
+    if (dtCount > 0) {
+      if (sourceCount == dtCount) {
+        // Simulate successful execution of alertCode.sql
+        println(s"Executing $alertCode.sql")
+        successAlerts.synchronized {
+          successAlerts += alertCode
+        }
       } else {
-        println(s"Failed to create flag file: ${flagFile.getAbsolutePath}")
+        println(s"Validation failed for $alertCode: sourceCount ($sourceCount) != dtCount ($dtCount)")
+        failedAlerts.synchronized {
+          failedAlerts += alertCode
+        }
       }
-    } catch {
-      case e: Exception =>
-        println(s"Error creating flag file: ${e.getMessage}")
     }
-  }
+  })
+})
+
+// Identify expected daily alerts (replace with your actual criteria)
+val expectedDailyAlerts = alertsDF.filter(row => row.getAs[String]("frequency") == "daily")
+val expectedAlertCodes = expectedDailyAlerts.select("alert_code").distinct().collect().map(_.getString(0)).toSet
+
+// Identify missed alerts (alerts expected but not received)
+val missedAlerts = expectedAlertCodes.diff(receivedAlerts)
+
+// Consolidate alert statuses
+val currentDate = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
+val emailBody = s"""
+  |Consolidated Alert Report:
+  |
+  |Success Alerts:
+  |${successAlerts.mkString(", ")}
+  |
+  |Failed Alerts:
+  |${failedAlerts.mkString(", ")}
+  |
+  |Missed Alerts:
+  |${missedAlerts.mkString(", ")}
+  |
+  |Cutoff Time: 4:00 PM AEST
+""".stripMargin
+
+// Email sending function
+def sendEmail(subject: String, body: String): Unit = {
+  val properties = new Properties()
+  properties.put("mail.smtp.host", "smtp.your-email-provider.com")
+  properties.put("mail.smtp.port", "587")
+  properties.put("mail.smtp.auth", "true")
+
+  val session = Session.getInstance(properties, new javax.mail.Authenticator() {
+    override protected def getPasswordAuthentication: PasswordAuthentication =
+      new PasswordAuthentication("your-email@example.com", "your-email-password")
+  })
+
+  val message = new MimeMessage(session)
+  message.setFrom(new InternetAddress("your-email@example.com"))
+  message.setRecipients(Message.RecipientType.TO, "cdao@gmail.com")
+  message.setSubject(subject)
+  message.setText(body)
+
+  Transport.send(message)
+  println("Email sent successfully.")
 }
 
-
+// Send the consolidated email at the cutoff time
+sendEmail(s"Consolidated Alert Report - $currentDate", emailBody)
