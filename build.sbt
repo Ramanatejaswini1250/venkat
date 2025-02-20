@@ -1,6 +1,6 @@
 import org.apache.spark.sql.SparkSession
 import scala.collection.mutable
-import java.util.{Date, Properties, Calendar}
+import java.util.{Date, Properties}
 import javax.mail._
 import javax.mail.internet._
 import java.text.SimpleDateFormat
@@ -8,7 +8,7 @@ import java.text.SimpleDateFormat
 // Initialize Spark session
 val spark = SparkSession.builder().appName("Alert Status Tracking").getOrCreate()
 
-// Sample DataFrame (replace with your actual DataFrame)
+// Sample DataFrame (replace with actual data source)
 val alertsDF = spark.read.format("jdbc")
   .option("url", "jdbc:mysql://your-db-host/your-db")
   .option("dbtable", "alerts_table")
@@ -18,10 +18,10 @@ val alertsDF = spark.read.format("jdbc")
 
 // Collections to track alert statuses
 val successAlerts = mutable.Set[String]()
-val failedAlerts = mutable.Set[String]()
+val failedAlerts = mutable.Map[String, String]() // Map to track failed alerts and reasons
 val receivedAlerts = mutable.Set[String]() // Track all alerts received
 
-// Use synchronized blocks to ensure thread safety when updating shared collections
+// Process alerts in df.foreachPartition
 alertsDF.foreachPartition(partition => {
   partition.foreach(row => {
     val alertCode = row.getAs[String]("alert_code")
@@ -29,73 +29,43 @@ alertsDF.foreachPartition(partition => {
     val sourceCount = row.getAs[Int]("source_count")
 
     // Track received alerts
-    receivedAlerts.synchronized {
-      receivedAlerts += alertCode
-    }
+    receivedAlerts.synchronized { receivedAlerts += alertCode }
 
-    // Check validation conditions
+    // Validate and categorize alerts
     if (dtCount > 0) {
       if (sourceCount == dtCount) {
-        // Simulate successful execution of alertCode.sql
-        println(s"Executing $alertCode.sql")
-        successAlerts.synchronized {
-          successAlerts += alertCode
-        }
+        successAlerts.synchronized { successAlerts += alertCode }
       } else {
-        println(s"Validation failed for $alertCode: sourceCount ($sourceCount) != dtCount ($dtCount)")
-        failedAlerts.synchronized {
-          failedAlerts += alertCode
-        }
+        val reason = s"sourceCount ($sourceCount) != dtCount ($dtCount)"
+        failedAlerts.synchronized { failedAlerts += (alertCode -> reason) }
       }
+    } else {
+      val reason = "dtCount is 0 or negative"
+      failedAlerts.synchronized { failedAlerts += (alertCode -> reason) }
     }
   })
 })
 
-// Identify expected daily alerts (replace with your actual criteria)
+// Identify missed alerts (replace with actual expected alert logic)
 val expectedDailyAlerts = alertsDF.filter(row => row.getAs[String]("frequency") == "daily")
 val expectedAlertCodes = expectedDailyAlerts.select("alert_code").distinct().collect().map(_.getString(0)).toSet
-
-// Identify missed alerts (alerts expected but not received)
 val missedAlerts = expectedAlertCodes.diff(receivedAlerts)
 
-// Consolidate alert statuses
-val currentDate = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
-val emailBody = s"""
-  |Consolidated Alert Report:
+// Format email body as HTML
+val emailBodyHtml = s"""
+  |<html>
+  |<body>
+  |<h2>Consolidated Alert Report</h2>
+  |<h3>Success Alerts:</h3>
+  |<table border="1" cellpadding="5" cellspacing="0">
+  |  <tr><th>Alert Code</th></tr>
+  |  ${successAlerts.map(code => s"<tr><td>$code</td></tr>").mkString("\n")}
+  |</table>
   |
-  |Success Alerts:
-  |${successAlerts.mkString(", ")}
+  |<h3>Failed Alerts:</h3>
+  |<table border="1" cellpadding="5" cellspacing="0">
+  |  <tr><th>Alert Code</th><th>Reason</th></tr>
+  |  ${failedAlerts.map { case (code, reason) => s"<tr><td>$code</td><td>$reason</td></tr>" }.mkString("\n")}
+  |</table>
   |
-  |Failed Alerts:
-  |${failedAlerts.mkString(", ")}
-  |
-  |Missed Alerts:
-  |${missedAlerts.mkString(", ")}
-  |
-  |Cutoff Time: 4:00 PM AEST
-""".stripMargin
-
-// Email sending function
-def sendEmail(subject: String, body: String): Unit = {
-  val properties = new Properties()
-  properties.put("mail.smtp.host", "smtp.your-email-provider.com")
-  properties.put("mail.smtp.port", "587")
-  properties.put("mail.smtp.auth", "true")
-
-  val session = Session.getInstance(properties, new javax.mail.Authenticator() {
-    override protected def getPasswordAuthentication: PasswordAuthentication =
-      new PasswordAuthentication("your-email@example.com", "your-email-password")
-  })
-
-  val message = new MimeMessage(session)
-  message.setFrom(new InternetAddress("your-email@example.com"))
-  message.setRecipients(Message.RecipientType.TO, "cdao@gmail.com")
-  message.setSubject(subject)
-  message.setText(body)
-
-  Transport.send(message)
-  println("Email sent successfully.")
-}
-
-// Send the consolidated email at the cutoff time
-sendEmail(s"Consolidated Alert Report - $currentDate", emailBody)
+  |<
