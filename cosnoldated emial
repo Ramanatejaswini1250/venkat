@@ -68,3 +68,20 @@ def sendConsolidatedEmail(allSuccess: Seq[String], allFailures: Seq[String], cur
 
   EmailService.sendEmail(subject, message)
 }
+
+
+val fullMessageText = 
+  s"""
+  Hi Team,<br><br>
+  $messageText<br><br>
+  $htmlTable<br><br>
+  Thanks and Regards,<br>
+  CDAO RAMP Team<br><br>
+  ****************** IMPORTANT MESSAGE ******************<br>
+  This e-mail message is intended only for the addressee(s) and contains information which may be confidential.<br>
+  If you are not the intended recipient, please advise the sender by return email, do not use or disclose the contents, and delete the message and any attachments.<br>
+  This email does not constitute formal advice or commitment by the sender or the Commonwealth Bank of Australia (ABN 48 123 123 124) or its subsidiaries.<br>
+  <br>
+  We can be contacted through our website: commbank.com.au. If you no longer wish to receive commercial electronic messages from us, please reply with "unsubscribe" in the subject line.
+  """.stripMargin.replaceAll("#", "").trim
+
