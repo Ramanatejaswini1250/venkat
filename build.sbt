@@ -1,71 +1,189 @@
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.util.AccumulatorV2
 import scala.collection.mutable
 import java.util.{Date, Properties}
+import java.text.SimpleDateFormat
 import javax.mail._
 import javax.mail.internet._
-import java.text.SimpleDateFormat
 
-// Initialize Spark session
-val spark = SparkSession.builder().appName("Alert Status Tracking").getOrCreate()
+// ----- Custom Accumulator for Set[String] -----
+class SetAccumulator extends AccumulatorV2[String, Set[String]] {
+  private val _set: mutable.Set[String] = mutable.Set[String]()
+  def isZero: Boolean = _set.isEmpty
+  def copy(): AccumulatorV2[String, Set[String]] = {
+    val newAcc = new SetAccumulator()
+    newAcc._set ++= _set
+    newAcc
+  }
+  def reset(): Unit = _set.clear()
+  def add(v: String): Unit = _set += v
+  def merge(other: AccumulatorV2[String, Set[String]]): Unit = other match {
+    case o: SetAccumulator => _set ++= o._set
+    case _ => throw new UnsupportedOperationException("Cannot merge with different type")
+  }
+  def value: Set[String] = _set.toSet
+}
 
-// Sample DataFrame (replace with actual data source)
-val alertsDF = spark.read.format("jdbc")
-  .option("url", "jdbc:mysql://your-db-host/your-db")
-  .option("dbtable", "alerts_table")
-  .option("user", "your-username")
-  .option("password", "your-password")
-  .load()
+// ----- Custom Accumulator for Map[String, String] -----
+class MapAccumulator extends AccumulatorV2[(String, String), Map[String, String]] {
+  private val _map: mutable.Map[String, String] = mutable.Map[String, String]()
+  def isZero: Boolean = _map.isEmpty
+  def copy(): AccumulatorV2[(String, String), Map[String, String]] = {
+    val newAcc = new MapAccumulator()
+    newAcc._map ++= _map
+    newAcc
+  }
+  def reset(): Unit = _map.clear()
+  def add(v: (String, String)): Unit = _map += v
+  def merge(other: AccumulatorV2[(String, String), Map[String, String]]): Unit = other match {
+    case o: MapAccumulator => _map ++= o._map
+    case _ => throw new UnsupportedOperationException("Cannot merge with different type")
+  }
+  def value: Map[String, String] = _map.toMap
+}
 
-// Collections to track alert statuses
-val successAlerts = mutable.Set[String]()
-val failedAlerts = mutable.Map[String, String]() // Map to track failed alerts and reasons
-val receivedAlerts = mutable.Set[String]() // Track all alerts received
+// ----- Email Sending Function -----
+def sendEmail(subject: String, bodyHtml: String): Unit = {
+  val properties = new Properties()
+  properties.put("mail.smtp.host", "smtp.your-email-provider.com")
+  properties.put("mail.smtp.port", "587")
+  properties.put("mail.smtp.auth", "true")
 
-// Process alerts in df.foreachPartition
-alertsDF.foreachPartition(partition => {
-  partition.foreach(row => {
-    val alertCode = row.getAs[String]("alert_code")
-    val dtCount = row.getAs[Int]("dt_count")
-    val sourceCount = row.getAs[Int]("source_count")
-
-    // Track received alerts
-    receivedAlerts.synchronized { receivedAlerts += alertCode }
-
-    // Validate and categorize alerts
-    if (dtCount > 0) {
-      if (sourceCount == dtCount) {
-        successAlerts.synchronized { successAlerts += alertCode }
-      } else {
-        val reason = s"sourceCount ($sourceCount) != dtCount ($dtCount)"
-        failedAlerts.synchronized { failedAlerts += (alertCode -> reason) }
-      }
-    } else {
-      val reason = "dtCount is 0 or negative"
-      failedAlerts.synchronized { failedAlerts += (alertCode -> reason) }
-    }
+  val session = Session.getInstance(properties, new Authenticator() {
+    override protected def getPasswordAuthentication: PasswordAuthentication =
+      new PasswordAuthentication("your-email@example.com", "your-email-password")
   })
-})
 
-// Identify missed alerts (replace with actual expected alert logic)
-val expectedDailyAlerts = alertsDF.filter(row => row.getAs[String]("frequency") == "daily")
-val expectedAlertCodes = expectedDailyAlerts.select("alert_code").distinct().collect().map(_.getString(0)).toSet
-val missedAlerts = expectedAlertCodes.diff(receivedAlerts)
+  val message = new MimeMessage(session)
+  message.setFrom(new InternetAddress("your-email@example.com"))
+  message.setRecipients(Message.RecipientType.TO, "cdao@gmail.com")
+  message.setSubject(subject)
+  message.setContent(bodyHtml, "text/html; charset=utf-8")
 
-// Format email body as HTML
-val emailBodyHtml = s"""
-  |<html>
-  |<body>
-  |<h2>Consolidated Alert Report</h2>
-  |<h3>Success Alerts:</h3>
-  |<table border="1" cellpadding="5" cellspacing="0">
-  |  <tr><th>Alert Code</th></tr>
-  |  ${successAlerts.map(code => s"<tr><td>$code</td></tr>").mkString("\n")}
-  |</table>
-  |
-  |<h3>Failed Alerts:</h3>
-  |<table border="1" cellpadding="5" cellspacing="0">
-  |  <tr><th>Alert Code</th><th>Reason</th></tr>
-  |  ${failedAlerts.map { case (code, reason) => s"<tr><td>$code</td><td>$reason</td></tr>" }.mkString("\n")}
-  |</table>
-  |
-  |<
+  Transport.send(message)
+  println("Email sent successfully.")
+}
+
+// ----- Consolidated Mail Function -----
+// This function builds the email body using the aggregated results and sends the email.
+def consolidatedMail(successAlerts: Set[String],
+                       failedAlerts: Map[String, String],
+                       missedAlerts: Set[String]): Unit = {
+  val currentDate = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
+  val emailBodyHtml = s"""
+    |<html>
+    |<head>
+    |  <style type="text/css">
+    |    body { font-family: Arial, sans-serif; }
+    |    h2 { color: #2E4053; }
+    |    table { border-collapse: collapse; width: 100%; }
+    |    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    |    th { background-color: #4CAF50; color: white; }
+    |    .success { background-color: #d4edda; color: #155724; }
+    |    .failed { background-color: #f8d7da; color: #721c24; }
+    |    .missed { background-color: #fff3cd; color: #856404; }
+    |    tr:hover { background-color: #f1f1f1; }
+    |  </style>
+    |</head>
+    |<body>
+    |  <h2>Consolidated Alert Report - $currentDate</h2>
+    |
+    |  <h3>Success Alerts</h3>
+    |  <table>
+    |    <tr><th>Alert Code</th></tr>
+    |    ${if (successAlerts.isEmpty) "<tr><td>No successful alerts</td></tr>"
+         else successAlerts.map(code => s"<tr class='success'><td>$code</td></tr>").mkString("\n")}
+    |  </table>
+    |
+    |  <h3>Failed Alerts</h3>
+    |  <table>
+    |    <tr><th>Alert Code</th><th>Reason</th></tr>
+    |    ${if (failedAlerts.isEmpty) "<tr><td colspan='2'>No failed alerts</td></tr>"
+         else failedAlerts.map { case (code, reason) => s"<tr class='failed'><td>$code</td><td>$reason</td></tr>" }.mkString("\n")}
+    |  </table>
+    |
+    |  <h3>Missed Alerts (Daily & Weekly)</h3>
+    |  <table>
+    |    <tr><th>Alert Code</th></tr>
+    |    ${if (missedAlerts.isEmpty) "<tr><td>No missed alerts</td></tr>"
+         else missedAlerts.map(code => s"<tr class='missed'><td>$code</td></tr>").mkString("\n")}
+    |  </table>
+    |
+    |  <p><strong>Cutoff Time:</strong> 4:00 PM AEST</p>
+    |</body>
+    |</html>
+  """.stripMargin
+
+  sendEmail(s"Consolidated Alert Report - $currentDate", emailBodyHtml)
+}
+
+// ----- Main Application Code -----
+object AlertReportApp {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder().appName("Alert Status Tracking").getOrCreate()
+    import spark.implicits._
+    import org.apache.spark.sql.functions._
+
+    // Read the alerts DataFrame from a JDBC source (update credentials as needed)
+    val alertsDF: DataFrame = spark.read.format("jdbc")
+      .option("url", "jdbc:mysql://your-db-host/your-db")
+      .option("dbtable", "alerts_table")
+      .option("user", "your-username")
+      .option("password", "your-password")
+      .load()
+
+    // ----- Register Custom Accumulators on the Driver -----
+    val successAcc = new SetAccumulator()
+    spark.sparkContext.register(successAcc, "SuccessAcc")
+    val failedAcc = new MapAccumulator()
+    spark.sparkContext.register(failedAcc, "FailedAcc")
+    val receivedAcc = new SetAccumulator()
+    spark.sparkContext.register(receivedAcc, "ReceivedAcc")
+
+    // ----- Process Data Using foreachPartition (this runs on the executors) -----
+    alertsDF.foreachPartition { partition =>
+      partition.foreach { row =>
+        val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val sourceCount = row.getAs[Int]("source_count")
+
+        // Update received alerts accumulator
+        receivedAcc.add(alertCode)
+
+        // Validation logic: update success or failed accumulator
+        if (dtCount > 0) {
+          if (sourceCount == dtCount) {
+            successAcc.add(alertCode)
+          } else {
+            val reason = s"sourceCount ($sourceCount) != dtCount ($dtCount)"
+            failedAcc.add((alertCode, reason))
+          }
+        } else {
+          val reason = "dtCount is 0 or negative"
+          failedAcc.add((alertCode, reason))
+        }
+      }
+    }
+
+    // ----- Retrieve Aggregated Values on the Driver -----
+    val combinedSuccessAlerts = successAcc.value
+    val combinedFailedAlerts = failedAcc.value
+    val combinedReceivedAlerts = receivedAcc.value
+
+    // ----- Determine Expected Alerts and Compute Missed Alerts -----
+    val expectedAlerts: Set[String] = alertsDF
+      .filter($"frequency".isin("d", "w"))
+      .select("alert_code")
+      .distinct()
+      .as[String]
+      .collect()
+      .toSet
+
+    val missedAlerts: Set[String] = expectedAlerts.diff(combinedReceivedAlerts)
+
+    // ----- Call consolidatedMail Function to Send Email -----
+    consolidatedMail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+
+    spark.stop()
+  }
+}
