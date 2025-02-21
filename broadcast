@@ -1,63 +1,37 @@
-// Mutable lists to hold alert statuses
-val successAlerts = scala.collection.mutable.ListBuffer[String]()
-val failureAlerts = scala.collection.mutable.ListBuffer[String]()
-val allProcessedAlerts = scala.collection.mutable.ListBuffer[String]()
-val missedAlerts = scala.collection.mutable.ListBuffer[String]()
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Calendar
 
-// Process partition and track alert statuses
-df.foreachPartition { partition =>
-  partition.foreach { row =>
-    val alertCode = row.getAs[String]("alert_code")
-    val frequency = row.getAs[String]("frequency").toLowerCase
+object RampAutomationExecution {
 
-    // Track all processed alerts
-    allProcessedAlerts += alertCode
+  def main(args: Array[String]): Unit = {
+    val dateFormat = new SimpleDateFormat("yyyy-MM-dd")
+    val today = dateFormat.format(Calendar.getInstance().getTime)
+    val flagFile = new File(s"/path/to/flags/consolidated_email_sent_$today.flag")
 
-    // Handle success and failure alerts
-    if (frequency == "daily") { // Change as needed for other frequencies
-      if (/* condition for successful validation */) {
-        successAlerts += alertCode
-      } else if (/* condition for validation failure */) {
-        failureAlerts += alertCode
+    // Check if flag already exists
+    if (!flagFile.exists()) {
+      val calendar = Calendar.getInstance()
+      val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+
+      // Proceed only if the current time is 4:00 PM or later
+      if (currentHour >= 16) {
+        sendConsolidatedEmail()
+        flagFile.createNewFile() // Mark the email as sent for the day
+        println(s"Sent consolidated email for $today at 4:00 PM or later.")
+      } else {
+        println(s"Skipping consolidated email. Current hour: $currentHour, waiting for 4 PM.")
       }
+    } else {
+      println(s"Consolidated email already sent for $today. Skipping.")
     }
+
+    // Stop Spark or complete other logic if necessary
+    spark.stop()
+  }
+
+  def sendConsolidatedEmail(): Unit = {
+    // Your email-sending logic
+    println("Sending consolidated email...")
   }
 }
-
-// Step 1: Dynamically retrieve expected alerts from the DataFrame
-val expectedAlertsDF = yourDataFrame
-  .filter($"frequency" === "daily")
-  .select("alert_code")
-  .distinct()
-
-val expectedAlertCodes = expectedAlertsDF.collect().map(_.getString(0)).toSeq
-
-// Step 2: Identify missed alerts
-missedAlerts ++= expectedAlertCodes.diff(allProcessedAlerts)
-
-// Step 3: Consolidate and send the email
-def sendConsolidatedEmail(
-  successAlerts: Seq[String],
-  failureAlerts: Seq[String],
-  missedAlerts: Seq[String],
-  date: String,
-  emailAddress: String
-): Unit = {
-  val subject = s"Consolidated Alert Status for $date"
-  val message =
-    s"""
-       |<h3>Consolidated Alert Status</h3>
-       |<p><b>Success Alerts:</b> ${successAlerts.mkString(", ")}</p>
-       |<p><b>Failure Alerts:</b> ${failureAlerts.mkString(", ")}</p>
-       |<p><b>Missed Alerts:</b> ${missedAlerts.mkString(", ")}</p>
-     """.stripMargin
-
-  sendEmail(subject, message, emailAddress)
-}
-
-// Current date formatted for the email
-val currentDate = LocalDate.now()
-val formattedDate = currentDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-
-// Send consolidated email with success, failure, and missed alerts
-sendConsolidatedEmail(successAlerts, failureAlerts, missedAlerts, formattedDate, "cdao@gmail.com")
