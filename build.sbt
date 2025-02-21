@@ -1,12 +1,12 @@
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.util.AccumulatorV2
 import scala.collection.mutable
-import java.util.{Date, Properties}
+import java.util.{Calendar, Date, Properties}
 import java.text.SimpleDateFormat
 import javax.mail._
 import javax.mail.internet._
 
-// ----- Custom Accumulator for Set[String] -----
+// ----- Custom Accumulator for a Set[String] -----
 class SetAccumulator extends AccumulatorV2[String, Set[String]] {
   private val _set: mutable.Set[String] = mutable.Set[String]()
   def isZero: Boolean = _set.isEmpty
@@ -59,16 +59,15 @@ def sendEmail(subject: String, bodyHtml: String): Unit = {
   message.setRecipients(Message.RecipientType.TO, "cdao@gmail.com")
   message.setSubject(subject)
   message.setContent(bodyHtml, "text/html; charset=utf-8")
-
   Transport.send(message)
   println("Email sent successfully.")
 }
 
 // ----- Consolidated Mail Function -----
-// This function builds the email body using the aggregated results and sends the email.
+// This function builds the HTML email body using the aggregated results and sends the email.
 def consolidatedMail(successAlerts: Set[String],
-                       failedAlerts: Map[String, String],
-                       missedAlerts: Set[String]): Unit = {
+                     failedAlerts: Map[String, String],
+                     missedAlerts: Set[String]): Unit = {
   val currentDate = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
   val emailBodyHtml = s"""
     |<html>
@@ -113,18 +112,17 @@ def consolidatedMail(successAlerts: Set[String],
     |</body>
     |</html>
   """.stripMargin
-
   sendEmail(s"Consolidated Alert Report - $currentDate", emailBodyHtml)
 }
 
-// ----- Main Application Code -----
+// ----- Main Application Object -----
 object AlertReportApp {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder().appName("Alert Status Tracking").getOrCreate()
     import spark.implicits._
     import org.apache.spark.sql.functions._
 
-    // Read the alerts DataFrame from a JDBC source (update credentials as needed)
+    // Read the alerts DataFrame from a JDBC source (update connection details as needed)
     val alertsDF: DataFrame = spark.read.format("jdbc")
       .option("url", "jdbc:mysql://your-db-host/your-db")
       .option("dbtable", "alerts_table")
@@ -140,17 +138,17 @@ object AlertReportApp {
     val receivedAcc = new SetAccumulator()
     spark.sparkContext.register(receivedAcc, "ReceivedAcc")
 
-    // ----- Process Data Using foreachPartition (this runs on the executors) -----
+    // ----- Process Data Using foreachPartition (runs on executors) -----
     alertsDF.foreachPartition { partition =>
       partition.foreach { row =>
         val alertCode = row.getAs[String]("alert_code")
         val dtCount = row.getAs[Int]("dt_count")
         val sourceCount = row.getAs[Int]("source_count")
 
-        // Update received alerts accumulator
+        // Update the received alerts accumulator
         receivedAcc.add(alertCode)
 
-        // Validation logic: update success or failed accumulator
+        // Update success or failed accumulator based on validation logic
         if (dtCount > 0) {
           if (sourceCount == dtCount) {
             successAcc.add(alertCode)
@@ -165,12 +163,12 @@ object AlertReportApp {
       }
     }
 
-    // ----- Retrieve Aggregated Values on the Driver -----
+    // ----- Retrieve Aggregated Results on the Driver -----
     val combinedSuccessAlerts = successAcc.value
     val combinedFailedAlerts = failedAcc.value
     val combinedReceivedAlerts = receivedAcc.value
 
-    // ----- Determine Expected Alerts and Compute Missed Alerts -----
+    // ----- Determine Expected Alerts for Frequencies "d" and "w" and Compute Missed Alerts -----
     val expectedAlerts: Set[String] = alertsDF
       .filter($"frequency".isin("d", "w"))
       .select("alert_code")
@@ -181,8 +179,15 @@ object AlertReportApp {
 
     val missedAlerts: Set[String] = expectedAlerts.diff(combinedReceivedAlerts)
 
-    // ----- Call consolidatedMail Function to Send Email -----
-    consolidatedMail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+    // ----- Check the Current Hour and Send Email Only Once per Day (e.g., at 4:00 PM) -----
+    val calendar = Calendar.getInstance()
+    val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+    println(s"Current hour: $currentHour")
+    if (currentHour == 16) {
+      consolidatedMail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+    } else {
+      println("Not the cutoff time. Email not sent.")
+    }
 
     spark.stop()
   }
