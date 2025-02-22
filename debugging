@@ -1,49 +1,10 @@
-import java.nio.file.{Files, Paths}
-import scala.collection.JavaConverters._
-
-// Function to get the SQL folder path based on frequency and bteqlocation
-def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
-  s"$bteqLocation/$frequency"
-}
-
-// Example inputs for frequency and bteqLocation
-val frequency = "Daily"
-val bteqLocation = "/disk1/bigdata/dev/source/ramp/testing2/etl-ramp-automation/run/sql"
-
-// Dynamically derive the folder path
-val sqlFolderPath = getSqlFolderPath(frequency, bteqLocation)
-
-// List all `.sql` files in the dynamically determined directory
-val sqlFiles = Files.list(Paths.get(sqlFolderPath))
-  .iterator()
-  .asScala
-  .filter(file => file.getFileName.toString.endsWith(".sql"))
-  .map(_.getFileName.toString.stripSuffix(".sql")) // Extract alert codes
-  .toList
-
-// Loop through each alert code and process its corresponding SQL file
-for (alertCode <- sqlFiles) {
-  var cleanSqlFilePath = s"$sqlFolderPath/${alertCode}.sql"
-
-  // Remove any unwanted suffix like ".sql."
-  cleanSqlFilePath = cleanSqlFilePath.replaceAll("\\.sql\\.$", ".sql").stripSuffix(".")
-  println(s"Cleaned SQL FILEPATH on Driver: $cleanSqlFilePath")
-
-  // Dynamically load the SQL file
-  val sqlFilePath = SparkFiles.get(s"${alertCode}.sql")
-  println(s"SQL FILEPATH on executor: $sqlFilePath")
-
-  if (Files.exists(Paths.get(cleanSqlFilePath))) {
-    try {
-      // Execute the SQL file for the current alert code
-      val (table1, table2) = runSqlScript(conn_rss, stmt_rss, cleanSqlFilePath)
-      println(s"Successfully processed Alert: $alertCode, Tables: $table1, $table2")
-    } catch {
-      case e: Exception =>
-        println(s"SQL Execution failed for Alert: $alertCode. Error: ${e.getMessage}")
-        e.printStackTrace()
-    }
-  } else {
-    println(s"File not found for Alert: $alertCode at path: $cleanSqlFilePath")
-  }
-}
+atch {
+          case e: Exception =>
+            failedQueries += transformedQuery
+            println(s"Failed to execute query: $transformedQuery\nError: ${e.getMessage}")
+            
+            if (e.getMessage.contains("SCT_TEST") && e.getMessage.contains("duplicate")) {
+              println("Duplicate found in SCT_TEST, stopping execution.")
+              conn_rss.rollback()
+              throw new RuntimeException("Secondary index uniqueness violation in SCT_TEST, execution stopped.")
+            }
