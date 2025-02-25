@@ -1,1 +1,18 @@
-./mail_notification.sh ALERT_CODE "Test Message" to@example.com cc@example.com BusinessName
+partition.foreach { row =>
+    val alertCode = row.getString(0)
+
+    val Master_file_failed_Query =
+      s"""
+         |UPDATE U_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
+         |SET master_file_generation = 'N', FAILED_STEP='MASTER_FILE_GENERATION'
+         |WHERE alert_code = ?
+       """.stripMargin
+
+    val stmt = conn.prepareStatement(Master_file_failed_Query)
+    stmt.setString(1, alertCode)
+    stmt.addBatch()
+}
+
+// Execute batch update
+stmt.executeBatch()
+stmt.close()
