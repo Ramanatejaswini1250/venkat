@@ -1,14 +1,15 @@
 import java.sql.{Connection, Statement}
-import org.apache.spark.util.LongAccumulator
+import java.util.concurrent.ConcurrentLinkedQueue
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import scala.collection.mutable.ListBuffer
 
 object RampAutomationExecution {
-  
+
   def runSqlScript(
       conn_rss: Connection,
       stmt_rss: Statement,
       scriptPath: String,
-      failedSqlAccumulator: LongAccumulator
+      failedSqlQueue: ConcurrentLinkedQueue[String]
   ): (String, String) = {
 
     println(s"Running SQL script from: $scriptPath")
@@ -72,7 +73,7 @@ object RampAutomationExecution {
           case e: Exception =>
             val failedCommand = currentCommand.getOrElse("Unknown Command")
             failedQueries += failedCommand
-            failedSqlAccumulator.add(1) // Track failure in accumulator
+            failedSqlQueue.add(failedCommand) // Add failed query to queue
 
             println(s"Failed to execute query: $failedCommand. Error: ${e.getMessage}")
 
@@ -90,7 +91,7 @@ object RampAutomationExecution {
         ex.printStackTrace()
         val failedCommand = currentCommand.getOrElse("Unknown Command")
         failedQueries += failedCommand
-        failedSqlAccumulator.add(1) // Track failure in accumulator
+        failedSqlQueue.add(failedCommand) // Add failed query to queue
 
         println(s"Critical Error: $failedCommand. ${ex.getMessage}")
 
@@ -101,31 +102,33 @@ object RampAutomationExecution {
     }
   }
 
-  def executeWithSpark(df: org.apache.spark.sql.DataFrame, spark: org.apache.spark.sql.SparkSession): Unit = {
-    // Accumulator to track failed queries
-    val failedSqlAccumulator = spark.sparkContext.longAccumulator("FailedSQLCount")
+  def executeWithSpark(df: DataFrame, spark: SparkSession): Unit = {
+    // **Broadcast a thread-safe queue for failed SQL queries**
+    val failedSqlBroadcast = spark.sparkContext.broadcast(new ConcurrentLinkedQueue[String]())
 
     df.foreachPartition { partition =>
       val conn_rss = getConnection() // Get DB connection
       val stmt_rss = conn_rss.createStatement()
       try {
-        runSqlScript(conn_rss, stmt_rss, "your_script_path", failedSqlAccumulator) // Run SQL
+        runSqlScript(conn_rss, stmt_rss, "your_script_path", failedSqlBroadcast.value) // Run SQL
       } finally {
         stmt_rss.close()
         conn_rss.close() // Close connection
       }
     }
 
-    // **After foreachPartition completes, check accumulator and send email if failures occurred**
-    if (failedSqlAccumulator.value > 0) {
-      println(s"Detected ${failedSqlAccumulator.value} SQL failures. Sending failure email.")
+    // **After foreachPartition completes, check failed SQL queries and send email if needed**
+    val failedSqlList = failedSqlBroadcast.value.toArray.mkString("\n")
+
+    if (failedSqlList.nonEmpty) {
+      println(s"🚨 SQL Failures Detected. Sending Email...\n$failedSqlList")
       sendEmailNotification(
         "SQL Execution Failed",
-        s"${failedSqlAccumulator.value} queries failed during execution.",
+        s"Failed Queries:\n$failedSqlList",
         "CDAORiskAlertDeliveryTeam@cba.com.au"
       )
     } else {
-      println("All SQL queries executed successfully.")
+      println("✅ All SQL queries executed successfully.")
     }
   }
 }
