@@ -93,16 +93,39 @@ df.foreachPartition { partition =>
     conn_rss.close()
 }
 
-// 🔹 Step 3: After df.foreachPartition completes, send emails on driver
-if (!failedQueriesList.isEmpty) {
-    val failedQueriesText = failedQueriesList.toArray.mkString("\n")
-    println(s"🚨 Sending email for failed SQL queries:\n$failedQueriesText")
+df.foreachPartition { partition =>
+    val conn = getDatabaseConnection()
+    val failedQueriesList = new java.util.concurrent.ConcurrentLinkedQueue[(String, String)]() // Store (alertCode, errorMessage)
 
-    sendEmailNotification(
-        "SQL_FAILURE",
-        s"🚨 SQL Execution Errors Detected:\n$failedQueriesText",
-        "CDAORiskAlertDeliveryTeam@cba.com.au",
-        "Risk Alerts",
-        ""
-    )
+    try {
+        partition.foreach { row =>
+            val alertCode = row.getAs[String]("alert_code")  // Extract alertCode from DataFrame
+            try {
+                runSqlScript(conn, failedQueriesList, alertCode)
+            } catch {
+                case e: Exception =>
+                    val errorMsg = s"❌ SQL Execution Failed for AlertCode: $alertCode. Error: ${e.getMessage}"
+                    println(errorMsg)
+                    failedQueriesList.add((alertCode, errorMsg))
+            }
+        }
+    } finally {
+        conn.close()
+    }
+
+    // ✅ Send email ONLY IF queries failed
+    if (!failedQueriesList.isEmpty) {
+        val failedAlerts = failedQueriesList.toArray().map { case (alertCode, message) => s"AlertCode: $alertCode - $message" }.mkString("\n")
+
+        // Extract unique alert codes from failed queries
+        val uniqueAlertCodes = failedQueriesList.toArray().map(_._1).distinct.mkString(", ")
+
+        sendEmailNotification(
+            uniqueAlertCodes,  // Use alertCodes dynamically instead of "SQL_FAILURE"
+            s"🚨 SQL Execution Failed for Queries: \n$failedAlerts",
+            "CDAORiskAlertDeliveryTeam@cba.com.au",
+            "Risk Alerts",
+            ""
+        )
+    }
 }
