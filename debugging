@@ -103,4 +103,52 @@ object RampAutomationExecution {
             }
 
             if (hasFailures) {
-                conn_rss.rollbac
+                conn_rss.rollback() // Rollback on failure
+                throw new RuntimeException("SQL execution failed. Rolling back transaction.")
+            } else {
+                conn_rss.commit() // Commit only if no failures
+            }
+
+            (masterTable1, masterTable2) // Return extracted master tables
+
+        } catch {
+            case ex: Exception =>
+                ex.printStackTrace()
+                val failedCommand = currentCommand.getOrElse("Unknown Command")
+                val failedTableName = extractTableName(failedCommand)
+                val errorMsg = s"Critical SQL Failure: $failedTableName. ${ex.getMessage}"
+
+                println(errorMsg)
+                failedSqlAccumulator.add(errorMsg) // Capture failure in accumulator
+                conn_rss.rollback()
+                throw new RuntimeException(errorMsg)
+        } finally {
+            conn_rss.setAutoCommit(true) // Reset auto-commit mode
+        }
+    }
+
+    def sendEmailNotification(subject: String, body: String, recipient: String): Unit = {
+        // Implement your email sending logic here
+        println(s"Email sent to $recipient with subject: $subject\nBody:\n$body")
+    }
+
+    def getConnection(): Connection = {
+        // Implement your DB connection logic here
+        ???
+    }
+
+    def readFileAsString(path: String): String = {
+        // Implement file reading logic
+        ???
+    }
+
+    def removeBlockComments(script: String): String = {
+        // Implement block comment removal logic
+        ???
+    }
+
+    def removeInlineComments(line: String): String = {
+        // Implement inline comment removal logic
+        ???
+    }
+}
