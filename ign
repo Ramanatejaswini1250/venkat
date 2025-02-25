@@ -1,53 +1,56 @@
-import scala.util.matching.Regex
+import java.sql.{Connection, PreparedStatement, ResultSet}
 
-// Define a regex pattern to detect block comments (/* ... */) across multiple lines
-val blockCommentPattern: Regex = """(/\*[\s\S]*?\*/)|(/\*.*?\*/)""".r
+// Establish DB connection
+val connection: Connection = ??? // Your JDBC connection
+connection.setAutoCommit(false) // Disable auto-commit for better performance
 
-// Function to process lines and remove block comments and unwanted lines
-def processLines(lines: Seq[String]): Seq[String] = {
-  // Remove all block comments (/* ... */) across multiple lines
-  val withoutBlockComments = removeBlockComments(lines)
+// Fetch required data from the joined tables in a single query
+val fetchQuery = """
+  SELECT 
+    al.alert_code, al.dt_count, eti_info.Business 
+  FROM 
+    U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD al
+  LEFT JOIN 
+    U_D_DSV_001_RIS_1.RAMP_ETL_INFO eti_info
+  ON 
+    al.alert_code = eti_info.alert_code
+"""
+val fetchStatement = connection.prepareStatement(fetchQuery)
+val resultSet: ResultSet = fetchStatement.executeQuery()
 
-  // Filter out specific unwanted lines (e.g., lines containing .IF ERRORCODE <> 0 THEN .GOTO ERROR;)
-  val validLines = withoutBlockComments
-    .filterNot(_.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;")) // Ignore specific lines
-  validLines
+// Prepare batch insert query
+val insertQuery = """
+  INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
+  (Job_Id, Job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, status, BUSINESS, data_load_received)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+val insertStatement: PreparedStatement = connection.prepareStatement(insertQuery)
+
+// Process result set and add batch inserts
+while (resultSet.next()) {
+  val alertCode = resultSet.getString("alert_code")
+  val dtCount = resultSet.getInt("dt_count")
+  val business = resultSet.getString("Business")
+
+  insertStatement.setString(1, s"${alertCode}_${System.currentTimeMillis()}") // Unique Job_ID
+  insertStatement.setDate(2, new java.sql.Date(System.currentTimeMillis())) // Job_run_start_date
+  insertStatement.setTime(3, new java.sql.Time(System.currentTimeMillis())) // Job_run_start_time
+  insertStatement.setString(4, alertCode) // alert_code
+  insertStatement.setInt(5, dtCount) // DATA_COUNT
+  insertStatement.setInt(6, 1) // status
+  insertStatement.setString(7, business) // BUSINESS
+  insertStatement.setString(8, "Y") // data_load_received
+
+  insertStatement.addBatch() // Add to batch
 }
 
-// Function to remove block comments (/* ... */) across multiple lines
-def removeBlockComments(lines: Seq[String]): Seq[String] = {
-  val blockCommentStart = "/*"
-  val blockCommentEnd = "*/"
+// Execute batch insert
+insertStatement.executeBatch()
+connection.commit() // Commit transaction
 
-  var inBlockComment = false
-  lines.filterNot { line =>
-    if (inBlockComment) {
-      if (line.contains(blockCommentEnd)) {
-        inBlockComment = false
-      }
-      true  // Skip lines inside block comments
-    } else if (line.contains(blockCommentStart)) {
-      inBlockComment = true
-      true  // Skip lines starting a block comment
-    } else {
-      false // Keep lines outside comments
-    }
-  }
-}
-
-// Example input (lines with block comments and SQL statements)
-val lines = Seq(
-  "SELECT * FROM my_table;", 
-  "/* This is a block comment", 
-  "   with CREATE inside it */", 
-  "CREATE TABLE new_table (id INT);", 
-  "INSERT INTO my_table VALUES (1, 'test');", 
-  "-- This is a single-line comment", 
-  ".IF ERRORCODE <> 0 THEN .GOTO ERROR;"
-)
-
-// Process the lines
-val validLines = processLines(lines)
-
-// Output the filtered valid lines
-validLines.foreach(println)
+// Close resources
+resultSet.close()
+fetchStatement.close()
+insertStatement.close()
+connection.close()
