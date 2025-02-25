@@ -1,10 +1,108 @@
-atch {
-          case e: Exception =>
-            failedQueries += transformedQuery
-            println(s"Failed to execute query: $transformedQuery\nError: ${e.getMessage}")
-            
-            if (e.getMessage.contains("SCT_TEST") && e.getMessage.contains("duplicate")) {
-              println("Duplicate found in SCT_TEST, stopping execution.")
-              conn_rss.rollback()
-              throw new RuntimeException("Secondary index uniqueness violation in SCT_TEST, execution stopped.")
+// Store failed queries in a shared list
+val failedQueriesList = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+
+def runSqlScript(conn_rss: Connection): Unit = {
+    println(s"Running SQL script...")
+
+    var currentCommand: Option[String] = None
+    val executedQueries = ListBuffer[String]()
+    
+    try {
+        conn_rss.setAutoCommit(false)
+        stmt_rss.setQueryTimeout(30) // 30 seconds timeout for each query
+
+        val scriptContent = readFileAsString(scriptPath)
+        val scriptWithoutComments = removeBlockComments(scriptContent)
+
+        val lines = scriptWithoutComments.split("\n").toList
+
+        val validLines = lines
+            .drop(4)
+            .dropRight(4)
+            .map(removeInlineComments)
+            .filterNot(line => line.trim.toUpperCase.contains("IF ERRORCODE <> 0 THEN .GOTO ERROR;".toUpperCase))
+            .filter(_.nonEmpty)
+
+        val masterTables = extractMasterTables(validLines)
+
+        masterTables.foreach { table =>
+            val deleteStmt = s"DELETE FROM $table;"
+            println(s"Executing: $deleteStmt")
+            stmt_rss.execute(deleteStmt)
+            executedQueries += deleteStmt
+        }
+
+        val remainingCommands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+        remainingCommands.foreach { query =>
+            currentCommand = Some(query)
+
+            val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
+                transformInsertToIncludeColumns(query, stmt_rss)
+            } else {
+                query
             }
+
+            println(s"Executing transformed query: $transformedQuery")
+            try {
+                stmt_rss.execute(transformedQuery)
+                executedQueries += transformedQuery
+            } catch {
+                case e: Exception =>
+                    val errorMsg = s"❌ SQL Execution Failed: $transformedQuery. Error: ${e.getMessage}"
+                    println(errorMsg)
+
+                    // Collect failed queries in a shared list
+                    failedQueriesList.add(errorMsg)
+
+                    throw new RuntimeException(errorMsg) // Stop execution after failure
+            }
+        }
+
+        conn_rss.commit()
+        println("✅ SQL script executed successfully.")
+    } catch {
+        case ex: Exception =>
+            ex.printStackTrace()
+            conn_rss.rollback() // Rollback on failure
+            val fatalErrorMsg = s"🚨 Critical SQL Execution Failure: ${ex.getMessage}"
+            failedQueriesList.add(fatalErrorMsg)
+    } finally {
+        conn_rss.setAutoCommit(true)
+    }
+}
+
+
+
+
+
+
+df.foreachPartition { partition =>
+    val conn_rss = getConnection() // Get database connection
+    val stmt_rss = conn_rss.createStatement()
+
+    partition.foreach { row =>
+        try {
+            runSqlScript(conn_rss)
+        } catch {
+            case e: Exception =>
+                println(s"❌ Error processing partition: ${e.getMessage}")
+        }
+    }
+
+    stmt_rss.close()
+    conn_rss.close()
+}
+
+// 🔹 Step 3: After df.foreachPartition completes, send emails on driver
+if (!failedQueriesList.isEmpty) {
+    val failedQueriesText = failedQueriesList.toArray.mkString("\n")
+    println(s"🚨 Sending email for failed SQL queries:\n$failedQueriesText")
+
+    sendEmailNotification(
+        "SQL_FAILURE",
+        s"🚨 SQL Execution Errors Detected:\n$failedQueriesText",
+        "CDAORiskAlertDeliveryTeam@cba.com.au",
+        "Risk Alerts",
+        ""
+    )
+}
