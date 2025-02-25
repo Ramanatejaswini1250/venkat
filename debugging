@@ -1,7 +1,9 @@
 import java.sql.{Connection, Statement}
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.io.{BufferedWriter, File, FileWriter}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import scala.collection.mutable.ListBuffer
+import scala.io.Source
 
 object RampAutomationExecution {
 
@@ -9,26 +11,24 @@ object RampAutomationExecution {
       conn_rss: Connection,
       stmt_rss: Statement,
       scriptPath: String,
-      failedSqlQueue: ConcurrentLinkedQueue[String]
-  ): (String, String) = {
+      failedSqlQueue: ConcurrentLinkedQueue[String],
+      partitionId: Int
+  ): Unit = {
 
-    println(s"Running SQL script from: $scriptPath")
+    println(s"Running SQL script from: $scriptPath on Partition: $partitionId")
 
     var currentCommand: Option[String] = None
-    val executedQueries = ListBuffer[String]() // Track executed queries
-    val failedQueries = ListBuffer[String]()   // Track failed queries
+    val failedQueries = ListBuffer[String]() // Track failed queries
 
     try {
       conn_rss.setAutoCommit(false)
-      stmt_rss.setQueryTimeout(30) // Set query timeout to 30 seconds
+      stmt_rss.setQueryTimeout(30)
 
       println("Reading SQL script...")
       val scriptContent = readFileAsString(scriptPath)
       val scriptWithoutComments = removeBlockComments(scriptContent)
 
       val lines = scriptWithoutComments.split("\n").toList
-
-      // Process SQL script: remove first & last 4 lines, inline comments, and unnecessary lines
       val validLines = lines
         .drop(4)
         .dropRight(4)
@@ -38,97 +38,84 @@ object RampAutomationExecution {
         )
         .filter(_.nonEmpty)
 
-      // Extract master tables dynamically
+      // DELETE existing data before loading new data
       val masterTables = extractMasterTables(validLines)
-      println(s"Extracted master tables: ${masterTables.mkString(", ")}")
-
-      val masterTable1 = if (masterTables.nonEmpty) masterTables.head else "default_mastertable1"
-      val masterTable2 = if (masterTables.length > 1) masterTables(1) else "default_mastertable2"
-
-      // DELETE existing data from master tables before loading new data
       masterTables.foreach { table =>
         val deleteStmt = s"DELETE FROM $table;"
         println(s"Executing: $deleteStmt")
         stmt_rss.execute(deleteStmt)
-        executedQueries += deleteStmt
       }
 
-      // Execute remaining SQL queries
       val remainingCommands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
       for (query <- remainingCommands) {
-        currentCommand = Some(query) // Track the current command
-
-        // Transform INSERT INTO queries to include column names if needed
-        val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
-          transformInsertToIncludeColumns(query, stmt_rss)
-        } else {
-          query
-        }
-
-        println(s"Executing: $transformedQuery")
+        currentCommand = Some(query)
+        println(s"Executing: $query")
         try {
-          stmt_rss.execute(transformedQuery)
-          executedQueries += transformedQuery
+          stmt_rss.execute(query)
         } catch {
           case e: Exception =>
             val failedCommand = currentCommand.getOrElse("Unknown Command")
-            failedQueries += failedCommand
-            failedSqlQueue.add(failedCommand) // Add failed query to queue
-
-            println(s"Failed to execute query: $failedCommand. Error: ${e.getMessage}")
-
+            failedQueries += s"❌ SQL Failed: $failedCommand. Error: ${e.getMessage}"
+            failedSqlQueue.add(failedCommand) // Store failed query in queue
             conn_rss.rollback() // Rollback on failure
-            throw new RuntimeException(s"SQL Execution Failed: $failedCommand. ${e.getMessage}")
         }
       }
 
-      conn_rss.commit() // Commit only if all queries run successfully
-      println("SQL script executed successfully.")
+      conn_rss.commit()
 
-      (masterTable1, masterTable2) // Return master tables
     } catch {
       case ex: Exception =>
-        ex.printStackTrace()
         val failedCommand = currentCommand.getOrElse("Unknown Command")
-        failedQueries += failedCommand
-        failedSqlQueue.add(failedCommand) // Add failed query to queue
-
-        println(s"Critical Error: $failedCommand. ${ex.getMessage}")
-
-        conn_rss.rollback() // Rollback on failure
-        throw new RuntimeException(s"SQL Execution Failed: $failedCommand. ${ex.getMessage}")
+        failedQueries += s"❌ Critical Failure: $failedCommand. Error: ${ex.getMessage}"
+        failedSqlQueue.add(failedCommand)
+        conn_rss.rollback()
     } finally {
-      conn_rss.setAutoCommit(true) // Reset auto-commit mode
+      conn_rss.setAutoCommit(true)
+
+      // Save failed queries to a temp file (one per partition)
+      if (failedQueries.nonEmpty) {
+        val filePath = s"/tmp/failed_queries_$partitionId.txt"
+        val file = new File(filePath)
+        val bw = new BufferedWriter(new FileWriter(file, true))
+        failedQueries.foreach(query => bw.write(query + "\n"))
+        bw.close()
+      }
     }
   }
 
   def executeWithSpark(df: DataFrame, spark: SparkSession): Unit = {
-    // **Broadcast a thread-safe queue for failed SQL queries**
-    val failedSqlBroadcast = spark.sparkContext.broadcast(new ConcurrentLinkedQueue[String]())
+    val failedSqlQueue = new ConcurrentLinkedQueue[String]()
+    val broadcastFailedSqlQueue = spark.sparkContext.broadcast(failedSqlQueue)
 
     df.foreachPartition { partition =>
-      val conn_rss = getConnection() // Get DB connection
+      val partitionId = TaskContext.getPartitionId() // Get partition ID
+      val conn_rss = getConnection()
       val stmt_rss = conn_rss.createStatement()
       try {
-        runSqlScript(conn_rss, stmt_rss, "your_script_path", failedSqlBroadcast.value) // Run SQL
+        runSqlScript(conn_rss, stmt_rss, "your_script_path", broadcastFailedSqlQueue.value, partitionId)
       } finally {
         stmt_rss.close()
-        conn_rss.close() // Close connection
+        conn_rss.close()
       }
     }
 
-    // **After foreachPartition completes, check failed SQL queries and send email if needed**
-    val failedSqlList = failedSqlBroadcast.value.toArray.mkString("\n")
+    // Collect all failed queries from temp files
+    val allFailedQueries = spark.sparkContext
+      .parallelize(new File("/tmp").listFiles().filter(_.getName.startsWith("failed_queries_")))
+      .flatMap(file => Source.fromFile(file).getLines())
+      .distinct()
+      .collect()
 
-    if (failedSqlList.nonEmpty) {
-      println(s"🚨 SQL Failures Detected. Sending Email...\n$failedSqlList")
+    // Send email if any failures
+    if (allFailedQueries.nonEmpty) {
+      val failureReport = allFailedQueries.mkString("\n")
+      println(s"🚨 SQL Failures Detected. Sending Email...\n$failureReport")
+
       sendEmailNotification(
         "SQL Execution Failed",
-        s"Failed Queries:\n$failedSqlList",
+        s"Failed Queries:\n$failureReport",
         "CDAORiskAlertDeliveryTeam@cba.com.au"
       )
-    } else {
-      println("✅ All SQL queries executed successfully.")
     }
   }
 }
