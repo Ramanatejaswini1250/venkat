@@ -1,154 +1,131 @@
-import org.apache.spark.util.CollectionAccumulator
 import java.sql.{Connection, Statement}
+import org.apache.spark.util.LongAccumulator
 import scala.collection.mutable.ListBuffer
 
 object RampAutomationExecution {
-    def main(args: Array[String]): Unit = {
-        val spark = org.apache.spark.sql.SparkSession.builder().appName("RampAutomationExecution").getOrCreate()
+  
+  def runSqlScript(
+      conn_rss: Connection,
+      stmt_rss: Statement,
+      scriptPath: String,
+      failedSqlAccumulator: LongAccumulator
+  ): (String, String) = {
 
-        // Accumulator to collect failed SQL queries
-        val failedSqlAccumulator = spark.sparkContext.collectionAccumulator[String]("Failed SQL Queries")
+    println(s"Running SQL script from: $scriptPath")
 
-        // Load DataFrame (assuming df is already created)
-        val df = spark.read.format("your_format").load("your_data_source")
+    var currentCommand: Option[String] = None
+    val executedQueries = ListBuffer[String]() // Track executed queries
+    val failedQueries = ListBuffer[String]()   // Track failed queries
 
-        // Execute SQL for each partition
-        df.foreachPartition { partition =>
-            val conn_rss = getConnection() // Get DB connection
-            val stmt_rss = conn_rss.createStatement()
-            try {
-                runSqlScript(conn_rss, stmt_rss, "your_script_path", failedSqlAccumulator) // Run SQL
-            } finally {
-                stmt_rss.close()
-                conn_rss.close() // Close connection
-            }
+    try {
+      conn_rss.setAutoCommit(false)
+      stmt_rss.setQueryTimeout(30) // Set query timeout to 30 seconds
+
+      println("Reading SQL script...")
+      val scriptContent = readFileAsString(scriptPath)
+      val scriptWithoutComments = removeBlockComments(scriptContent)
+
+      val lines = scriptWithoutComments.split("\n").toList
+
+      // Process SQL script: remove first & last 4 lines, inline comments, and unnecessary lines
+      val validLines = lines
+        .drop(4)
+        .dropRight(4)
+        .map(removeInlineComments)
+        .filterNot(line =>
+          line.trim.toUpperCase.contains("IF ERRORCODE <> 0 THEN .GOTO ERROR;".toUpperCase)
+        )
+        .filter(_.nonEmpty)
+
+      // Extract master tables dynamically
+      val masterTables = extractMasterTables(validLines)
+      println(s"Extracted master tables: ${masterTables.mkString(", ")}")
+
+      val masterTable1 = if (masterTables.nonEmpty) masterTables.head else "default_mastertable1"
+      val masterTable2 = if (masterTables.length > 1) masterTables(1) else "default_mastertable2"
+
+      // DELETE existing data from master tables before loading new data
+      masterTables.foreach { table =>
+        val deleteStmt = s"DELETE FROM $table;"
+        println(s"Executing: $deleteStmt")
+        stmt_rss.execute(deleteStmt)
+        executedQueries += deleteStmt
+      }
+
+      // Execute remaining SQL queries
+      val remainingCommands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+      for (query <- remainingCommands) {
+        currentCommand = Some(query) // Track the current command
+
+        // Transform INSERT INTO queries to include column names if needed
+        val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
+          transformInsertToIncludeColumns(query, stmt_rss)
+        } else {
+          query
         }
 
-        // Send failure email from driver after all partitions complete
-        if (!failedSqlAccumulator.value.isEmpty) {
-            val errorReport = failedSqlAccumulator.value.mkString("\n")
-            println(s"Sending failure email: \n$errorReport")
-
-            sendEmailNotification(
-                "SQL Execution Failed",
-                s"Errors encountered during SQL execution:\n\n$errorReport",
-                "CDAORiskAlertDeliveryTeam@cba.com.au"
-            )
-        }
-
-        spark.stop()
-    }
-
-    def runSqlScript(
-        conn_rss: Connection,
-        stmt_rss: Statement,
-        scriptPath: String,
-        failedSqlAccumulator: CollectionAccumulator[String]
-    ): (String, String) = {
-        var currentCommand: Option[String] = None
-        val executedQueries = ListBuffer[String]() // Track executed queries
-
+        println(s"Executing: $transformedQuery")
         try {
-            conn_rss.setAutoCommit(false)
-            stmt_rss.setQueryTimeout(30) // Set query timeout
-
-            println("Reading SQL script...")
-            val scriptContent = readFileAsString(scriptPath)
-            val scriptWithoutComments = removeBlockComments(scriptContent)
-
-            val lines = scriptWithoutComments.split("\n").toList
-
-            // Filter the lines
-            val validLines = lines
-                .drop(4) // Skip first 4 lines
-                .dropRight(4) // Skip last 4 lines
-                .map(removeInlineComments) // Remove inline comments
-                .filterNot(_.trim.toUpperCase.contains("IF ERRORCODE <> 0 THEN .GOTO ERROR;"))
-                .filter(_.nonEmpty) // Remove empty lines
-
-            // Extract master tables dynamically
-            val masterTables = extractMasterTables(validLines)
-            println(s"Extracted master tables: ${masterTables.mkString(", ")}")
-
-            val masterTable1 = if (masterTables.nonEmpty) masterTables.head else "default_mastertable1"
-            val masterTable2 = if (masterTables.length > 1) masterTables(1) else "default_mastertable2"
-
-            var hasFailures = false
-
-            // Process SQL queries
-            val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
-            for (query <- commands) {
-                currentCommand = Some(query) // Track current command
-
-                val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
-                    transformInsertToIncludeColumns(query, stmt_rss)
-                } else {
-                    query
-                }
-
-                println(s"Executing transformed query: $transformedQuery")
-                try {
-                    stmt_rss.execute(transformedQuery)
-                    executedQueries += transformedQuery // Log executed query
-                } catch {
-                    case e: Exception =>
-                        val failedCommand = currentCommand.getOrElse("Unknown Command")
-                        val failedTableName = extractTableName(failedCommand)
-                        val errorMsg = s"Table Execution Failed: $failedTableName. ${e.getMessage}"
-
-                        println(errorMsg)
-                        failedSqlAccumulator.add(errorMsg) // Capture failure in accumulator
-                        hasFailures = true // Mark failure
-                }
-            }
-
-            if (hasFailures) {
-                conn_rss.rollback() // Rollback on failure
-                throw new RuntimeException("SQL execution failed. Rolling back transaction.")
-            } else {
-                conn_rss.commit() // Commit only if no failures
-            }
-
-            (masterTable1, masterTable2) // Return extracted master tables
-
+          stmt_rss.execute(transformedQuery)
+          executedQueries += transformedQuery
         } catch {
-            case ex: Exception =>
-                ex.printStackTrace()
-                val failedCommand = currentCommand.getOrElse("Unknown Command")
-                val failedTableName = extractTableName(failedCommand)
-                val errorMsg = s"Critical SQL Failure: $failedTableName. ${ex.getMessage}"
+          case e: Exception =>
+            val failedCommand = currentCommand.getOrElse("Unknown Command")
+            failedQueries += failedCommand
+            failedSqlAccumulator.add(1) // Track failure in accumulator
 
-                println(errorMsg)
-                failedSqlAccumulator.add(errorMsg) // Capture failure in accumulator
-                conn_rss.rollback()
-                throw new RuntimeException(errorMsg)
-        } finally {
-            conn_rss.setAutoCommit(true) // Reset auto-commit mode
+            println(s"Failed to execute query: $failedCommand. Error: ${e.getMessage}")
+
+            conn_rss.rollback() // Rollback on failure
+            throw new RuntimeException(s"SQL Execution Failed: $failedCommand. ${e.getMessage}")
         }
+      }
+
+      conn_rss.commit() // Commit only if all queries run successfully
+      println("SQL script executed successfully.")
+
+      (masterTable1, masterTable2) // Return master tables
+    } catch {
+      case ex: Exception =>
+        ex.printStackTrace()
+        val failedCommand = currentCommand.getOrElse("Unknown Command")
+        failedQueries += failedCommand
+        failedSqlAccumulator.add(1) // Track failure in accumulator
+
+        println(s"Critical Error: $failedCommand. ${ex.getMessage}")
+
+        conn_rss.rollback() // Rollback on failure
+        throw new RuntimeException(s"SQL Execution Failed: $failedCommand. ${ex.getMessage}")
+    } finally {
+      conn_rss.setAutoCommit(true) // Reset auto-commit mode
+    }
+  }
+
+  def executeWithSpark(df: org.apache.spark.sql.DataFrame, spark: org.apache.spark.sql.SparkSession): Unit = {
+    // Accumulator to track failed queries
+    val failedSqlAccumulator = spark.sparkContext.longAccumulator("FailedSQLCount")
+
+    df.foreachPartition { partition =>
+      val conn_rss = getConnection() // Get DB connection
+      val stmt_rss = conn_rss.createStatement()
+      try {
+        runSqlScript(conn_rss, stmt_rss, "your_script_path", failedSqlAccumulator) // Run SQL
+      } finally {
+        stmt_rss.close()
+        conn_rss.close() // Close connection
+      }
     }
 
-    def sendEmailNotification(subject: String, body: String, recipient: String): Unit = {
-        // Implement your email sending logic here
-        println(s"Email sent to $recipient with subject: $subject\nBody:\n$body")
+    // **After foreachPartition completes, check accumulator and send email if failures occurred**
+    if (failedSqlAccumulator.value > 0) {
+      println(s"Detected ${failedSqlAccumulator.value} SQL failures. Sending failure email.")
+      sendEmailNotification(
+        "SQL Execution Failed",
+        s"${failedSqlAccumulator.value} queries failed during execution.",
+        "CDAORiskAlertDeliveryTeam@cba.com.au"
+      )
+    } else {
+      println("All SQL queries executed successfully.")
     }
-
-    def getConnection(): Connection = {
-        // Implement your DB connection logic here
-        ???
-    }
-
-    def readFileAsString(path: String): String = {
-        // Implement file reading logic
-        ???
-    }
-
-    def removeBlockComments(script: String): String = {
-        // Implement block comment removal logic
-        ???
-    }
-
-    def removeInlineComments(line: String): String = {
-        // Implement inline comment removal logic
-        ???
-    }
+  }
 }
