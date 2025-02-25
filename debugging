@@ -1,5 +1,5 @@
 import org.apache.spark.util.CollectionAccumulator
-import java.sql.Connection
+import java.sql.{Connection, Statement}
 import scala.collection.mutable.ListBuffer
 
 object RampAutomationExecution {
@@ -15,9 +15,11 @@ object RampAutomationExecution {
         // Execute SQL for each partition
         df.foreachPartition { partition =>
             val conn_rss = getConnection() // Get DB connection
+            val stmt_rss = conn_rss.createStatement()
             try {
-                runSqlScript(conn_rss, failedSqlAccumulator) // Run SQL and collect failures
+                runSqlScript(conn_rss, stmt_rss, "your_script_path", failedSqlAccumulator) // Run SQL
             } finally {
+                stmt_rss.close()
                 conn_rss.close() // Close connection
             }
         }
@@ -37,13 +39,17 @@ object RampAutomationExecution {
         spark.stop()
     }
 
-    def runSqlScript(conn_rss: Connection, failedSqlAccumulator: CollectionAccumulator[String]): Unit = {
+    def runSqlScript(
+        conn_rss: Connection,
+        stmt_rss: Statement,
+        scriptPath: String,
+        failedSqlAccumulator: CollectionAccumulator[String]
+    ): (String, String) = {
         var currentCommand: Option[String] = None
         val executedQueries = ListBuffer[String]() // Track executed queries
 
         try {
             conn_rss.setAutoCommit(false)
-            val stmt_rss = conn_rss.createStatement()
             stmt_rss.setQueryTimeout(30) // Set query timeout
 
             println("Reading SQL script...")
@@ -60,11 +66,18 @@ object RampAutomationExecution {
                 .filterNot(_.trim.toUpperCase.contains("IF ERRORCODE <> 0 THEN .GOTO ERROR;"))
                 .filter(_.nonEmpty) // Remove empty lines
 
-            val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+            // Extract master tables dynamically
+            val masterTables = extractMasterTables(validLines)
+            println(s"Extracted master tables: ${masterTables.mkString(", ")}")
+
+            val masterTable1 = if (masterTables.nonEmpty) masterTables.head else "default_mastertable1"
+            val masterTable2 = if (masterTables.length > 1) masterTables(1) else "default_mastertable2"
 
             var hasFailures = false
 
-            commands.foreach { query =>
+            // Process SQL queries
+            val commands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+            for (query <- commands) {
                 currentCommand = Some(query) // Track current command
 
                 val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
@@ -85,54 +98,9 @@ object RampAutomationExecution {
 
                         println(errorMsg)
                         failedSqlAccumulator.add(errorMsg) // Capture failure in accumulator
-
-                        hasFailures = true // Mark that a failure occurred
+                        hasFailures = true // Mark failure
                 }
             }
 
             if (hasFailures) {
-                conn_rss.rollback() // Rollback if any SQL query fails
-            } else {
-                conn_rss.commit() // Commit only if all queries succeed
-            }
-
-        } catch {
-            case ex: Exception =>
-                ex.printStackTrace()
-                val failedCommand = currentCommand.getOrElse("Unknown Command")
-                val failedTableName = extractTableName(failedCommand)
-                val errorMsg = s"Critical SQL Failure: $failedTableName. ${ex.getMessage}"
-
-                println(errorMsg)
-                failedSqlAccumulator.add(errorMsg) // Capture failure in accumulator
-                conn_rss.rollback()
-        } finally {
-            conn_rss.setAutoCommit(true) // Reset auto-commit mode
-        }
-    }
-
-    def sendEmailNotification(subject: String, body: String, recipient: String): Unit = {
-        // Implement your email sending logic here
-        println(s"Email sent to $recipient with subject: $subject\nBody:\n$body")
-    }
-
-    def getConnection(): Connection = {
-        // Implement your DB connection logic here
-        ???
-    }
-
-    def readFileAsString(path: String): String = {
-        // Implement file reading logic
-        ???
-    }
-
-    def removeBlockComments(script: String): String = {
-        // Implement block comment removal logic
-        ???
-    }
-
-    def removeInlineComments(line: String): String = {
-        // Implement inline comment removal logic
-        ???
-    }
-}
+                conn_rss.rollbac
