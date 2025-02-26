@@ -1,56 +1,143 @@
-import java.sql.{Connection, PreparedStatement, ResultSet}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.AccumulatorV2
+import java.text.SimpleDateFormat
+import java.util.Date
+import scala.collection.mutable
 
-// Establish DB connection
-val connection: Connection = ??? // Your JDBC connection
-connection.setAutoCommit(false) // Disable auto-commit for better performance
+// Custom Accumulator for collecting unique alert codes and reasons for failure
+class FailureAccumulator extends AccumulatorV2[(String, String), Set[(String, String)]] {
+  private val failureSet = mutable.Set[(String, String)]()
 
-// Fetch required data from the joined tables in a single query
-val fetchQuery = """
-  SELECT 
-    al.alert_code, al.dt_count, eti_info.Business 
-  FROM 
-    U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD al
-  LEFT JOIN 
-    U_D_DSV_001_RIS_1.RAMP_ETL_INFO eti_info
-  ON 
-    al.alert_code = eti_info.alert_code
-"""
-val fetchStatement = connection.prepareStatement(fetchQuery)
-val resultSet: ResultSet = fetchStatement.executeQuery()
-
-// Prepare batch insert query
-val insertQuery = """
-  INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
-  (Job_Id, Job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, status, BUSINESS, data_load_received)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-"""
-
-val insertStatement: PreparedStatement = connection.prepareStatement(insertQuery)
-
-// Process result set and add batch inserts
-while (resultSet.next()) {
-  val alertCode = resultSet.getString("alert_code")
-  val dtCount = resultSet.getInt("dt_count")
-  val business = resultSet.getString("Business")
-
-  insertStatement.setString(1, s"${alertCode}_${System.currentTimeMillis()}") // Unique Job_ID
-  insertStatement.setDate(2, new java.sql.Date(System.currentTimeMillis())) // Job_run_start_date
-  insertStatement.setTime(3, new java.sql.Time(System.currentTimeMillis())) // Job_run_start_time
-  insertStatement.setString(4, alertCode) // alert_code
-  insertStatement.setInt(5, dtCount) // DATA_COUNT
-  insertStatement.setInt(6, 1) // status
-  insertStatement.setString(7, business) // BUSINESS
-  insertStatement.setString(8, "Y") // data_load_received
-
-  insertStatement.addBatch() // Add to batch
+  override def isZero: Boolean = failureSet.isEmpty
+  override def copy(): AccumulatorV2[(String, String), Set[(String, String)]] = {
+    val newAcc = new FailureAccumulator()
+    newAcc.failureSet ++= this.failureSet
+    newAcc
+  }
+  override def reset(): Unit = failureSet.clear()
+  override def add(v: (String, String)): Unit = failureSet += v
+  override def merge(other: AccumulatorV2[(String, String), Set[(String, String)]]): Unit = failureSet ++= other.value
+  override def value: Set[(String, String)] = failureSet.toSet
 }
 
-// Execute batch insert
-insertStatement.executeBatch()
-connection.commit() // Commit transaction
+// Initialize Spark Session
+val spark = SparkSession.builder()
+  .appName("Success and Failure Alerts with Reasons Email")
+  .master("yarn")  // Adjust based on your cluster setup
+  .getOrCreate()
 
-// Close resources
-resultSet.close()
-fetchStatement.close()
-insertStatement.close()
-connection.close()
+import spark.implicits._
+
+// Register the accumulators
+val successAlertsAccumulator = new SetAccumulator[String]()
+val failureAlertsAccumulator = new FailureAccumulator()  // Stores (alertCode, failureReason)
+spark.sparkContext.register(successAlertsAccumulator, "SuccessAlertsAccumulator")
+spark.sparkContext.register(failureAlertsAccumulator, "FailureAlertsAccumulator")
+
+// Function to check if an alert was successfully processed
+def isAlertSuccessful(alertCode: String): (Boolean, String) = {
+  // Implement your logic here to determine if an alert is successful
+  // If alert is successful, return (true, "")
+  // If alert fails, return (false, "Reason for failure")
+
+  alertCode match {
+    case "ALERT_1" => (false, "Missing required field")  // Example failure
+    case "ALERT_2" => (true, "")  // Example success
+    case _ => (false, "Unknown error")  // Example failure
+  }
+}
+
+// Function to send success and failure email
+def sendAlertsEmail(successAlerts: Set[String], failureAlerts: Set[(String, String)]): Unit = {
+  val currentDate = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
+  val successAlertCount = successAlerts.size
+  val failureAlertCount = failureAlerts.size
+
+  val emailSubject = s"Alerts Report - $currentDate (Success: $successAlertCount, Failure: $failureAlertCount)"
+
+  val successAlertRows = if (successAlerts.isEmpty) {
+    """<tr><td colspan="1" style="text-align:center; font-style:italic; color:gray;">No successful alerts</td></tr>"""
+  } else {
+    successAlerts.map(code => s"<tr class='success'><td>$code</td></tr>").mkString("\n")
+  }
+
+  val failureAlertRows = if (failureAlerts.isEmpty) {
+    """<tr><td colspan="2" style="text-align:center; font-style:italic; color:gray;">No failed alerts</td></tr>"""
+  } else {
+    failureAlerts.map {
+      case (code, reason) => s"<tr class='failure'><td>$code</td><td>$reason</td></tr>"
+    }.mkString("\n")
+  }
+
+  val emailBodyHtml = s"""
+    |<html>
+    |<head>
+    |  <style type="text/css">
+    |    body { font-family: Arial, sans-serif; background-color: #f9f9f9; margin: 0; padding: 0; }
+    |    .container { max-width: 600px; margin: 0 auto; background-color: #fff; padding: 10px 20px; border-radius: 8px; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); }
+    |    h2 { color: #2E4053; margin-top: 10px; }
+    |    p { font-size: 14px; margin: 5px 0; }
+    |    table { border-collapse: collapse; width: 100%; margin-bottom: 10px; font-size: 14px; border-radius: 5px; overflow: hidden; }
+    |    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    |    th { background-color: #4CAF50; color: white; font-weight: 600; }
+    |    .success { background-color: #d4edda; color: #155724; font-weight: bold; }
+    |    .failure { background-color: #f8d7da; color: #721c24; font-weight: bold; }
+    |    tr:hover { background-color: #f1f1f1; }
+    |  </style>
+    |</head>
+    |<body>
+    |  <div class="container">
+    |    <p>Hi Team,</p>
+    |    <p>Please find below the list of processed alerts for <strong>$currentDate</strong>:</p>
+    |    <h2>Success Alerts</h2>
+    |    <table>
+    |      <tr><th>Alert Code</th></tr>
+    |      $successAlertRows
+    |    </table>
+    |    <h2>Failure Alerts</h2>
+    |    <table>
+    |      <tr><th>Alert Code</th><th>Failure Reason</th></tr>
+    |      $failureAlertRows
+    |    </table>
+    |    <p><strong>Cutoff Time:</strong> 4:00 PM AEST</p>
+    |  </div>
+    |</body>
+    |</html>
+  """.stripMargin
+
+  try {
+    sendEmail(emailSubject, emailBodyHtml)
+  } catch {
+    case e: Exception => println(s"Failed to send alerts email: ${e.getMessage}")
+  }
+}
+
+// Simulated send email function
+def sendEmail(subject: String, body: String): Unit = {
+  println(s"Email Sent: $subject")
+}
+
+// Assume df contains alert data
+val df = spark.read.format("csv").option("header", "true").load("path/to/alerts.csv")
+
+// Using foreachPartition to avoid multiple email triggers
+df.foreachPartition(partition => {
+  partition.foreach(row => {
+    val alertCode = row.getAs[String]("alert_code")
+    val (isSuccess, failureReason) = isAlertSuccessful(alertCode)
+    if (isSuccess) {
+      successAlertsAccumulator.add(alertCode)  // Collect successful alerts in accumulator
+    } else {
+      failureAlertsAccumulator.add((alertCode, failureReason))  // Collect failed alerts with reasons in accumulator
+    }
+  })
+})
+
+// Fetch all collected alerts from the accumulators
+val successAlerts = successAlertsAccumulator.value
+val failureAlerts = failureAlertsAccumulator.value
+
+// Send email only once with all success and failure alerts
+sendAlertsEmail(successAlerts, failureAlerts)
+
+spark.stop()
