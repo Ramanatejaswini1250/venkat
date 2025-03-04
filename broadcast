@@ -1,89 +1,17 @@
-val emailBodyHtml = s"""
-  |<html>
-  |<head>
-  |  <style type="text/css">
-  |    body {
-  |      font-family: Arial, sans-serif;
-  |      background-color: #f9f9f9;
-  |      margin: 0;
-  |      padding: 0;
-  |    }
-  |
-  |    .container {
-  |      max-width: 600px;
-  |      margin: 0 auto;
-  |      padding: 10px;
-  |      background-color: #fff;
-  |    }
-  |
-  |    h2 {
-  |      color: #2E4053;
-  |      margin-top: 10px;
-  |    }
-  |
-  |    p {
-  |      font-size: 14px;
-  |      margin: 5px 0;
-  |    }
-  |
-  |    table {
-  |      width: 100%;
-  |      border-collapse: collapse;
-  |      margin-bottom: 10px;
-  |      font-size: 14px;
-  |    }
-  |
-  |    th, td {
-  |      border: 1px solid #ddd;
-  |      padding: 8px;
-  |      text-align: left;
-  |    }
-  |
-  |    /* Table Headers */
-  |    .success-header { background-color: #4CAF50; color: white; }
-  |    .failed-header { background-color: #dc3545; color: white; }
-  |    .missed-header { background-color: #ffc107; color: black; }
-  |
-  |    /* Success: Green */
-  |    .success { background-color: #d4edda; color: #155724; }
-  |
-  |    /* Failed: Red */
-  |    .failed { background-color: #f8d7da; color: #721c24; }
-  |
-  |    /* Missed: Yellow */
-  |    .missed { background-color: #ffffcc; color: #999900; }
-  |  </style>
-  |</head>
-  |<body>
-  |  <div class="container">
-  |    <p>Hi Team,</p>
-  |    <p>Please find below the consolidated alert report for <strong>$currentDate</strong>:</p>
-  |
-  |    <h2>Success Alerts</h2>
-  |    <table>
-  |      <tr><th class="success-header">Alert Code</th></tr>
-  |      ${if (successAlerts.isEmpty) "<tr><td>No successful alerts</td></tr>"
-         else successAlerts.map(code => s"<tr class='success'><td>$code</td></tr>").mkString("\n")}
-  |    </table>
-  |
-  |    <h2>Failed Alerts</h2>
-  |    <table>
-  |      <tr><th class="failed-header">Alert Code</th><th class="failed-header">Reason</th></tr>
-  |      ${if (failedAlerts.isEmpty) "<tr><td colspan='2'>No failed alerts</td></tr>"
-         else failedAlerts.map { case (code, reason) =>
-           s"<tr class='failed'><td>$code</td><td>$reason</td></tr>"
-         }.mkString("\n")}
-  |    </table>
-  |
-  |    <h2>Missed Alerts (Daily & Weekly)</h2>
-  |    <table>
-  |      <tr><th class="missed-header">Alert Code</th></tr>
-  |      ${if (missedAlerts.isEmpty) "<tr><td>No missed alerts</td></tr>"
-         else missedAlerts.map(code => s"<tr class='missed'><td>$code</td></tr>").mkString("\n")}
-  |    </table>
-  |
-  |    <p><strong>Cutoff Time:</strong> 4:00 PM AEST</p>
-  |  </div>
-  |</body>
-  |</html>
-""".stripMargin
+val insertQuery = """
+INSERT INTO your_table 
+(Job_Id, job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, BUSINESS)
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY alert_code) || '_' || ? AS Job_Id,  -- Correct way to use ROW_NUMBER
+    ?, ?, ?, ?, ?
+"""
+
+
+val insertStatement: PreparedStatement = pconn.prepareStatement(insertQuery)
+insertStatement.setString(1, currentTimestamp)  // Pass only timestamp separately
+insertStatement.setDate(2, new java.sql.Date(System.currentTimeMillis()))
+insertStatement.setTime(3, new java.sql.Time(System.currentTimeMillis()))
+insertStatement.setString(4, alertCode)
+insertStatement.setInt(5, dtCount)
+insertStatement.setString(6, business)
+insertStatement.addBatch()
