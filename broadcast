@@ -1,9 +1,23 @@
-val jobEndTime = new Timestamp(System.currentTimeMillis())
-
-val updateQuery = s"""
-UPDATE U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
-SET job_run_end_time = '$jobEndTime'
-WHERE Job_Id = '$jobId'
+val insertQuery = s"""
+INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
+(Job_Id, job_run_start_time, job_run_end_time, alert_code, DATA_COUNT, BUSINESS)
+SELECT 
+    CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)) || 
+    TO_CHAR(CURRENT_TIMESTAMP, 'YYYYMMDDHH24MISS') AS Job_Id,
+    CURRENT_TIMESTAMP AS job_run_start_time,
+    NULL AS job_run_end_time,  -- Initially NULL
+    al.alert_code,
+    al.dt_count,
+    etl_info.Business
+FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD al
+LEFT JOIN U_D_DSV_001_RIS_1.RAMP_ETL_INFO_TEST etl_info 
+ON al.alert_code = etl_info.alert_code
+WHERE al.alert_code = ?
+RETURNING Job_Id;
 """
 
-stmt.executeUpdate(updateQuery)
+val resultSet = stmt.executeQuery(insertQuery)
+var jobId = ""
+if (resultSet.next()) {
+    jobId = resultSet.getString("Job_Id")  // Store the inserted Job_Id
+}
