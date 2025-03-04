@@ -2,9 +2,11 @@ val insertQuery = """
 INSERT INTO your_table 
 (Job_Id, job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, BUSINESS)
 SELECT 
-    ROW_NUMBER() OVER (ORDER BY alert_code) || '_' || ? AS Job_Id,  -- Correct way to use ROW_NUMBER
+    CAST(ROW_NUMBER() OVER (ORDER BY alert_code) AS VARCHAR(10)) || '_' || ? AS Job_Id, 
     ?, ?, ?, ?, ?
+FROM your_source_table  -- Replace with an actual table that has alert_code
 """
+
 
 
 val insertStatement: PreparedStatement = pconn.prepareStatement(insertQuery)
