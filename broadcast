@@ -1,19 +1,25 @@
 val insertQuery = """
-INSERT INTO your_table 
-(Job_Id, job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, BUSINESS)
-SELECT 
-    CAST(ROW_NUMBER() OVER (ORDER BY alert_code) AS VARCHAR(10)) || '_' || ? AS Job_Id, 
-    ?, ?, ?, ?, ?
-FROM your_source_table  -- Replace with an actual table that has alert_code
+    INSERT INTO U_D_DSV_001_RIS_1.cntol_bau_jobs
+    (Job_Id, job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, BUSINESS)
+    SELECT 
+        CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)) || '-' || 'RAMP' AS Job_Id,
+        CURRENT_DATE AS job_run_start_date,
+        CURRENT_TIME AS job_run_start_time,
+        al.alert_code,
+        al.dt_count,
+        etl_info.Business
+    FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD al
+    LEFT JOIN U_D_DSV_001_RIS_1.RAMP_ETL_INFO etl_info
+    ON al.alert_code = etl_info.alert_code
+    WHERE al.alert_code = ?
 """
 
+val insertStatement = pconn.prepareStatement(insertQuery)
 
+rows.foreach { row =>
+    insertStatement.setString(1, row.getAs[String]("alert_code"))
+    insertStatement.addBatch()
+}
 
-val insertStatement: PreparedStatement = pconn.prepareStatement(insertQuery)
-insertStatement.setString(1, currentTimestamp)  // Pass only timestamp separately
-insertStatement.setDate(2, new java.sql.Date(System.currentTimeMillis()))
-insertStatement.setTime(3, new java.sql.Time(System.currentTimeMillis()))
-insertStatement.setString(4, alertCode)
-insertStatement.setInt(5, dtCount)
-insertStatement.setString(6, business)
-insertStatement.addBatch()
+insertStatement.executeBatch() // Efficient batch execution
+insertStatement.close()
