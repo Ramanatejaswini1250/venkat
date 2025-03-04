@@ -1,14 +1,14 @@
-val insertStatement = pconn.prepareStatement(insertQuery)
-insertStatement.setString(1, row.getAs[String]("alert_code"))
-insertStatement.addBatch()
-insertStatement.executeBatch() // Execute batch instead of executeUpdate()
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
 
-// Fetch the last inserted Job_Id
-val jobIdQuery = "SELECT MAX(Job_Id) FROM U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info"
-val resultSet = stmt.executeQuery(jobIdQuery)
-var jobId = ""
-if (resultSet.next()) {
-    jobId = resultSet.getString(1) // Fetch latest Job_Id
-}
+// Get current timestamp
+val jobEndTime: Timestamp = new Timestamp(System.currentTimeMillis())
 
-val jobEndTime = new Timestamp(System.currentTimeMillis())
+// Convert to the correct format expected by Teradata
+val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+val formattedJobEndTime = dateFormat.format(jobEndTime)
+
+println(s"Formatted jobEndTime: $formattedJobEndTime") // Debugging
+
+// Insert into database
+insertStatement.setString(1, formattedJobEndTime)  // Ensure it's in the correct format
