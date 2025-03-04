@@ -2,7 +2,7 @@ val insertQuery = """
     INSERT INTO U_D_DSV_001_RIS_1.cntol_bau_jobs
     (Job_Id, job_run_start_date, job_run_start_time, alert_code, DATA_COUNT, BUSINESS)
     SELECT 
-        CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)) || '-' || 'RAMP' AS Job_Id,
+        CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)) || '-' || CAST(CURRENT_TIMESTAMP AS VARCHAR(30)) AS Job_Id,
         CURRENT_DATE AS job_run_start_date,
         CURRENT_TIME AS job_run_start_time,
         al.alert_code,
