@@ -1,14 +1,27 @@
-import java.sql.Timestamp
-import java.text.SimpleDateFormat
+// Step 1: Mark old records inactive before inserting new validation results
+val updateQuery = """
+    UPDATE U_D_DSV_001_RIS_1.RAMP_CONTROL_BAU_JOBS_INFO 
+    SET is_active = 'N' 
+    WHERE alert_code = ? AND job_id = ?;
+"""
+val updateStmt = pconn.prepareStatement(updateQuery)
+updateStmt.setString(1, alertCode)
+updateStmt.setLong(2, jobId)
+updateStmt.executeUpdate()
+updateStmt.close()
 
-// Get current timestamp
-val jobEndTime: Timestamp = new Timestamp(System.currentTimeMillis())
+// Step 2: Insert only necessary fields based on validation step
+val insertQuery = """
+    INSERT INTO U_D_DSV_001_RIS_1.RAMP_CONTROL_BAU_JOBS_INFO 
+    (job_id, alert_code, status, is_active, data_load_received, data_cnt_validation)
+    VALUES (?, ?, ?, 'Y', ?, ?);
+"""
+val insertStmt = pconn.prepareStatement(insertQuery)
+insertStmt.setLong(1, jobId)
+insertStmt.setString(2, alertCode)
+insertStmt.setString(3, status)
+insertStmt.setString(4, if (isDataLoadStep) dataLoadReceived else null)  // Insert only if relevant
+insertStmt.setString(5, if (isValidationStep) dataCntValidation else null)  // Insert only if relevant
+insertStmt.executeUpdate()
+insertStmt.close()
 
-// Convert to the correct format expected by Teradata
-val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-val formattedJobEndTime = dateFormat.format(jobEndTime)
-
-println(s"Formatted jobEndTime: $formattedJobEndTime") // Debugging
-
-// Insert into database
-insertStatement.setString(1, formattedJobEndTime)  // Ensure it's in the correct format
