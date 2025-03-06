@@ -1,3 +1,20 @@
+import java.text.SimpleDateFormat
+import java.util.{Date, UUID}
+
+// Format the current timestamp (adjust the format as needed)
+val dateFormat = new SimpleDateFormat("yyyyMMddHHmmss")
+val formattedTimestamp = dateFormat.format(new Date())
+
+// Generate a UUID, remove hyphens, and take the first 5 characters
+val uuidPart = UUID.randomUUID().toString.replace("-", "").take(5)
+
+// Concatenate the formatted timestamp with the 5‑character UUID substring
+val jobId = formattedTimestamp + uuidPart
+
+println(s"Unique Job ID: $jobId")
+
+
+
 if (missedAlerts.nonEmpty) {  // Ensure the set is not empty
   val missedAlertsList = missedAlerts.map(code => s"'$code'").mkString(",")  // Format for SQL IN clause
 
