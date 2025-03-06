@@ -1,1 +1,8 @@
-CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)) || formattedJobStartTime || LPAD(CAST(RANDOM(100, 999) AS VARCHAR(3)), 3, '0') AS Job_Id
+import java.time.format.DateTimeFormatter
+import java.time.{LocalDateTime, ZoneId}
+
+val cutoffTime: LocalDateTime = LocalDateTime.now() // Example
+val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+val formattedCutoffTime = cutoffTime.format(formatter)
+
+// formattedCutoffTime will be something like "2025-03-06 16:00"
