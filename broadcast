@@ -6,6 +6,22 @@ if (missedAlerts.nonEmpty) {  // Ensure the set is not empty
     SET stakoltus=?, data_load_received=?, data_run_start_time=?, data_run_end_time=? 
     WHERE alert_code IN ($missedAlertsList)
   """
+ // Get business and email details from expectedAlerts DF
+  val business = df.filter(col("alert_code") === alertCode)
+                   .select("business")  
+                   .as[String]
+                   .collect()
+                   .headOption.getOrElse("Unknown")  
+
+  val email = df.filter(col("alert_code") === alertCode)
+                .select("email")  
+                .as[String]
+                .collect()
+                .headOption.getOrElse("default@company.com")  
+
+  val message = s"Alert $alertCode was missed and did not arrive as expected."  
+
+
 
   val pstmt1 = pconn.prepareStatement(missed_Query)
   pstmt1.setString(1, "0")
