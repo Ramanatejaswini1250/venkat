@@ -1,27 +1,3 @@
-// Step 1: Mark old records inactive before inserting new validation results
-val updateQuery = """
-    UPDATE U_D_DSV_001_RIS_1.RAMP_CONTROL_BAU_JOBS_INFO 
-    SET is_active = 'N' 
-    WHERE alert_code = ? AND job_id = ?;
-"""
-val updateStmt = pconn.prepareStatement(updateQuery)
-updateStmt.setString(1, alertCode)
-updateStmt.setLong(2, jobId)
-updateStmt.executeUpdate()
-updateStmt.close()
-
-// Step 2: Insert only necessary fields based on validation step
-val insertQuery = """
-    INSERT INTO U_D_DSV_001_RIS_1.RAMP_CONTROL_BAU_JOBS_INFO 
-    (job_id, alert_code, status, is_active, data_load_received, data_cnt_validation)
-    VALUES (?, ?, ?, 'Y', ?, ?);
-"""
-val insertStmt = pconn.prepareStatement(insertQuery)
-insertStmt.setLong(1, jobId)
-insertStmt.setString(2, alertCode)
-insertStmt.setString(3, status)
-insertStmt.setString(4, if (isDataLoadStep) dataLoadReceived else null)  // Insert only if relevant
-insertStmt.setString(5, if (isValidationStep) dataCntValidation else null)  // Insert only if relevant
-insertStmt.executeUpdate()
-insertStmt.close()
-
+TO_CHAR(CURRENT_TIMESTAMP, 'YYYYMMDDHH24MISS') || 
+CAST(ROW_NUMBER() OVER (PARTITION BY TO_CHAR(CURRENT_TIMESTAMP, 'YYYYMMDDHH24MISS') ORDER BY al.alert_code) AS VARCHAR(10)) 
+AS Job_Id
