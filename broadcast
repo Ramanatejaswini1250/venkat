@@ -21,6 +21,23 @@ if (missedAlerts.nonEmpty) {  // Ensure the set is not empty
 
   val message = s"Alert $alertCode was missed and did not arrive as expected."  
 
+// Extract frequency for the given alertCode
+val frequency = df.filter(col("alert_code") === alertCode)
+                  .select("frequency")
+                  .as[String]
+                  .collect()
+                  .headOption
+
+// If frequency is missing, send an email and throw an exception
+frequency match {
+  case Some(freq) => 
+    println(s"Frequency for alertCode $alertCode: $freq")  // Logging purpose
+
+  case None => 
+    sendEmailNotification(alertCode, "Missing frequency", emailAddress, business, "")
+    throw new Exception("Missing frequency")
+}
+
 
 
   val pstmt1 = pconn.prepareStatement(missed_Query)
