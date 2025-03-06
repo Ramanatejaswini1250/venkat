@@ -1,8 +1,17 @@
-import java.time.format.DateTimeFormatter
-import java.time.{LocalDateTime, ZoneId}
+if (missedAlerts.nonEmpty) {  // Ensure the set is not empty
+  val missedAlertsList = missedAlerts.map(code => s"'$code'").mkString(",")  // Format for SQL IN clause
 
-val cutoffTime: LocalDateTime = LocalDateTime.now() // Example
-val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-val formattedCutoffTime = cutoffTime.format(formatter)
+  val missed_Query = s"""
+    UPDATE U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info 
+    SET stakoltus=?, data_load_received=?, data_run_start_time=?, data_run_end_time=? 
+    WHERE alert_code IN ($missedAlertsList)
+  """
 
-// formattedCutoffTime will be something like "2025-03-06 16:00"
+  val pstmt1 = pconn.prepareStatement(missed_Query)
+  pstmt1.setString(1, "0")
+  pstmt1.setString(2, "NA")
+  pstmt1.setString(3, "NA")
+  pstmt1.setString(4, "NA")
+  pstmt1.executeUpdate()
+  pstmt1.close()
+}
