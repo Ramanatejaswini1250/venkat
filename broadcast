@@ -1,22 +1,61 @@
+import java.util.{Calendar, TimeZone}
 import java.text.SimpleDateFormat
-import java.util.{Date, UUID}
 
-// Format the current timestamp (adjust the format as needed)
-val dateFormat = new SimpleDateFormat("yyyyMMddHHmmss")
-val formattedTimestamp = dateFormat.format(new Date())
+// Suppose these sets/maps store your success/failed/missed alerts.
+val combinedSuccessAlerts: Set[String] = Set("RAO387", "DC0019")
+val combinedFailedAlerts: Map[String, String] = Map("XYZ123" -> "Validation error")
+val missedAlerts: Set[String] = Set("RAP387")
 
-// Generate a UUID, remove hyphens, and take the first 5 characters
-val uuidPart = UUID.randomUUID().toString.replace("-", "").take(5)
+// 1) Define your target time (16:05) in AEST
+val aestZone = TimeZone.getTimeZone("Australia/Sydney")
+val calNow = Calendar.getInstance(aestZone)
+val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+val currentMin = calNow.get(Calendar.MINUTE)
+val currentSec = calNow.get(Calendar.SECOND)
 
-// Concatenate the formatted timestamp with the 5‑character UUID substring
-val jobId = formattedTimestamp + uuidPart
+println(f"Current local time in AEST: $currentHour%02d:$currentMin%02d:$currentSec%02d")
 
-println(s"Unique Job ID: $jobId")
+// We want 16:05 exactly
+val targetHour = 16
+val targetMin  = 5
 
+// 2) If it's before 16:05, calculate how long to wait
+if (currentHour < targetHour || (currentHour == targetHour && currentMin < targetMin)) {
+  // Calculate how many minutes/seconds to wait until 16:05
+  val minToWait = (targetHour - currentHour) * 60 + (targetMin - currentMin)
+  val secToWait = (60 - currentSec) % 60  // if currentSec=0, no extra seconds
+  // Convert total wait time to milliseconds
+  val waitMillis = (minToWait * 60 + secToWait) * 1000L
 
+  println(s"Waiting ${waitMillis/1000} seconds until 16:05 AEST...")
+  Thread.sleep(waitMillis)
 
-if (missedAlerts.nonEmpty) {  // Ensure the set is not empty
-  val missedAlertsList = missedAlerts.map(code => s"'$code'").mkString(",")  // Format for SQL IN clause
+  // Now it's at or very close to 16:05
+  sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+
+} else if (currentHour == targetHour && currentMin == targetMin) {
+  // Already exactly 16:05
+  println("It's exactly 16:05 AEST. Sending email now.")
+  sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+
+} else {
+  // It's after 16:05 (or far before 16:00, etc.)
+  // Decide if you want to skip or still send.
+  println("It's after 16:05 AEST. Skipping or handle differently.")
+}
+
+// Example consolidated email function
+def sendConsolidatedEmail(
+  combinedSuccessAlerts: Set[String],
+  combinedFailedAlerts: Map[String, String],
+  missedAlerts: Set[String]
+): Unit = {
+  val currentDate = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(calNow.getTime)
+  // ...build your HTML email body...
+  println(s"Sending consolidated email at $currentDate with success=$combinedSuccessAlerts, failed=$combinedFailedAlerts, missed=$missedAlerts")
+  // Actually send the email (omitted for brevity)
+}
+
 
   val missed_Query = s"""
     UPDATE U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info 
