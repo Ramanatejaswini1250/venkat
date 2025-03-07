@@ -66,3 +66,27 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, 
   println(s"SQL script for AlertCode: $alertCode executed successfully.")
   (masterTable1, masterTable2)
 }
+
+
+import scala.concurrent.duration._
+import java.util.Calendar
+
+val maxWaitTime = 5 // Max wait time in minutes
+var waitTime = 0
+var missedAlerts: Set[String] = Set.empty
+
+while (waitTime < maxWaitTime) {
+  val receivedAlerts = combinedReceivedAlerts // Fetch latest received alerts
+  
+  missedAlerts = expectedAlerts.diff(receivedAlerts)
+  
+  if (missedAlerts.nonEmpty || waitTime == maxWaitTime - 1) {
+    println(s"Final Missed Alerts: ${missedAlerts.mkString(", ")}")
+    break // Exit loop
+  }
+
+  println(s"Waiting for alerts to settle... (${waitTime + 1} min)")
+  Thread.sleep(60000) // Wait for 1 minute before retrying
+  waitTime += 1
+}
+
