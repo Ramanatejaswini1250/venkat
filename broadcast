@@ -1,22 +1,9 @@
-import java.sql.{Connection, DriverManager, Statement}
-import java.nio.file.{Files, Paths}
-import scala.collection.mutable.{ListBuffer, Map}
-
-// Function to extract all master tables matching the pattern "_MASTER_TARGET1_"
-def extractMasterTables(commands: Seq[String]): Seq[String] = {
-  val masterTablePattern = "(?i).*_MASTER_TARGET[0-9]+_.*".r
-  commands.flatMap { command =>
-    val tableName = extractTableName(command)
-    if (masterTablePattern.findFirstIn(tableName).isDefined) Some(tableName) else None
-  }.distinct
-}
-
-// Run SQL script and return master tables associated with the alert
 def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, alertCode: String): (String, String) = {
   println(s"Running SQL script for AlertCode: $alertCode from: $scriptPath")
+  
   var currentCommand: Option[String] = None
   val executedQueries = ListBuffer[String]() // Track executed queries
-  val failedQueries = ListBuffer[String]() // Track failed queries
+  val failedQueries = ListBuffer[String]()   // Track failed queries
 
   conn_rss.setAutoCommit(false)
   stmt_rss.setQueryTimeout(30) // Set 30 seconds timeout for each query
@@ -30,13 +17,14 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, 
     .filterNot(_.trim.toUpperCase.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;"))
     .filter(_.nonEmpty)
 
+  // **Extract Master Tables for this alertCode**  
   val masterTables = extractMasterTables(validLines)
   println(s"Extracted master tables for $alertCode: ${masterTables.mkString(", ")}")
 
   val masterTable1 = masterTables.headOption.getOrElse(s"default_mastertable1_$alertCode")
   val masterTable2 = if (masterTables.length > 1) masterTables(1) else s"default_mastertable2_$alertCode"
 
-  // Execute DELETE statements specific to this alert
+  // **Ensure DELETE statements only affect this alert**
   masterTables.foreach { table =>
     val deleteStmt = s"DELETE FROM $table WHERE alert_code = '$alertCode';"
     println(s"Executing: $deleteStmt")
@@ -44,8 +32,13 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, 
     executedQueries += deleteStmt
   }
 
-  // Process remaining SQL queries
-  val remainingCommands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+  // **Filter only queries related to this alertCode**  
+  val remainingCommands = validLines
+    .mkString("\n")
+    .split(";")
+    .map(_.trim)
+    .filter(query => query.toUpperCase.contains(alertCode.toUpperCase)) // ✅ Ensure it's specific to alertCode
+    .filter(_.nonEmpty)
 
   remainingCommands.foreach { query =>
     currentCommand = Some(query) // Track the current command
@@ -72,84 +65,4 @@ def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, 
   conn_rss.commit()
   println(s"SQL script for AlertCode: $alertCode executed successfully.")
   (masterTable1, masterTable2)
-} catch {
-  case ex: Exception =>
-    ex.printStackTrace()
-    val failedCommand = currentCommand.getOrElse("Unknown Command")
-    val failedTableName = extractTableName(failedCommand)
-    val fatalErrorMsg = s"Table Execution Failed for AlertCode: $alertCode, Table: $failedTableName. Error: ${ex.getMessage}\n"
-    println(fatalErrorMsg)
-    conn_rss.rollback()
-    throw new RuntimeException(fatalErrorMsg)
-} finally {
-  conn_rss.setAutoCommit(true)
-}
-
-// Processing data in partitions
-df.repartition(100).foreachPartition { partition: Iterator[Row] =>
-  val conn_rss = DriverManager.getConnection(url, username, password)
-  val conn = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
-
-  try {
-    partition.foreach { row =>
-      var stmt_rss: Statement = null
-      var stmt: Statement = null
-
-      try {
-        stmt_rss = conn_rss.createStatement()
-        stmt = conn.createStatement()
-
-        val alertCode = row.getAs[String]("alert_code")
-        val dtCount = row.getAs[Int]("dt_count")
-        val dateToLoad = row.getAs[String]("date_to_load")
-        val bteqLocation = row.getAs[String]("bteq_location")
-        val business = row.getAs[String]("business")
-        val emailAddress = row.getAs[String]("email_address") // Split multiple emails by comma
-
-        val alertMasterTable1 = s"master_table1_$alertCode"
-        val alertMasterTable2 = s"master_table2_$alertCode"
-
-        // Track master counts for each alert code separately
-        val masterCounts = scala.collection.mutable.Map[String, Int]()
-
-        if (sourceTableCount == dtCount) {
-          if (cleanFolderPath != null && cleanFolderPath.nonEmpty) {
-            var cleanSqlFilePath = s"$cleanFolderPath/$alertCode.sql"
-            cleanSqlFilePath = cleanSqlFilePath.stripSuffix(".")
-
-            val sqlFilePath = SparkFiles.get(s"$alertCode.sql")
-
-            if (Files.exists(Paths.get(sqlFilePath))) {
-              try {
-                val (table1, table2) = runSqlScript(conn_rss, stmt_rss, sqlFilePath, alertCode)
-                masterCounts(alertCode) = getCountForTable(conn, table1) // Count specific to this alert
-              } catch {
-                case e: Exception =>
-                  val errorMessage = s"SQL Execution failed for AlertCode: $alertCode, Error: ${e.getMessage}"
-                  println(errorMessage)
-                  failedAcc.add((alertCode.toString, errorMessage))
-              }
-            }
-          }
-        } else {
-          println(s"Count is zero for AlertCode: $alertCode for $dateToLoad. No insertion performed")
-        }
-
-        // Validate master counts only for this alert code
-        if (masterCounts.contains(alertCode) && masterCounts(alertCode) == dtCount) {
-          println(s"Master count validation passed for AlertCode: $alertCode")
-          successAcc.add(alertCode)
-        } else {
-          println(s"Master count validation failed for AlertCode: $alertCode")
-          failedAcc.add(alertCode)
-        }
-      } finally {
-        if (stmt_rss != null) stmt_rss.close()
-        if (stmt != null) stmt.close()
-      }
-    }
-  } finally {
-    conn_rss.close()
-    conn.close()
-  }
 }
