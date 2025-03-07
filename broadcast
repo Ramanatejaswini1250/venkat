@@ -1,106 +1,155 @@
-import java.util.{Calendar, TimeZone}
-import java.text.SimpleDateFormat
+import java.sql.{Connection, DriverManager, Statement}
+import java.nio.file.{Files, Paths}
+import scala.collection.mutable.{ListBuffer, Map}
 
-// Suppose these sets/maps store your success/failed/missed alerts.
-val combinedSuccessAlerts: Set[String] = Set("RAO387", "DC0019")
-val combinedFailedAlerts: Map[String, String] = Map("XYZ123" -> "Validation error")
-val missedAlerts: Set[String] = Set("RAP387")
-
-// 1) Define your target time (16:05) in AEST
-val aestZone = TimeZone.getTimeZone("Australia/Sydney")
-val calNow = Calendar.getInstance(aestZone)
-val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
-val currentMin = calNow.get(Calendar.MINUTE)
-val currentSec = calNow.get(Calendar.SECOND)
-
-println(f"Current local time in AEST: $currentHour%02d:$currentMin%02d:$currentSec%02d")
-
-// We want 16:05 exactly
-val targetHour = 16
-val targetMin  = 5
-
-// 2) If it's before 16:05, calculate how long to wait
-if (currentHour < targetHour || (currentHour == targetHour && currentMin < targetMin)) {
-  // Calculate how many minutes/seconds to wait until 16:05
-  val minToWait = (targetHour - currentHour) * 60 + (targetMin - currentMin)
-  val secToWait = (60 - currentSec) % 60  // if currentSec=0, no extra seconds
-  // Convert total wait time to milliseconds
-  val waitMillis = (minToWait * 60 + secToWait) * 1000L
-
-  println(s"Waiting ${waitMillis/1000} seconds until 16:05 AEST...")
-  Thread.sleep(waitMillis)
-
-  // Now it's at or very close to 16:05
-  sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
-
-} else if (currentHour == targetHour && currentMin == targetMin) {
-  // Already exactly 16:05
-  println("It's exactly 16:05 AEST. Sending email now.")
-  sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
-
-} else {
-  // It's after 16:05 (or far before 16:00, etc.)
-  // Decide if you want to skip or still send.
-  println("It's after 16:05 AEST. Skipping or handle differently.")
+// Function to extract all master tables matching the pattern "_MASTER_TARGET1_"
+def extractMasterTables(commands: Seq[String]): Seq[String] = {
+  val masterTablePattern = "(?i).*_MASTER_TARGET[0-9]+_.*".r
+  commands.flatMap { command =>
+    val tableName = extractTableName(command)
+    if (masterTablePattern.findFirstIn(tableName).isDefined) Some(tableName) else None
+  }.distinct
 }
 
-// Example consolidated email function
-def sendConsolidatedEmail(
-  combinedSuccessAlerts: Set[String],
-  combinedFailedAlerts: Map[String, String],
-  missedAlerts: Set[String]
-): Unit = {
-  val currentDate = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(calNow.getTime)
-  // ...build your HTML email body...
-  println(s"Sending consolidated email at $currentDate with success=$combinedSuccessAlerts, failed=$combinedFailedAlerts, missed=$missedAlerts")
-  // Actually send the email (omitted for brevity)
+// Run SQL script and return master tables associated with the alert
+def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, alertCode: String): (String, String) = {
+  println(s"Running SQL script for AlertCode: $alertCode from: $scriptPath")
+  var currentCommand: Option[String] = None
+  val executedQueries = ListBuffer[String]() // Track executed queries
+  val failedQueries = ListBuffer[String]() // Track failed queries
+
+  conn_rss.setAutoCommit(false)
+  stmt_rss.setQueryTimeout(30) // Set 30 seconds timeout for each query
+
+  val scriptContent = readFileAsString(scriptPath)
+  val scriptWithoutComments = removeBlockComments(scriptContent)
+
+  val validLines = scriptWithoutComments.split("\n").toList
+    .drop(4).dropRight(4) // Skip header/footer
+    .map(removeInlineComments)
+    .filterNot(_.trim.toUpperCase.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;"))
+    .filter(_.nonEmpty)
+
+  val masterTables = extractMasterTables(validLines)
+  println(s"Extracted master tables for $alertCode: ${masterTables.mkString(", ")}")
+
+  val masterTable1 = masterTables.headOption.getOrElse(s"default_mastertable1_$alertCode")
+  val masterTable2 = if (masterTables.length > 1) masterTables(1) else s"default_mastertable2_$alertCode"
+
+  // Execute DELETE statements specific to this alert
+  masterTables.foreach { table =>
+    val deleteStmt = s"DELETE FROM $table WHERE alert_code = '$alertCode';"
+    println(s"Executing: $deleteStmt")
+    stmt_rss.execute(deleteStmt)
+    executedQueries += deleteStmt
+  }
+
+  // Process remaining SQL queries
+  val remainingCommands = validLines.mkString("\n").split(";").map(_.trim).filter(_.nonEmpty)
+
+  remainingCommands.foreach { query =>
+    currentCommand = Some(query) // Track the current command
+    val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
+      transformInsertToIncludeColumns(query, stmt_rss)
+    } else {
+      query
+    }
+
+    try {
+      println(s"Executing transformed query: $transformedQuery")
+      stmt_rss.execute(transformedQuery)
+      executedQueries += transformedQuery
+    } catch {
+      case e: Exception =>
+        failedQueries += transformedQuery
+        val fatalErrorMsg = s"SQL Execution Failed for AlertCode: $alertCode, Error: ${e.getMessage}\n"
+        println(s"Failed query: $transformedQuery\nError: ${e.getMessage}")
+        conn_rss.rollback()
+        throw new RuntimeException(fatalErrorMsg)
+    }
+  }
+
+  conn_rss.commit()
+  println(s"SQL script for AlertCode: $alertCode executed successfully.")
+  (masterTable1, masterTable2)
+} catch {
+  case ex: Exception =>
+    ex.printStackTrace()
+    val failedCommand = currentCommand.getOrElse("Unknown Command")
+    val failedTableName = extractTableName(failedCommand)
+    val fatalErrorMsg = s"Table Execution Failed for AlertCode: $alertCode, Table: $failedTableName. Error: ${ex.getMessage}\n"
+    println(fatalErrorMsg)
+    conn_rss.rollback()
+    throw new RuntimeException(fatalErrorMsg)
+} finally {
+  conn_rss.setAutoCommit(true)
 }
 
+// Processing data in partitions
+df.repartition(100).foreachPartition { partition: Iterator[Row] =>
+  val conn_rss = DriverManager.getConnection(url, username, password)
+  val conn = DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword)
 
-  val missed_Query = s"""
-    UPDATE U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info 
-    SET stakoltus=?, data_load_received=?, data_run_start_time=?, data_run_end_time=? 
-    WHERE alert_code IN ($missedAlertsList)
-  """
- // Get business and email details from expectedAlerts DF
-  val business = df.filter(col("alert_code") === alertCode)
-                   .select("business")  
-                   .as[String]
-                   .collect()
-                   .headOption.getOrElse("Unknown")  
+  try {
+    partition.foreach { row =>
+      var stmt_rss: Statement = null
+      var stmt: Statement = null
 
-  val email = df.filter(col("alert_code") === alertCode)
-                .select("email")  
-                .as[String]
-                .collect()
-                .headOption.getOrElse("default@company.com")  
+      try {
+        stmt_rss = conn_rss.createStatement()
+        stmt = conn.createStatement()
 
-  val message = s"Alert $alertCode was missed and did not arrive as expected."  
+        val alertCode = row.getAs[String]("alert_code")
+        val dtCount = row.getAs[Int]("dt_count")
+        val dateToLoad = row.getAs[String]("date_to_load")
+        val bteqLocation = row.getAs[String]("bteq_location")
+        val business = row.getAs[String]("business")
+        val emailAddress = row.getAs[String]("email_address") // Split multiple emails by comma
 
-// Extract frequency for the given alertCode
-val frequency = df.filter(col("alert_code") === alertCode)
-                  .select("frequency")
-                  .as[String]
-                  .collect()
-                  .headOption
+        val alertMasterTable1 = s"master_table1_$alertCode"
+        val alertMasterTable2 = s"master_table2_$alertCode"
 
-// If frequency is missing, send an email and throw an exception
-frequency match {
-  case Some(freq) => 
-    println(s"Frequency for alertCode $alertCode: $freq")  // Logging purpose
+        // Track master counts for each alert code separately
+        val masterCounts = scala.collection.mutable.Map[String, Int]()
 
-  case None => 
-    sendEmailNotification(alertCode, "Missing frequency", emailAddress, business, "")
-    throw new Exception("Missing frequency")
-}
+        if (sourceTableCount == dtCount) {
+          if (cleanFolderPath != null && cleanFolderPath.nonEmpty) {
+            var cleanSqlFilePath = s"$cleanFolderPath/$alertCode.sql"
+            cleanSqlFilePath = cleanSqlFilePath.stripSuffix(".")
 
+            val sqlFilePath = SparkFiles.get(s"$alertCode.sql")
 
+            if (Files.exists(Paths.get(sqlFilePath))) {
+              try {
+                val (table1, table2) = runSqlScript(conn_rss, stmt_rss, sqlFilePath, alertCode)
+                masterCounts(alertCode) = getCountForTable(conn, table1) // Count specific to this alert
+              } catch {
+                case e: Exception =>
+                  val errorMessage = s"SQL Execution failed for AlertCode: $alertCode, Error: ${e.getMessage}"
+                  println(errorMessage)
+                  failedAcc.add((alertCode.toString, errorMessage))
+              }
+            }
+          }
+        } else {
+          println(s"Count is zero for AlertCode: $alertCode for $dateToLoad. No insertion performed")
+        }
 
-  val pstmt1 = pconn.prepareStatement(missed_Query)
-  pstmt1.setString(1, "0")
-  pstmt1.setString(2, "NA")
-  pstmt1.setString(3, "NA")
-  pstmt1.setString(4, "NA")
-  pstmt1.executeUpdate()
-  pstmt1.close()
+        // Validate master counts only for this alert code
+        if (masterCounts.contains(alertCode) && masterCounts(alertCode) == dtCount) {
+          println(s"Master count validation passed for AlertCode: $alertCode")
+          successAcc.add(alertCode)
+        } else {
+          println(s"Master count validation failed for AlertCode: $alertCode")
+          failedAcc.add(alertCode)
+        }
+      } finally {
+        if (stmt_rss != null) stmt_rss.close()
+        if (stmt != null) stmt.close()
+      }
+    }
+  } finally {
+    conn_rss.close()
+    conn.close()
+  }
 }
