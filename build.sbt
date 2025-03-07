@@ -19,6 +19,18 @@ val receivedAlerts: Set[String] = df
   .map(_.getAs[String]("alert_code"))
   .toSet
 
+// Get today's day of the week (Monday, Tuesday, etc.)
+val today: DayOfWeek = LocalDate.now().getDayOfWeek
+
+// Step 1: Identify Expected Weekly Alerts for Today
+val expectedWeeklyAlerts: Set[String] = df
+  .filter(col("frequency") === "w" && col("scheduled_day") === today.toString) // Filter weekly alerts scheduled for today
+  .select("alert_code")
+  .distinct()
+  .collect()
+  .map(row => row.getAs[String]("alert_code"))
+  .toSet
+
 // ✅ Step 4: Compute Fully Missed Alerts (Expected - Received)
 val fullyMissedAlerts: Set[String] = expectedAlerts.diff(receivedAlerts)
 
