@@ -1,59 +1,75 @@
-import java.io._
-import java.util.concurrent.locks.ReentrantLock
-import java.time.LocalDate
+import java.io.{BufferedWriter, File, FileWriter, OutputStreamWriter}
+import java.nio.channels.{FileChannel, FileLock}
+import java.nio.file.{Files, Paths, StandardOpenOption}
+import scala.util.Using
 
-// Define a global lock for file writing
-val fileLock = new ReentrantLock()
+// Define the file path and lock file path
+val csv2path = "/path/to/master_table2.csv"
+val lockFilePath = csv2path + ".lock"
 
-// Define the CSV file path
-val csv2Path = "/your/path/Master_Table1.csv"
-
-// Define the header
-val master2_header = "ALERT_ID,SEQUENCENUMBER,VARIABLE,HEADER"
-
-// Function to check if file has a header
-def fileHasHeader(filePath: String, header: String): Boolean = {
-  val file = new File(filePath)
-  if (!file.exists()) return false
-  val reader = new BufferedReader(new FileReader(file))
-  val firstLine = reader.readLine()
-  reader.close()
-  firstLine != null && firstLine.contains(header)
+// File lock function
+def acquireLock(): Option[FileLock] = {
+  try {
+    val lockFile = new FileOutputStream(lockFilePath)
+    val channel = lockFile.getChannel
+    val lock = channel.tryLock()
+    
+    if (lock != null) {
+      Some(lock)
+    } else {
+      lockFile.close()
+      None
+    }
+  } catch {
+    case e: Exception =>
+      println(s"Error acquiring lock: ${e.getMessage}")
+      None
+  }
 }
 
-// Function to safely write to CSV
-def writeAlertsToCSV(MasterTable2DF: List[String]): Unit = {
-  fileLock.lock() // Acquire lock
+def releaseLock(lock: Option[FileLock]): Unit = {
+  lock.foreach { l =>
+    try {
+      l.release()
+      l.channel.close()
+      Files.deleteIfExists(Paths.get(lockFilePath)) // Remove lock file
+    } catch {
+      case e: Exception => println(s"Error releasing lock: ${e.getMessage}")
+    }
+  }
+}
+
+val masterTable2DF = Seq("Row1", "Row2", "Row3") // Dummy DataFrame
+
+// Try to acquire lock before writing
+val lock = acquireLock()
+
+if (lock.isDefined) {
   try {
-    val outputStream1 = new FileOutputStream(csv2Path, true) // Append mode
-    val master_writer2 = new BufferedWriter(new OutputStreamWriter(outputStream1, "UTF-8"))
+    // Open file in append mode
+    val outputStream = Files.newOutputStream(Paths.get(csv2path), StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+    val master_writer2 = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
 
-    val headerPresent1 = fileHasHeader(csv2Path, master2_header)
-
-    if (!headerPresent1) {
+    // Write header if file is empty
+    val master2_header = "ALERT_ID,SEQUENCENUMBER,VARIABLE,HEADER"
+    if (Files.size(Paths.get(csv2path)) == 0) {
       master_writer2.write(master2_header)
       master_writer2.newLine()
     }
 
-    MasterTable2DF.foreach { row =>
+    // Write rows
+    masterTable2DF.foreach { row =>
       master_writer2.write(row)
       master_writer2.newLine()
     }
 
-    master_writer2.close() // Close writer
-  } catch {
-    case e: Exception =>
-      println(s"⚠ Error writing to CSV: ${e.getMessage}") // Log error
+    // Flush and close writer
+    master_writer2.flush()
+    master_writer2.close()
   } finally {
-    fileLock.unlock() // Release lock
+    // Release the lock
+    releaseLock(lock)
   }
+} else {
+  println("🚨 Another process is writing to the file. Skipping write operation.")
 }
-
-// Simulated Data
-val MasterTable2DF = List(
-  "DC0079,12345,Value1,Header1",
-  "DC0019,67890,Value2,Header2"
-)
-
-// Call function to write alerts
-writeAlertsToCSV(MasterTable2DF)
