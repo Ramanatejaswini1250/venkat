@@ -1,33 +1,46 @@
-// Step 1: Identify expected alerts
+// ⏳ Step 1: Introduce delay before computing missed alerts
+Thread.sleep(120000) // 2-minute delay before processing
+
+// ✅ Step 2: Identify expected alerts based on frequency (Daily, Weekly, Monthly, Quarterly)
 val expectedAlerts: Set[String] = df
-  .filter(col("frequency").isin("d", "w", "m", "q")) // Consider all scheduled frequencies
+  .filter(col("frequency").isin("d", "w", "m", "q")) // Only scheduled alerts
   .select("alert_code")
   .distinct()
   .collect()
-  .map(row => row.getAs[String]("alert_code"))
+  .map(_.getAs[String]("alert_code"))
   .toSet
 
-// Step 2: Identify received alerts (processed with dt_count > 0)
+// ✅ Step 3: Identify received alerts (Processed alerts with dt_count > 0)
 val receivedAlerts: Set[String] = df
-  .filter(col("dt_count") > 0) // Only consider alerts that were actually processed
+  .filter(col("dt_count") > 0) // Processed alerts only
   .select("alert_code")
   .distinct()
   .collect()
-  .map(row => row.getAs[String]("alert_code"))
+  .map(_.getAs[String]("alert_code"))
   .toSet
 
-// Step 3: Compute missed alerts (Expected - Received)
-val missedAlerts: Set[String] = expectedAlerts.diff(receivedAlerts)
+// ✅ Step 4: Compute Fully Missed Alerts (Expected - Received)
+val fullyMissedAlerts: Set[String] = expectedAlerts.diff(receivedAlerts)
 
-println(s"🔴 Missed Alerts at Cutoff Time: ${missedAlerts.mkString(", ")}")
+// ✅ Step 5: Identify Alerts with Missing Frequency or Source Data
+val processedAlertsWithIssues: Set[String] = df
+  .filter(col("dt_count") > 0)
+  .filter(col("frequency").isNull || col("source_table").isNull) // Check missing frequency or source data
+  .select("alert_code")
+  .distinct()
+  .collect()
+  .map(_.getAs[String]("alert_code"))
+  .toSet
 
-// Step 4: Introduce a delay before final processing (ensure last-minute updates are captured)
-Thread.sleep(120000) // 2-minute delay before marking alerts as missed
+println(s"🔴 Fully Missed Alerts: ${fullyMissedAlerts.mkString(", ")}")
+println(s"⚠️ Processed Alerts with Issues: ${processedAlertsWithIssues.mkString(", ")}")
 
-// Step 5: Send individual emails for each missed alert
-if (missedAlerts.nonEmpty) {
+// 📧 Step 6: Send Individual Emails for Missed Alerts
+val missedAlertsToNotify = fullyMissedAlerts ++ processedAlertsWithIssues
+
+if (missedAlertsToNotify.nonEmpty) {
   val businessContactsDF = df
-    .filter(col("alert_code").isin(missedAlerts.toSeq: _*)) // Fetch business contacts for missed alerts
+    .where(col("alert_code").isin(missedAlertsToNotify.toSeq: _*)) // Efficient filtering before collect
     .select("alert_code", "business", "email_address")
     .distinct()
     .collect()
@@ -37,22 +50,46 @@ if (missedAlerts.nonEmpty) {
     val business = row.getAs[String]("business")
     val email = row.getAs[String]("email_address")
 
-    val emailSubject = s"🔴 Missed Alert Notification: $alertCode"
+    val isFullyMissed = fullyMissedAlerts.contains(alertCode)
+    val isIssueInData = processedAlertsWithIssues.contains(alertCode)
+
+    val issueDetails = if (isFullyMissed) {
+      "Alert was expected but did not arrive at the cutoff time."
+    } else if (isIssueInData) {
+      "Alert was processed but has missing frequency or source table data."
+    } else {
+      "Unknown issue."
+    }
+
+    val emailSubject = s"🔴 Alert Issue Notification: $alertCode"
     val emailBody =
       s"""
         |Hello $business Team,
         |
-        |The alert with code **$alertCode** was expected but did not arrive by the cutoff time (4:00 PM AEST).
-        |Please investigate the issue.
+        |The alert with code **$alertCode** has an issue:
+        |$issueDetails
+        |
+        |Please investigate and resolve this issue.
         |
         |Best regards,  
         |Automation Team
       """.stripMargin
 
     sendEmail(email, emailSubject, emailBody)
-    println(s"📧 Sent missed alert email to $email for alert code: $alertCode")
+    println(s"📧 Sent alert issue email to $email for alert code: $alertCode")
   }
 }
 
-// Step 6: Send consolidated email including missed alerts
-sendConsolidatedEmail(successAlerts, failureAlerts, missedAlerts)
+// 📨 Step 7: Send Consolidated Email with Categorized Missed & Issue Alerts
+val emailBody =
+  s"""
+    |🔴 **Missed & Issue Alerts Summary (4:00 PM AEST)**
+    |
+    |**Fully Missed Alerts:** ${fullyMissedAlerts.mkString(", ")}
+    |**Alerts Processed but Missing Data:** ${processedAlertsWithIssues.mkString(", ")}
+    |
+    |Best regards,  
+    |Automation Team
+  """.stripMargin
+
+sendConsolidatedEmail("Missed & Issue Alerts Summary", emailBody)
