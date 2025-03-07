@@ -1,54 +1,11 @@
-import java.io.{BufferedWriter, File, FileWriter, OutputStreamWriter}
-import java.nio.channels.{FileChannel, FileLock}
-import java.nio.file.{Files, Paths, StandardOpenOption}
-import scala.util.Using
-
-// Define the file path and lock file path
-val csv2path = "/path/to/master_table2.csv"
-val lockFilePath = csv2path + ".lock"
-
-// File lock function
-def acquireLock(): Option[FileLock] = {
-  try {
-    val lockFile = new FileOutputStream(lockFilePath)
-    val channel = lockFile.getChannel
-    val lock = channel.tryLock()
-    
-    if (lock != null) {
-      Some(lock)
-    } else {
-      lockFile.close()
-      None
-    }
-  } catch {
-    case e: Exception =>
-      println(s"Error acquiring lock: ${e.getMessage}")
-      None
-  }
-}
-
-def releaseLock(lock: Option[FileLock]): Unit = {
-  lock.foreach { l =>
-    try {
-      l.release()
-      l.channel.close()
-      Files.deleteIfExists(Paths.get(lockFilePath)) // Remove lock file
-    } catch {
-      case e: Exception => println(s"Error releasing lock: ${e.getMessage}")
-    }
-  }
-}
-
-val masterTable2DF = Seq("Row1", "Row2", "Row3") // Dummy DataFrame
-
-// Try to acquire lock before writing
 val lock = acquireLock()
 
 if (lock.isDefined) {
+  var master_writer2: BufferedWriter = null
   try {
     // Open file in append mode
     val outputStream = Files.newOutputStream(Paths.get(csv2path), StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-    val master_writer2 = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
+    master_writer2 = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
 
     // Write header if file is empty
     val master2_header = "ALERT_ID,SEQUENCENUMBER,VARIABLE,HEADER"
@@ -62,12 +19,21 @@ if (lock.isDefined) {
       master_writer2.write(row)
       master_writer2.newLine()
     }
-
-    // Flush and close writer
-    master_writer2.flush()
-    master_writer2.close()
+    
+  } catch {
+    case e: Exception => println(s"Error writing file: ${e.getMessage}")
   } finally {
-    // Release the lock
+    // Ensure resources are properly closed
+    if (master_writer2 != null) {
+      try {
+        master_writer2.flush()  // Ensure all buffered data is written
+        master_writer2.close()  // Close the writer
+      } catch {
+        case e: Exception => println(s"Error closing writer: ${e.getMessage}")
+      }
+    }
+    
+    // Release the file lock
     releaseLock(lock)
   }
 } else {
