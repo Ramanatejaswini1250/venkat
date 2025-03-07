@@ -1,92 +1,59 @@
-def runSqlScript(conn_rss: Connection, stmt_rss: Statement, scriptPath: String, alertCode: String): (String, String) = {
-  println(s"Running SQL script for AlertCode: $alertCode from: $scriptPath")
-  
-  var currentCommand: Option[String] = None
-  val executedQueries = ListBuffer[String]() // Track executed queries
-  val failedQueries = ListBuffer[String]()   // Track failed queries
+import java.io._
+import java.util.concurrent.locks.ReentrantLock
+import java.time.LocalDate
 
-  conn_rss.setAutoCommit(false)
-  stmt_rss.setQueryTimeout(30) // Set 30 seconds timeout for each query
+// Define a global lock for file writing
+val fileLock = new ReentrantLock()
 
-  val scriptContent = readFileAsString(scriptPath)
-  val scriptWithoutComments = removeBlockComments(scriptContent)
+// Define the CSV file path
+val csv2Path = "/your/path/Master_Table1.csv"
 
-  val validLines = scriptWithoutComments.split("\n").toList
-    .drop(4).dropRight(4) // Skip header/footer
-    .map(removeInlineComments)
-    .filterNot(_.trim.toUpperCase.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;"))
-    .filter(_.nonEmpty)
+// Define the header
+val master2_header = "ALERT_ID,SEQUENCENUMBER,VARIABLE,HEADER"
 
-  // **Extract Master Tables for this alertCode**  
-  val masterTables = extractMasterTables(validLines)
-  println(s"Extracted master tables for $alertCode: ${masterTables.mkString(", ")}")
-
-  val masterTable1 = masterTables.headOption.getOrElse(s"default_mastertable1_$alertCode")
-  val masterTable2 = if (masterTables.length > 1) masterTables(1) else s"default_mastertable2_$alertCode"
-
-  // **Ensure DELETE statements only affect this alert**
-  masterTables.foreach { table =>
-    val deleteStmt = s"DELETE FROM $table WHERE alert_code = '$alertCode';"
-    println(s"Executing: $deleteStmt")
-    stmt_rss.execute(deleteStmt)
-    executedQueries += deleteStmt
-  }
-
-  // **Filter only queries related to this alertCode**  
-  val remainingCommands = validLines
-    .mkString("\n")
-    .split(";")
-    .map(_.trim)
-    .filter(query => query.toUpperCase.contains(alertCode.toUpperCase)) // ✅ Ensure it's specific to alertCode
-    .filter(_.nonEmpty)
-
-  remainingCommands.foreach { query =>
-    currentCommand = Some(query) // Track the current command
-    val transformedQuery = if (query.toUpperCase.startsWith("INSERT INTO")) {
-      transformInsertToIncludeColumns(query, stmt_rss)
-    } else {
-      query
-    }
-
-    try {
-      println(s"Executing transformed query: $transformedQuery")
-      stmt_rss.execute(transformedQuery)
-      executedQueries += transformedQuery
-    } catch {
-      case e: Exception =>
-        failedQueries += transformedQuery
-        val fatalErrorMsg = s"SQL Execution Failed for AlertCode: $alertCode, Error: ${e.getMessage}\n"
-        println(s"Failed query: $transformedQuery\nError: ${e.getMessage}")
-        conn_rss.rollback()
-        throw new RuntimeException(fatalErrorMsg)
-    }
-  }
-
-  conn_rss.commit()
-  println(s"SQL script for AlertCode: $alertCode executed successfully.")
-  (masterTable1, masterTable2)
+// Function to check if file has a header
+def fileHasHeader(filePath: String, header: String): Boolean = {
+  val file = new File(filePath)
+  if (!file.exists()) return false
+  val reader = new BufferedReader(new FileReader(file))
+  val firstLine = reader.readLine()
+  reader.close()
+  firstLine != null && firstLine.contains(header)
 }
 
+// Function to safely write to CSV
+def writeAlertsToCSV(MasterTable2DF: List[String]): Unit = {
+  fileLock.lock() // Acquire lock
+  try {
+    val outputStream1 = new FileOutputStream(csv2Path, true) // Append mode
+    val master_writer2 = new BufferedWriter(new OutputStreamWriter(outputStream1, "UTF-8"))
 
-import scala.concurrent.duration._
-import java.util.Calendar
+    val headerPresent1 = fileHasHeader(csv2Path, master2_header)
 
-val maxWaitTime = 5 // Max wait time in minutes
-var waitTime = 0
-var missedAlerts: Set[String] = Set.empty
+    if (!headerPresent1) {
+      master_writer2.write(master2_header)
+      master_writer2.newLine()
+    }
 
-while (waitTime < maxWaitTime) {
-  val receivedAlerts = combinedReceivedAlerts // Fetch latest received alerts
-  
-  missedAlerts = expectedAlerts.diff(receivedAlerts)
-  
-  if (missedAlerts.nonEmpty || waitTime == maxWaitTime - 1) {
-    println(s"Final Missed Alerts: ${missedAlerts.mkString(", ")}")
-    break // Exit loop
+    MasterTable2DF.foreach { row =>
+      master_writer2.write(row)
+      master_writer2.newLine()
+    }
+
+    master_writer2.close() // Close writer
+  } catch {
+    case e: Exception =>
+      println(s"⚠ Error writing to CSV: ${e.getMessage}") // Log error
+  } finally {
+    fileLock.unlock() // Release lock
   }
-
-  println(s"Waiting for alerts to settle... (${waitTime + 1} min)")
-  Thread.sleep(60000) // Wait for 1 minute before retrying
-  waitTime += 1
 }
 
+// Simulated Data
+val MasterTable2DF = List(
+  "DC0079,12345,Value1,Header1",
+  "DC0019,67890,Value2,Header2"
+)
+
+// Call function to write alerts
+writeAlertsToCSV(MasterTable2DF)
