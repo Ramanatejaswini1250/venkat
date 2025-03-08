@@ -1,48 +1,73 @@
-val issueType = if (frequency == null) {
-    "Frequency Missing"
-} else if (sourceTableName == null && filterColumn == null) {
-    "All Three Missing (Frequency, Source, and Filter Column)"
-} else if (sourceTableName == null) {
-    "Source Table Name Missing"
-} else if (filterColumn == null) {
-    "Filter Column Missing"
-} else if (frequency == null && sourceTableName == null) {
-    "Frequency and Source Table Name Missing"
-} else if (frequency == null && filterColumn == null) {
-    "Frequency and Filter Column Missing"
-} else if (sourceTableName == null && filterColumn == null) {
-    "Source Table Name and Filter Column Missing"
+import org.apache.spark.sql.functions._
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
+import java.time.format.DateTimeFormatter
+import scala.concurrent.duration._
+
+// JDBC Read Configurations
+val jdbcOptions = Map(
+  "url" -> jdbcUrl,
+  "user" -> jdbcUser,
+  "password" -> jdbcPassword,
+  "driver" -> jdbcDriver
+)
+
+// 1. Fetch expected alerts (Daily 'd' frequency)
+val expectedAlertsDF = spark.read
+  .format("jdbc")
+  .options(jdbcOptions)
+  .option("query", "SELECT alert_code FROM etl_info WHERE frequency = 'd'")
+  .load()
+  .select("alert_code")
+  .distinct()
+
+val expectedAlerts = expectedAlertsDF.rdd.map(_.getString(0)).collect().toSet
+
+// Function to check processed alerts in archive
+def getProcessedAlerts(): Set[String] = {
+  val processedDF = spark.read
+    .format("jdbc")
+    .options(jdbcOptions)
+    .option("query", "SELECT alert_code, event_timestamp FROM Ramp_Alert_Load_Archive")
+    .load()
+    .filter(col("event_timestamp").isNotNull)  // Ignore null timestamps
+    .filter(hour(col("event_timestamp")) < 16) // Consider alerts received before 4 PM
+    .select("alert_code")
+    .distinct()
+
+  processedDF.rdd.map(_.getString(0)).collect().toSet
+}
+
+// 2. Loop every hour until 4 PM
+val startTime = LocalDateTime.now()
+val endTime = startTime.withHour(16).withMinute(0).withSecond(0)  // 4 PM cutoff
+
+while (LocalDateTime.now().isBefore(endTime)) {
+  val processedAlerts = getProcessedAlerts()
+
+  val pendingAlerts = expectedAlerts.diff(processedAlerts)
+  if (pendingAlerts.isEmpty) {
+    println("✅ All alerts received. No further checking needed.")
+    sys.exit(0)  // Exit loop if all alerts are processed
+  }
+
+  println(s"⏳ Pending Alerts as of ${LocalDateTime.now()}: ${pendingAlerts.mkString(", ")}")
+
+  // Wait for an hour before checking again
+  Thread.sleep(1.hour.toMillis)
+}
+
+// 3. Final check at 4 PM
+val finalProcessedAlerts = getProcessedAlerts()
+val missedAlerts = expectedAlerts.diff(finalProcessedAlerts)
+
+if (missedAlerts.nonEmpty) {
+  val missedList = missedAlerts.mkString(", ")
+  val today = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+  val subject = s"⚠️ Missed Alerts Notification - $today"
+  val message = s"The following daily alerts were expected before 4 PM but did not arrive:\n\n$missedList"
+
+  sendEmail("alerts-team@example.com", subject, message)
 } else {
-    "Unknown Issue"
+  println("✅ No missed alerts. All expected alerts were received before 4 PM.")
 }
-
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types.{StructType, StructField, StringType}
-
-val spark: SparkSession = SparkSession.builder()
-    .appName("YourAppName")
-    .getOrCreate()
-
-import spark.implicits._  // Ensure this import is present
-
-if (finalMissedAlerts.nonEmpty) {
-    // Convert Set to Seq
-    val missedAlertsSeq = finalMissedAlerts.toSeq.map(alertCode => Row(alertCode))
-
-    // Define schema
-    val schema = StructType(Array(
-        StructField("alert_code", StringType, nullable = false)
-    ))
-
-    // Create DataFrame
-    val missedAlertsDF = spark.createDataFrame(spark.sparkContext.parallelize(missedAlertsSeq), schema)
-
-    // Proceed with join
-    val businessContactsDF = df
-        .join(missedAlertsDF, Seq("alert_code"), "inner")
-        .select("alert_code", "business", "email_address")
-        .distinct()
-        .collect()
-}
-
