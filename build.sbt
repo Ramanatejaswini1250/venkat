@@ -165,3 +165,6 @@ if (currentTime.getHour == 16 && currentTime.getMinute == 0) {
   sendEmail("cdao@gmail.com", "🚨 Daily Consolidated Alert Status", consolidatedBody, "")
   println("✅ Sent Final Consolidated Alert Email.")
 }
+.filter(col("event_timestamp") <= lit(current_date().cast("string") + " 16:00:00"))                            println(s"Expected Alerts: ${expectedAlerts.mkString(", ")}")
+println(s"Processed Alerts Before 4 PM: ${finalProcessedAlerts.mkString(", ")}")
+println(s"Missed Alerts: ${missedAlerts.mkString(", ")}")
