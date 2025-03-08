@@ -1,41 +1,60 @@
-val lock = acquireLock()
+import java.io.{BufferedWriter, FileOutputStream, OutputStreamWriter}
+import java.nio.channels.{FileChannel, FileLock}
+import java.nio.file.{Paths, StandardOpenOption}
+import java.nio.file.Files
 
-if (lock.isDefined) {
-  var master_writer2: BufferedWriter = null
+// Define file path
+val filePath = "/your/file/path/master_table.csv"
+
+df.coalesce(1).foreachPartition { partition =>
+  var fileChannel: FileChannel = null
+  var lock: FileLock = null
+  var writer: BufferedWriter = null
+  var outputStream: FileOutputStream = null
+
   try {
-    // Open file in append mode
-    val outputStream = Files.newOutputStream(Paths.get(csv2path), StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-    master_writer2 = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
+    // Open file in append mode and acquire lock
+    fileChannel = FileChannel.open(Paths.get(filePath), StandardOpenOption.WRITE, StandardOpenOption.APPEND, StandardOpenOption.CREATE)
+    lock = fileChannel.lock() // Ensure only one process writes at a time
 
-    // Write header if file is empty
+    // Create BufferedWriter
+    outputStream = new FileOutputStream(filePath, true)
+    writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
+
+    // Define header
     val master2_header = "ALERT_ID,SEQUENCENUMBER,VARIABLE,HEADER"
-    if (Files.size(Paths.get(csv2path)) == 0) {
-      master_writer2.write(master2_header)
-      master_writer2.newLine()
+
+    // Check if the header is already present
+    val headerPresent1 = Files.exists(Paths.get(filePath)) && Files.size(Paths.get(filePath)) > 0
+
+    // Write header if needed
+    if (!headerPresent1) {
+      writer.write(master2_header)
+      writer.newLine()
     }
 
-    // Write rows
-    masterTable2DF.foreach { row =>
-      master_writer2.write(row)
-      master_writer2.newLine()
+    // Write data
+    partition.foreach { row =>
+      writer.write(row.toString)
+      writer.newLine()
     }
-    
+
   } catch {
-    case e: Exception => println(s"Error writing file: ${e.getMessage}")
+    case e: Exception =>
+      println(s"Error while writing to file: ${e.getMessage}")
+
   } finally {
-    // Ensure resources are properly closed
-    if (master_writer2 != null) {
-      try {
-        master_writer2.flush()  // Ensure all buffered data is written
-        master_writer2.close()  // Close the writer
-      } catch {
-        case e: Exception => println(s"Error closing writer: ${e.getMessage}")
+    // Ensure resources are closed properly
+    try {
+      if (writer != null) {
+        writer.flush()
+        writer.close()
       }
+      if (outputStream != null) outputStream.close()
+      if (lock != null && lock.isValid) lock.release()
+      if (fileChannel != null) fileChannel.close()
+    } catch {
+      case e: Exception => println(s"Error while closing resources: ${e.getMessage}")
     }
-    
-    // Release the file lock
-    releaseLock(lock)
   }
-} else {
-  println("🚨 Another process is writing to the file. Skipping write operation.")
 }
