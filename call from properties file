@@ -1,44 +1,17 @@
-#!/bin/bash
-
-# Ensure proper usage of the script
-if [ "$#" -ne 4 ]; then
-    echo "Usage: $0 <alertCode> <message> <emailAddress> <business>"
-    exit 1
-fi
-
-ALERT_CODE="$1"
-MESSAGE="$2"
-EMAIL_ADDRESS="$3"
-BUSINESS="$4"
-
-# Path to the properties file
-CONFIG_FILE="email_config.properties"
-
-# Read SMTP Configuration from the properties file
-SMTP_SERVER=$(grep -w "smtp.server" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
-SMTP_PORT=$(grep -w "smtp.port" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
-SMTP_USER=$(grep -w "smtp.username" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
-SMTP_PASSWORD=$(grep -w "smtp.password" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
-
-# Check if any value is missing
-if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_PORT" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ]; then
-    echo "Error: SMTP configuration is incomplete. Please check your properties file."
-    exit 1
-fi
-
-# Email Information
-FROM="$SMTP_USER"                         # Sender email address
-TO="$EMAIL_ADDRESS"                       # Receiver email address
-SUBJECT="Alert: $ALERT_CODE - $BUSINESS"  # Subject line including alert code and business
-
-# Send email using msmtp
-echo -e "Subject: $SUBJECT\n\nMessage: $MESSAGE\n\nBusiness: $BUSINESS" | \
-    msmtp --from="$FROM" --to="$TO" --host="$SMTP_SERVER" --port="$SMTP_PORT" \
-    --user="$SMTP_USER" --passwordeval="echo $SMTP_PASSWORD"
-
-# Check if email was sent successfully
-if [ $? -eq 0 ]; then
-    echo "Email notification sent to $EMAIL_ADDRESS for business $BUSINESS successfully."
-else
-    echo "Failed to send email notification to $EMAIL_ADDRESS."
-fi
+val issueType = if (frequency == null) {
+    "Frequency Missing"
+} else if (sourceTableName == null && filterColumn == null) {
+    "All Three Missing (Frequency, Source, and Filter Column)"
+} else if (sourceTableName == null) {
+    "Source Table Name Missing"
+} else if (filterColumn == null) {
+    "Filter Column Missing"
+} else if (frequency == null && sourceTableName == null) {
+    "Frequency and Source Table Name Missing"
+} else if (frequency == null && filterColumn == null) {
+    "Frequency and Filter Column Missing"
+} else if (sourceTableName == null && filterColumn == null) {
+    "Source Table Name and Filter Column Missing"
+} else {
+    "Unknown Issue"
+}
