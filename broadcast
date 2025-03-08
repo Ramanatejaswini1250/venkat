@@ -1,60 +1,42 @@
-import java.io.{BufferedWriter, FileOutputStream, OutputStreamWriter}
-import java.nio.channels.{FileChannel, FileLock}
-import java.nio.file.{Paths, StandardOpenOption}
-import java.nio.file.Files
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.SparkSession
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
-// Define file path
-val filePath = "/your/file/path/master_table.csv"
+// Initialize SparkSession (if not already done)
+val spark = SparkSession.builder.appName("MasterTableTransformation").getOrCreate()
 
-df.coalesce(1).foreachPartition { partition =>
-  var fileChannel: FileChannel = null
-  var lock: FileLock = null
-  var writer: BufferedWriter = null
-  var outputStream: FileOutputStream = null
+// Define formatters
+val inputFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a")
+val outputFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
 
-  try {
-    // Open file in append mode and acquire lock
-    fileChannel = FileChannel.open(Paths.get(filePath), StandardOpenOption.WRITE, StandardOpenOption.APPEND, StandardOpenOption.CREATE)
-    lock = fileChannel.lock() // Ensure only one process writes at a time
+// Function to format DateTime
+def formatDateTime(columnName: String) = {
+  when(col(columnName).isNotNull, date_format(col(columnName), "dd/MM/yyyy HH:mm"))
+    .otherwise(lit("Unknown"))
+}
 
-    // Create BufferedWriter
-    outputStream = new FileOutputStream(filePath, true)
-    writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF-8"))
+// Apply transformations directly on the DataFrame
+val formattedMasterTable1DF = masterTable1DF
+  .withColumn("formattedEventTimestamp", formatDateTime("EVENT_TIMESTAMP"))
+  .withColumn("formattedAlertDueDate", formatDateTime("ALERT_DUE_DATE"))
 
-    // Define header
-    val master2_header = "ALERT_ID,SEQUENCENUMBER,VARIABLE,HEADER"
+// Convert to CSV format by selecting required columns
+val formattedMasterTable1CSV = formattedMasterTable1DF
+  .selectExpr(
+    "getString(1) as col1",
+    "getString(2) as col2",
+    "getString(3) as col3",
+    "formattedEventTimestamp",
+    "getString(5) as col5",
+    "formattedAlertDueDate"
+  )
 
-    // Check if the header is already present
-    val headerPresent1 = Files.exists(Paths.get(filePath)) && Files.size(Paths.get(filePath)) > 0
+// Repartition if needed
+val singleFileDF = formattedMasterTable1CSV.repartition(1)
 
-    // Write header if needed
-    if (!headerPresent1) {
-      writer.write(master2_header)
-      writer.newLine()
-    }
-
-    // Write data
-    partition.foreach { row =>
-      writer.write(row.toString)
-      writer.newLine()
-    }
-
-  } catch {
-    case e: Exception =>
-      println(s"Error while writing to file: ${e.getMessage}")
-
-  } finally {
-    // Ensure resources are closed properly
-    try {
-      if (writer != null) {
-        writer.flush()
-        writer.close()
-      }
-      if (outputStream != null) outputStream.close()
-      if (lock != null && lock.isValid) lock.release()
-      if (fileChannel != null) fileChannel.close()
-    } catch {
-      case e: Exception => println(s"Error while closing resources: ${e.getMessage}")
-    }
-  }
+// Collect & Write
+singleFileDF.collect().foreach { row =>
+  master_writer1.write(row.mkString(","))
+  master_writer1.newLine()
 }
