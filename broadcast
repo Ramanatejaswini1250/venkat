@@ -24,6 +24,30 @@ val processedBefore4PMDF = spark.read
   .where(s"date_to_load = '$todayDate' AND check_datetime < '16:00:00'")
   .select("alert_code")
 
+import org.apache.spark.sql.functions._
+import java.time.LocalDate
+
+// Get today's date dynamically
+val todayDate = LocalDate.now().toString // Format: "yyyy-MM-dd"
+
+// Sample DataFrame (Simulating alert archive table)
+val data = Seq(
+  ("2024-03-09 15:45:30.1234", "2024-03-09 15:45:30.1234"), // Before 4 PM
+  ("2024-03-09 16:10:15.5678", "2024-03-09 16:10:15.5678"), // After 4 PM
+  ("2024-03-08 14:30:20.1111", "2024-03-08 14:30:20.1111")  // Previous day
+)
+
+val df = data.toDF("date_to_load", "check_datetime")
+
+// Extract date & time, and filter alerts processed before 4 PM today
+val processedBefore4PMDF = df
+  .withColumn("alert_date", to_date(col("date_to_load")))  // Extract date
+  .withColumn("check_time", date_format(col("check_datetime"), "HH:mm:ss")) // Extract time
+  .filter(col("alert_date") === lit(todayDate)) // Compare with today's date
+  .filter(col("check_time") < lit("16:00:00")) // Check if before 4 PM
+
+// Show the final DataFrame
+processedBefore4PMDF.show(false)
 
 
 val missedAlertsDF = expectedAlertsDF
