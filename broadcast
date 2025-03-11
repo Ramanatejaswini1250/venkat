@@ -1,3 +1,23 @@
+val df = spark.read
+  .format("jdbc")
+  .option("url", jdbcUrl)
+  .option("dbtable", "U_DSV_001_RIS1.RAMP_ALERT_LOAD")
+  .option("user", jdbcUser)
+  .option("password", jdbcPassword)
+  .option("driver", jdbcDriver)
+  .option("fetchsize", "10000")  // Optimize fetch size
+  .option("numPartitions", "8")  // Enable parallel reads
+  .option("partitionColumn", "alert_id") // Numeric column for partitioning
+  .option("lowerBound", "1")
+  .option("upperBound", "100000")
+  .option("queryTimeout", "600")  // 10 min timeout
+  .option("socketTimeout", "120000") // 2 min timeout
+  .load()
+  .coalesce(1) // Reduce partitions before writing
+
+
+
+
 val insertQuery = s"""
    INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
    (Job_Id, job_run_start_time, job_run_end_time, alert_code, DATA_COUNT, BUSINESS)
