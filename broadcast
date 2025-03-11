@@ -1,3 +1,23 @@
+val insertQuery = s"""
+   INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
+   (Job_Id, job_run_start_time, job_run_end_time, alert_code, DATA_COUNT, BUSINESS)
+   SELECT 
+   REGEXP_REPLACE(
+       CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)), '[^0-9]', ''
+   ) || REGEXP_REPLACE('$formattedJobStartTime', '[:.]', '') AS Job_Id,
+   ? AS job_run_start_time,
+   ? AS job_run_end_time,
+   al.alert_code,
+   al.dt_count,
+   etl_info.Business
+   FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD al
+   LEFT JOIN U_D_DSV_001_RIS_1.RAMP_ETL_INFO_TEST etl_info
+   ON al.alert_code = etl_info.alert_code
+   WHERE al.alert_code = ?
+"""
+
+
+
 // Function to extract master tables dynamically, supporting multiple naming conventions
 def extractMasterTables(commands: Seq[String]): Seq[String] = {
   // Updated regex to match any table name containing:
