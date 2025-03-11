@@ -1,126 +1,53 @@
-import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.types._
-import java.sql.{Connection, DriverManager, ResultSet, Statement}
-import scala.collection.mutable.ListBuffer
+import scala.io.Source
+import java.io.PrintWriter
+import scala.collection.mutable.Set
 
-// Initialize SparkSession
-val spark: SparkSession = SparkSession.builder()
-  .appName("Broadcast Master Data")
-  .getOrCreate()
+// ✅ Define temp file location (local or HDFS)
+val tempFilePath = "/tmp/success_alerts.txt"
+val tempFailureFilePath = "/tmp/failure_alerts.txt"
 
-// Define JDBC credentials
-val jdbcUrl = "jdbc:mysql://your-db-host:3306/your-db"
-val dbUser = "your-username"
-val dbPassword = "your-password"
-
-// Define master table schema (Column names and order must match your DB table)
-val masterSchema = StructType(Seq(
-  StructField("alert_id", StringType, nullable = true),
-  StructField("alert_code", IntegerType, nullable = true),
-  StructField("category", StringType, nullable = true),
-  StructField("status", IntegerType, nullable = true),
-  StructField("priority", IntegerType, nullable = true),
-  StructField("timestamp", IntegerType, nullable = true)
-))
-
-df.foreachPartition(partition => {
-  var conn: Connection = null
-  var stmt: Statement = null
-
+// ✅ Function to Read Alerts from File
+def readAlertsFromFile(filePath: String): Set[String] = {
   try {
-    // Step 1: Establish DB connection per partition
-    conn = DriverManager.getConnection(jdbcUrl, dbUser, dbPassword)
-    stmt = conn.createStatement()
-
-    partition.foreach(row => {
-      if (row == null) {
-        println("Skipping null row")
-      } else {
-        val sourceCount = row.getAs[Int]("source_count")
-        val dtCount = row.getAs[Int]("dt_count")
-
-        if (sourceCount == dtCount) {
-          println("Executing SQL script inside partition...")
-
-          val isSqlSuccess = runSqlScript() // Execute SQL to load data
-
-          if (isSqlSuccess) {
-            println("SQL execution successful. Fetching master table data...")
-
-            var masterList = new ListBuffer[Row]()
-
-            try {
-              // Step 2: Execute query using stmt
-              val resultSet: ResultSet = stmt.executeQuery("SELECT * FROM master_table")
-
-              // Step 3: Check if ResultSet is null (to prevent NPE)
-              if (resultSet == null) {
-                println("Query returned NULL ResultSet")
-              } else {
-                // Step 4: Collect data properly and ensure correct column mapping
-                while (resultSet.next()) {
-                  val rowData = Array(
-                    resultSet.getString("alert_id"),   // First column
-                    resultSet.getInt("alert_code"),    // Second column
-                    resultSet.getString("category"),   // Third column
-                    resultSet.getInt("status"),        // Fourth column
-                    resultSet.getInt("priority"),      // Fifth column
-                    resultSet.getInt("timestamp")      // Sixth column
-                  )
-
-                  // Step 5: Convert Array to Row (Splitting the array correctly)
-                  if (rowData.length == masterSchema.fields.length) {
-                    masterList += Row.fromSeq(rowData) // Assign values as per schema order
-                  } else {
-                    println(s"Skipping row due to column mismatch: ${rowData.mkString(",")}")
-                  }
-                }
-                resultSet.close()
-              }
-            } catch {
-              case e: Exception =>
-                println(s"DB Read Error: ${e.getMessage}")
-            }
-
-            // Step 6: Check if masterList is empty before broadcasting
-            if (masterList.isEmpty) {
-              println("No data found in master_table. Skipping this partition.")
-            } else {
-              println("Broadcasting master data...")
-              val broadcastMaster = spark.sparkContext.broadcast(masterList.toArray)
-
-              // Step 7: Recreate the DataFrame inside the partition using schema
-              val masterRDD = spark.sparkContext.parallelize(broadcastMaster.value)
-
-              // Debugging: Print RDD contents to ensure correct row structure
-              masterRDD.collect().foreach(println)  
-
-              val masterDF = spark.createDataFrame(masterRDD, masterSchema)
-
-              // Step 8: Ensure masterDF is not empty and has correct data
-              if (masterDF.isEmpty) {
-                println("masterDF is empty after broadcast.")
-              } else {
-                masterDF.show() // Show data to confirm correct structure
-
-                val masterCount = masterDF.count().toInt
-                if (masterCount == dtCount) {
-                  println("Condition met, using masterDF")
-                }
-              }
-            }
-          } else {
-            println("SQL script execution failed. Skipping this partition.")
-          }
-        }
-      }
-    })
+    Source.fromFile(filePath).getLines().toSet
   } catch {
-    case e: Exception =>
-      println(s"Database Connection Error: ${e.getMessage}")
-  } finally {
-    // Step 9: Close DB connection after processing the partition
-    if (stmt != null) stmt.close()
-    if (conn != null) conn.close()
+    case _: Exception => Set() // Return empty set if file not found
   }
-})
+}
+
+// ✅ Function to Write Alerts to File
+def writeAlertsToFile(filePath: String, alerts: Set[String]): Unit = {
+  val writer = new PrintWriter(filePath)
+  alerts.foreach(writer.println)
+  writer.close()
+}
+
+// ✅ Fetch Previous Alerts from Temp File
+val previousSuccessAlerts = readAlertsFromFile(tempFilePath)
+val previousFailureAlerts = readAlertsFromFile(tempFailureFilePath)
+
+// ✅ Fetch Current Run Alerts from Accumulators
+val currentSuccessAlerts = succAccumulator.value.toSet
+val currentFailureAlerts = failAccumulator.value.toSet
+
+// ✅ Merge Previous & Current Alerts
+val combinedSuccessAlerts = previousSuccessAlerts ++ currentSuccessAlerts
+val combinedFailureAlerts = previousFailureAlerts ++ currentFailureAlerts
+
+// ✅ Send Consolidated Email
+val emailBody =
+  s"""
+     |<html>
+     |<body>
+     |<h3>Hourly Alert Processing Report</h3>
+     |<p><b>Successful Alerts:</b> ${combinedSuccessAlerts.mkString(", ")}</p>
+     |<p><b>Failed Alerts:</b> ${combinedFailureAlerts.mkString(", ")}</p>
+     |</body>
+     |</html>
+   """.stripMargin
+
+sendEmail("cdao@gmail.com", "Hourly Alert Processing Report", emailBody)
+
+// ✅ Save Updated Alerts for Next Autosys Run
+writeAlertsToFile(tempFilePath, combinedSuccessAlerts)
+writeAlertsToFile(tempFailureFilePath, combinedFailureAlerts)
