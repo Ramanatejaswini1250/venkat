@@ -2,6 +2,24 @@ val df = spark.read
   .format("jdbc")
   .option("url", jdbcUrl)
   .option("dbtable", "U_DSV_001_RIS1.RAMP_ALERT_LOAD")
+  .option("fetchsize", "10000")  
+  .option("numPartitions", "8")  
+  .option("partitionColumn", "alert_id") 
+  .option("lowerBound", "1")
+  .option("upperBound", "100000")
+  .option("queryTimeout", "600")  
+  .option("socketTimeout", "120000")
+  .option("keepAlive", "true")
+  .option("autoReconnect", "true")
+  .load()
+
+spark.conf.set("spark.task.maxFailures", "4")  // Default is 1, increase to 4 retries
+
+
+val df = spark.read
+  .format("jdbc")
+  .option("url", jdbcUrl)
+  .option("dbtable", "U_DSV_001_RIS1.RAMP_ALERT_LOAD")
   .option("user", jdbcUser)
   .option("password", jdbcPassword)
   .option("driver", jdbcDriver)
