@@ -1,21 +1,20 @@
-val df = spark.read
-  .format("jdbc")
-  .option("url", jdbcUrl)
-  .option("dbtable", "U_DSV_001_RIS1.RAMP_ALERT_LOAD")
-  .option("fetchsize", "10000")  
-  .option("numPartitions", "8")  
-  .option("partitionColumn", "alert_id") 
-  .option("lowerBound", "1")
-  .option("upperBound", "100000")
-  .option("queryTimeout", "600")  
-  .option("socketTimeout", "120000")
-  .option("keepAlive", "true")
-  .option("autoReconnect", "true")
-  .load()
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import scala.util.Try
+import java.io.{BufferedWriter, FileWriter}
 
-spark.conf.set("spark.task.maxFailures", "4")  // Default is 1, increase to 4 retries
+// Initialize Spark Session
+val spark = SparkSession.builder()
+  .appName("Dynamic Timeout Handling")
+  .master("yarn")  // Adjust based on your deployment
+  .getOrCreate()
 
+// JDBC Configurations
+val jdbcUrl = "jdbc:teradata://your_teradata_server"
+val jdbcUser = "your_user"
+val jdbcPassword = "your_password"
+val jdbcDriver = "com.teradata.jdbc.TeraDriver"
 
+// Read from Teradata with Parallelism
 val df = spark.read
   .format("jdbc")
   .option("url", jdbcUrl)
@@ -23,105 +22,73 @@ val df = spark.read
   .option("user", jdbcUser)
   .option("password", jdbcPassword)
   .option("driver", jdbcDriver)
-  .option("fetchsize", "10000")  // Optimize fetch size
+  .option("fetchsize", "5000")  // Reduce fetch size for stability
   .option("numPartitions", "8")  // Enable parallel reads
-  .option("partitionColumn", "alert_id") // Numeric column for partitioning
+  .option("partitionColumn", "alert_id")
   .option("lowerBound", "1")
   .option("upperBound", "100000")
-  .option("queryTimeout", "600")  // 10 min timeout
-  .option("socketTimeout", "120000") // 2 min timeout
+  .option("queryTimeout", "600")  // Initial timeout (dynamically adjusted)
+  .option("socketTimeout", "120000")
   .load()
-  .coalesce(1) // Reduce partitions before writing
+  .repartition(10)  // Balanced parallelism
 
+// Define Paths for CSV Outputs
+val successCsvPath = "/mnt/data/success_alerts.csv"
+val failedCsvPath = "/mnt/data/failed_alerts.csv"
 
-
-
-val insertQuery = s"""
-   INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info
-   (Job_Id, job_run_start_time, job_run_end_time, alert_code, DATA_COUNT, BUSINESS)
-   SELECT 
-   REGEXP_REPLACE(
-       CAST(ROW_NUMBER() OVER (ORDER BY al.alert_code) AS VARCHAR(10)), '[^0-9]', ''
-   ) || REGEXP_REPLACE('$formattedJobStartTime', '[:.]', '') AS Job_Id,
-   ? AS job_run_start_time,
-   ? AS job_run_end_time,
-   al.alert_code,
-   al.dt_count,
-   etl_info.Business
-   FROM U_D_DSV_001_RIS_1.RAMP_ALERT_LOAD al
-   LEFT JOIN U_D_DSV_001_RIS_1.RAMP_ETL_INFO_TEST etl_info
-   ON al.alert_code = etl_info.alert_code
-   WHERE al.alert_code = ?
-"""
-
-
-
-// Function to extract master tables dynamically, supporting multiple naming conventions
-def extractMasterTables(commands: Seq[String]): Seq[String] = {
-  // Updated regex to match any table name containing:
-  // - MASTER_TARGET followed by one or more digits,
-  // - ramp_master_auto_table followed by one or more digits, or
-  // - ramp_master_auto_target followed by one or more digits.
-  val masterTablePattern = "(?i).*(MASTER_TARGET[0-9]+|ramp_master_auto_table[0-9]+|ramp_master_auto_target[0-9]+).*".r
-
-  commands.flatMap { command =>
-    val tableName = extractTableName(command)
-    if (masterTablePattern.findFirstIn(tableName).isDefined) Some(tableName) else None
-  }.distinct
+// Initialize BufferedWriter for writing CSV
+def writeToCSV(filePath: String, content: String): Unit = {
+  val writer = new BufferedWriter(new FileWriter(filePath, true))  // Append mode
+  writer.write(content + "\n")
+  writer.close()
 }
 
+// Process Alerts with Dynamic Timeout Handling
+df.foreachPartition { partition =>
+  partition.foreach { row =>
+    val alertCode = row.getAs[String]("alert_code")
+    
+    var retries = 0
+    var success = false
+    var dynamicTimeout = 60000  // Start with 60 seconds timeout
 
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
+    while (retries < 3 && !success) {
+      val startTime = System.currentTimeMillis()
 
-val todayDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+      Try {
+        println(s"Processing Alert: $alertCode, Attempt: ${retries + 1}, Timeout: $dynamicTimeout ms")
 
-val expectedAlertsDF = spark.read
-  .format("jdbc")
-  .option("url", jdbcUrl)
-  .option("dbtable", "etl_info")
-  .option("user", dbUser)
-  .option("password", dbPassword)
-  .load()
-  .where("frequency = 'd'")
-  .select("alert_code")
+        // Simulate Processing (Replace with actual logic)
+        Thread.sleep(scala.util.Random.nextInt(3000)) // Random delay for testing
 
-val processedBefore4PMDF = spark.read
-  .format("jdbc")
-  .option("url", jdbcUrl)
-  .option("dbtable", "alert_archive")
-  .option("user", dbUser)
-  .option("password", dbPassword)
-  .load()
-  .where(s"date_to_load = '$todayDate' AND check_datetime < '16:00:00'")
-  .select("alert_code")
+        success = true  // Mark as success if no exception occurs
+      } recover {
+        case e: Exception =>
+          val elapsedTime = System.currentTimeMillis() - startTime
+          println(s"Alert $alertCode failed, Time taken: $elapsedTime ms, Error: ${e.getMessage}")
 
-import org.apache.spark.sql.functions._
-import java.time.LocalDate
+          if (elapsedTime > dynamicTimeout) {
+            println(s"Increasing timeout for $alertCode from $dynamicTimeout to ${dynamicTimeout * 2} ms")
+            dynamicTimeout *= 2  // Dynamically increase timeout
+          }
 
-// Get today's date dynamically
-val todayDate = LocalDate.now().toString // Format: "yyyy-MM-dd"
+          retries += 1
+          Thread.sleep(5000)  // Wait before retrying
+      }
+    }
 
-// Sample DataFrame (Simulating alert archive table)
-val data = Seq(
-  ("2024-03-09 15:45:30.1234", "2024-03-09 15:45:30.1234"), // Before 4 PM
-  ("2024-03-09 16:10:15.5678", "2024-03-09 16:10:15.5678"), // After 4 PM
-  ("2024-03-08 14:30:20.1111", "2024-03-08 14:30:20.1111")  // Previous day
-)
+    // Writing to CSV based on success or failure
+    if (success) {
+      writeToCSV(successCsvPath, s"$alertCode, SUCCESS")
+    } else {
+      writeToCSV(failedCsvPath, s"$alertCode, FAILED")
+      println(s"Alert $alertCode failed after 3 attempts.")
+    }
+  }
+}
 
-val df = data.toDF("date_to_load", "check_datetime")
+// Ensure a Single CSV File for Each Output
+spark.read.text(successCsvPath).coalesce(1).write.mode("overwrite").csv("/mnt/data/final_success.csv")
+spark.read.text(failedCsvPath).coalesce(1).write.mode("overwrite").csv("/mnt/data/final_failed.csv")
 
-// Extract date & time, and filter alerts processed before 4 PM today
-val processedBefore4PMDF = df
-  .withColumn("alert_date", to_date(col("date_to_load")))  // Extract date
-  .withColumn("check_time", date_format(col("check_datetime"), "HH:mm:ss")) // Extract time
-  .filter(col("alert_date") === lit(todayDate)) // Compare with today's date
-  .filter(col("check_time") < lit("16:00:00")) // Check if before 4 PM
-
-// Show the final DataFrame
-processedBefore4PMDF.show(false)
-
-
-val missedAlertsDF = expectedAlertsDF
-  .join(processedBefore4PMDF, Seq("alert_code"), "left_anti")
-  .union(missingInfoDF) // Add missing frequency/source table alerts
+println("Processing completed. Success and failure alerts saved.")
