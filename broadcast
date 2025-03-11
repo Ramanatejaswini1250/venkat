@@ -1,3 +1,17 @@
+// Function to extract master tables dynamically, supporting multiple naming conventions
+def extractMasterTables(commands: Seq[String]): Seq[String] = {
+  // Updated regex to match any table name containing:
+  // - MASTER_TARGET followed by one or more digits,
+  // - ramp_master_auto_table followed by one or more digits, or
+  // - ramp_master_auto_target followed by one or more digits.
+  val masterTablePattern = "(?i).*(MASTER_TARGET[0-9]+|ramp_master_auto_table[0-9]+|ramp_master_auto_target[0-9]+).*".r
+
+  commands.flatMap { command =>
+    val tableName = extractTableName(command)
+    if (masterTablePattern.findFirstIn(tableName).isDefined) Some(tableName) else None
+  }.distinct
+}
+
 
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
