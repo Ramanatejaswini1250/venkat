@@ -1,3 +1,30 @@
+option("autoReconnect", "true")
+.option("queryTimeout", "1800")   // 30 min timeout
+.option("socketTimeout", "600000") // 10 min socket timeout
+
+
+val alertCount = df.count()
+val optimalPartitions = if (alertCount < 50000) 4 else if (alertCount < 200000) 8 else 16
+
+val partitionedDF = df.repartition(optimalPartitions)
+
+partitionedDF.foreachPartition { partition =>
+  val parallelProcessing = partition.toList.par  
+  parallelProcessing.foreach { row =>
+    processAlert(row)
+  }
+}
+
+
+
+df.repartition(optimalPartitions).foreachPartition { partition =>
+  val parallelProcessing = partition.toList.par  // Convert to parallel collection
+  parallelProcessing.foreach { row =>
+    processAlert(row)  // Process each alert in parallel
+  }
+}
+
+
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import scala.util.Try
 import java.io.{BufferedWriter, FileWriter}
