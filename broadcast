@@ -1,3 +1,30 @@
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+import java.time.ZoneId
+
+// Define time zones
+val istZone = ZoneId.of("Asia/Kolkata")  // IST Timezone
+val aestZone = ZoneId.of("Australia/Sydney")  // AEST Timezone
+
+// Convert check_datetime from IST to AEST
+val processedBefore4PMDF = alertsArchieveDF
+  .withColumn("alert_date", to_date(col("date_to_load"))) // Extract date
+  .withColumn("check_time", date_format(col("check_datetime"), "HH:mm:ss")) // Extract time
+  .withColumn("check_datetime_aest", 
+    from_utc_timestamp(to_utc_timestamp(col("check_datetime"), "Asia/Kolkata"), "Australia/Sydney")
+  ) // Convert from IST to AEST
+  .withColumn("check_time_aest", date_format(col("check_datetime_aest"), "HH:mm:ss")) // Extract AEST time
+  .filter(col("alert_date") === lit(current_date())) // Compare with today's date
+  .filter(col("check_time_aest") < lit("16:00:00")) // Check if before 4 PM AEST
+
+val processedBefore4PM = processedBefore4PMDF
+  .select("alert_code")
+  .collect()
+  .map(_.getString(0))
+  .toSet
+
+
+
 import java.util.{Calendar, TimeZone}
 
 val timeZone = TimeZone.getTimeZone("Australia/Sydney")
