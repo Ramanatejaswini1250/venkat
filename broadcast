@@ -1,3 +1,29 @@
+// Read tables into DataFrames
+val alertLoadDF = spark.read.format("jdbc").option("dbtable", "alert_load").load()
+val etlInfoDF = spark.read.format("jdbc").option("dbtable", "etl_info").load()
+
+// Perform left join and filter alerts that are in alert_load but not in etl_info
+val unexpectedAlertsDF = alertLoadDF.join(etlInfoDF, Seq("alert_code"), "left_anti")
+
+// Collect unexpected alerts
+val unexpectedAlerts = unexpectedAlertsDF.collect()
+
+// Send email if there are unexpected alerts
+if (unexpectedAlerts.nonEmpty) {
+    val unexpectedAlertCodes = unexpectedAlerts.map(_.getAs[String]("alert_code")).mkString(", ")
+    val emailBody = s"The following alerts are in alert_load but missing in etl_info: $unexpectedAlertCodes"
+    
+    sendEmail("Unexpected Alerts Notification", emailBody)
+}
+
+// Define sendEmail function (modify based on your email setup)
+def sendEmail(subject: String, body: String): Unit = {
+    // Your email logic here
+}
+
+
+
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
