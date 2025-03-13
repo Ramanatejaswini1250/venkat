@@ -1,3 +1,46 @@
+import java.util.{Calendar, TimeZone}
+
+val timeZone = TimeZone.getTimeZone("Australia/Sydney")
+val calNow = Calendar.getInstance(timeZone)
+
+val targetHour = 21
+val targetMin = 5
+
+def waitForTargetTime(): Unit = {
+  while (true) {
+    val now = Calendar.getInstance(timeZone)
+    val currentHour = now.get(Calendar.HOUR_OF_DAY)
+    val currentMin = now.get(Calendar.MINUTE)
+    val currentSec = now.get(Calendar.SECOND)
+
+    if (currentHour > targetHour || (currentHour == targetHour && currentMin >= targetMin)) {
+      println("Target time reached. Proceeding with email...")
+      return // Exit the loop when the time is met
+    }
+
+    val remainingMinutes = (targetHour - currentHour) * 60 + (targetMin - currentMin)
+    val remainingSeconds = (60 - currentSec) % 60
+    val waitMillis = (remainingMinutes * 60 + remainingSeconds) * 1000L
+
+    println(s"Waiting ${waitMillis / 1000} seconds until $targetHour:$targetMin AEST...")
+    Thread.sleep(Math.min(waitMillis, 60000)) // Sleep for a max of 1 minute at a time
+  }
+}
+
+// Wait until the target time before proceeding
+waitForTargetTime()
+
+// Send email only once after waiting
+sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+
+println("Email sent. Job completed.")
+spark.stop()
+
+
+
+
+
+
 def waitForJobCompletion(spark: SparkSession): Unit = {
   val maxWaitMinutes = 5  // Maximum wait time (5 minutes)
   val startTime = System.currentTimeMillis()
