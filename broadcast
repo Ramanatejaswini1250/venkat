@@ -1,3 +1,12 @@
+// Collect business contacts before processing starts
+val businessContactsMap = df
+  .select("alert_code", "business", "email_address")
+  .distinct()
+  .collect()
+  .map(row => (row.getString(0), (row.getString(1), row.getString(2))))
+  .toMap // Convert to Map for quick lookup
+
+
 if (missedAlerts.nonEmpty) {
   missedAlerts.foreach { alertCode =>
     businessContactsMap.get(alertCode) match {
