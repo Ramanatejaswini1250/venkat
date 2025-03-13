@@ -1,3 +1,21 @@
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types._
+
+val spark: SparkSession = SparkSession.builder().getOrCreate() // Ensure SparkSession is available
+
+// Convert combinedReceivedAlerts to a proper sequence
+val combinedReceivedAlertsSeq: Seq[String] = combinedReceivedAlerts.toSeq.map(_.toString)
+
+// Convert to DataFrame using an explicit schema
+val schema = StructType(Array(StructField("alert_code", StringType, nullable = false)))
+val combinedReceivedAlertsDF = spark.createDataFrame(
+    spark.sparkContext.parallelize(combinedReceivedAlertsSeq.map(Row(_))),
+    schema
+)
+
+
+
 option("autoReconnect", "true")
 .option("queryTimeout", "1800")   // 30 min timeout
 .option("socketTimeout", "600000") // 10 min socket timeout
