@@ -1,50 +1,20 @@
-// Read tables into DataFrames
-val alertLoadDF = spark.read.format("jdbc").option("dbtable", "alert_load").load()
-val etlInfoDF = spark.read.format("jdbc").option("dbtable", "etl_info").load()
-
-// Perform left join and filter alerts that are in alert_load but not in etl_info
-val unexpectedAlertsDF = alertLoadDF.join(etlInfoDF, Seq("alert_code"), "left_anti")
-
-// Collect unexpected alerts
-val unexpectedAlerts = unexpectedAlertsDF.collect()
-
-// Send email if there are unexpected alerts
-if (unexpectedAlerts.nonEmpty) {
-    val unexpectedAlertCodes = unexpectedAlerts.map(_.getAs[String]("alert_code")).mkString(", ")
-    val emailBody = s"The following alerts are in alert_load but missing in etl_info: $unexpectedAlertCodes"
+def waitForJobCompletion(spark: SparkSession): Unit = {
+  val maxWaitMinutes = 5  // Maximum wait time (5 minutes)
+  val startTime = System.currentTimeMillis()
+  
+  while (!isJobCompleted(spark)) {  
+    if ((System.currentTimeMillis() - startTime) > maxWaitMinutes * 60 * 1000) {
+      println("Timeout reached (5 minutes), proceeding without waiting further.")
+      return
+    }
     
-    sendEmail("Unexpected Alerts Notification", emailBody)
+    println("Waiting for job to complete...")
+    Thread.sleep(5000)  // Wait for 5 seconds before checking again
+  }
+  
+  println("Job completed, proceeding with email notifications.")
 }
 
-// Define sendEmail function (modify based on your email setup)
-def sendEmail(subject: String, body: String): Unit = {
-    // Your email logic here
-}
-
-
-
-
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types._
-
-val spark: SparkSession = SparkSession.builder().getOrCreate() // Ensure SparkSession is available
-
-// Convert combinedReceivedAlerts to a proper sequence
-val combinedReceivedAlertsSeq: Seq[String] = combinedReceivedAlerts.toSeq.map(_.toString)
-
-// Convert to DataFrame using an explicit schema
-val schema = StructType(Array(StructField("alert_code", StringType, nullable = false)))
-val combinedReceivedAlertsDF = spark.createDataFrame(
-    spark.sparkContext.parallelize(combinedReceivedAlertsSeq.map(Row(_))),
-    schema
-)
-
-
-
-option("autoReconnect", "true")
-.option("queryTimeout", "1800")   // 30 min timeout
-.option("socketTimeout", "600000") // 10 min socket timeout
 
 
 val alertCount = df.count()
