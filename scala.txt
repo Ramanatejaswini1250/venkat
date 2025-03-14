@@ -1,53 +1,26 @@
-import scala.io.Source
-import java.io.PrintWriter
-import scala.collection.mutable.Set
+def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
+  val calNow = Calendar.getInstance(aestZone)
+  val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+  val currentMin = calNow.get(Calendar.MINUTE)
 
-// ✅ Define temp file location (local or HDFS)
-val tempFilePath = "/tmp/success_alerts.txt"
-val tempFailureFilePath = "/tmp/failure_alerts.txt"
-
-// ✅ Function to Read Alerts from File
-def readAlertsFromFile(filePath: String): Set[String] = {
-  try {
-    Source.fromFile(filePath).getLines().toSet
-  } catch {
-    case _: Exception => Set() // Return empty set if file not found
+  if (currentHour > targetHour || (currentHour == targetHour && currentMin >= targetMin)) {
+    println("Target time reached. Proceeding with email...")
+    return // Exit the method when the target time is met
   }
+
+  val now = System.currentTimeMillis()
+  val calTarget = Calendar.getInstance(aestZone)
+  calTarget.set(Calendar.HOUR_OF_DAY, targetHour)
+  calTarget.set(Calendar.MINUTE, targetMin)
+  calTarget.set(Calendar.SECOND, 0)
+  calTarget.set(Calendar.MILLISECOND, 0)
+
+  if (calTarget.getTimeInMillis < now) {
+    calTarget.add(Calendar.DATE, 1) // Move to the next day if time has already passed
+  }
+
+  val waitMillis = calTarget.getTimeInMillis - now
+  println(s"Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+
+  Thread.sleep(waitMillis)
 }
-
-// ✅ Function to Write Alerts to File
-def writeAlertsToFile(filePath: String, alerts: Set[String]): Unit = {
-  val writer = new PrintWriter(filePath)
-  alerts.foreach(writer.println)
-  writer.close()
-}
-
-// ✅ Fetch Previous Alerts from Temp File
-val previousSuccessAlerts = readAlertsFromFile(tempFilePath)
-val previousFailureAlerts = readAlertsFromFile(tempFailureFilePath)
-
-// ✅ Fetch Current Run Alerts from Accumulators
-val currentSuccessAlerts = succAccumulator.value.toSet
-val currentFailureAlerts = failAccumulator.value.toSet
-
-// ✅ Merge Previous & Current Alerts
-val combinedSuccessAlerts = previousSuccessAlerts ++ currentSuccessAlerts
-val combinedFailureAlerts = previousFailureAlerts ++ currentFailureAlerts
-
-// ✅ Send Consolidated Email
-val emailBody =
-  s"""
-     |<html>
-     |<body>
-     |<h3>Hourly Alert Processing Report</h3>
-     |<p><b>Successful Alerts:</b> ${combinedSuccessAlerts.mkString(", ")}</p>
-     |<p><b>Failed Alerts:</b> ${combinedFailureAlerts.mkString(", ")}</p>
-     |</body>
-     |</html>
-   """.stripMargin
-
-sendEmail("cdao@gmail.com", "Hourly Alert Processing Report", emailBody)
-
-// ✅ Save Updated Alerts for Next Autosys Run
-writeAlertsToFile(tempFilePath, combinedSuccessAlerts)
-writeAlertsToFile(tempFailureFilePath, combinedFailureAlerts)
