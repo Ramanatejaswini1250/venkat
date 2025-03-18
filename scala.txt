@@ -1,105 +1,73 @@
 import java.util.{Calendar, TimeZone}
+import scala.concurrent.duration._
+import scala.util.Try
 
 object RampAutomationExecution {
-  def main(args: Array[String]): Unit = {
-    println("Starting Ramp Automation Job...")
 
-    // Step 1: Ensure processing is complete before waiting for emails
-    while (!isProcessingComplete) {
-      println("Processing still running... waiting to complete.")
-      Thread.sleep(60000) // Check every 1 min
-    }
-    println("Processing is complete.")
-
-    // Step 2: Wait until 4:05 PM AEST to send missed alerts
-    println("Waiting for 4:05 PM AEST to send individual missed alerts...")
-    waitForTargetTime(16, 5)
-    sendMissedAlerts()
-
-    // Step 3: Wait until 8:05 PM AEST to send the consolidated email
-    println("Waiting for 8:05 PM AEST to send consolidated email...")
-    waitForTargetTime(20, 5)
-    sendConsolidatedEmail()
-
-    // Step 4: Ensure job completes after sending all emails
-    println("All scheduled emails sent. Job execution complete.")
-  }
-
-  /** Waits dynamically until the target time (AEST) */
-  def waitForTargetTime(targetHour: Int, targetMin: Int): Boolean = {
+  // Function to wait for a specific target time
+  def waitForTargetTime(targetHour: Int, targetMin: Int, bufferMinutes: Int = 5): Boolean = {
     val aestZone = TimeZone.getTimeZone("Australia/Sydney")
     val calNow = Calendar.getInstance(aestZone)
     val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
     val currentMin = calNow.get(Calendar.MINUTE)
 
-    if (currentHour == targetHour && currentMin >= targetMin) {
-      println(s"Target time $targetHour:$targetMin AEST reached. Proceeding with email...")
+    // Check if target time has already passed (considering buffer)
+    if (currentHour > targetHour || (currentHour == targetHour && currentMin >= targetMin + bufferMinutes)) {
+      println(s"Target time $targetHour:$targetMin AEST already passed. Proceeding...")
       return true
     }
 
+    // Calculate wait time
+    val now = System.currentTimeMillis()
     val calTarget = Calendar.getInstance(aestZone)
     calTarget.set(Calendar.HOUR_OF_DAY, targetHour)
     calTarget.set(Calendar.MINUTE, targetMin)
     calTarget.set(Calendar.SECOND, 0)
     calTarget.set(Calendar.MILLISECOND, 0)
 
-    if (calTarget.getTimeInMillis < System.currentTimeMillis()) {
-      calTarget.add(Calendar.DATE, 1) // Move to next day if time already passed
+    // If time has already passed, move to the next day
+    if (calTarget.getTimeInMillis < now) {
+      calTarget.add(Calendar.DATE, 1)
     }
 
-    val waitMillis = calTarget.getTimeInMillis - System.currentTimeMillis()
+    val waitMillis = calTarget.getTimeInMillis - now
     println(s"Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
-    Thread.sleep(waitMillis) // Sleep until the target time
+    
+    Try(Thread.sleep(waitMillis)).recover {
+      case _: InterruptedException => println("Sleep interrupted, proceeding...")
+    }
+    
     true
   }
 
-  /** Checks if processing is complete */
-  def isProcessingComplete: Boolean = {
-    // Replace with actual logic to check if processing is done
-    val processingDone = true // Change dynamically based on processing status
-    processingDone
+  // Function to send individual missed alerts (4:05 PM AEST)
+  def sendIndividualMissedAlerts(): Unit = {
+    println("Sending individual missed alert emails...")
+    // Add logic to send individual emails
   }
 
-  /** Sends individual missed alert emails */
-  def sendMissedAlerts(): Unit = {
-    println("Sending individual missed alerts...")
-    if (missedAlerts.nonEmpty) {
-      missedAlerts.foreach { alertCode =>
-        businessContactsMap.get(alertCode) match {
-          case Some((business, emailAddress)) =>
-            val subject = s"🚨 Missed Alert Notification: $alertCode"
-            val emailBody =
-              s"""
-                 |The alert <b>$alertCode</b> was scheduled for today but did not arrive by 4:00 PM AEST.
-                 |Could you please check and confirm if it is expected?
-                 |""".stripMargin
-            sendEmail(subject, emailBody, emailAddress)
-          case None =>
-            println(s"No email contact found for alert: $alertCode")
-        }
-      }
-    } else {
-      println("No missed alerts to send.")
-    }
-  }
-
-  /** Sends the 8:05 PM consolidated alert email */
+  // Function to send consolidated alerts (8:05 PM AEST)
   def sendConsolidatedEmail(): Unit = {
-    println("Sending consolidated email...")
-    if (successAlerts.nonEmpty || failedAlerts.nonEmpty || missedAlerts.nonEmpty) {
-      val consolidatedBody =
-        s"""
-           |<h3>Daily Alert Summary</h3>
-           |<b>Success Alerts:</b> ${if (successAlerts.nonEmpty) successAlerts.mkString(", ") else "None"}
-           |<br>
-           |<b>Failed Alerts:</b> ${if (failedAlerts.nonEmpty) failedAlerts.mkString(", ") else "None"}
-           |<br>
-           |<b>Missed Alerts:</b> ${if (missedAlerts.nonEmpty) missedAlerts.mkString(", ") else "None"}
-           |""".stripMargin
+    println("Sending consolidated alert email...")
+    // Add logic to send consolidated email
+  }
 
-      sendEmail("📊 Daily Alert Summary", consolidatedBody, "cdao@gmail.com")
-    } else {
-      println("No alerts to report in the consolidated email.")
+  def main(args: Array[String]): Unit = {
+    // Determine run time from Autosys trigger
+    val runTimeHour = Calendar.getInstance(TimeZone.getTimeZone("Australia/Sydney")).get(Calendar.HOUR_OF_DAY)
+
+    if (runTimeHour < 18) {  // If the job runs before 6 PM, assume it's for 4:05 PM alerts
+      if (waitForTargetTime(16, 5)) {
+        sendIndividualMissedAlerts()
+        println("Finished 4:05 PM processing. Exiting...")
+        System.exit(0)  // Stop execution after 4:05 PM emails
+      }
+    } else {  // If the job runs after 6 PM, assume it's for 8:05 PM alerts
+      if (waitForTargetTime(20, 5)) {
+        sendConsolidatedEmail()
+        println("Finished 8:05 PM processing. Exiting...")
+        System.exit(0)  // Stop execution after 8:05 PM emails
+      }
     }
   }
 }
