@@ -1,6 +1,41 @@
-def waitForDailyJob(targetHour: Int = 16, targetMin: Int = 0): Unit = {
-  while (true) {
-    val now = System.currentTimeMillis()
+import java.util.{Calendar, TimeZone}
+
+object RampAutomationExecution {
+  def main(args: Array[String]): Unit = {
+    println("Starting Ramp Automation Job...")
+
+    // Step 1: Ensure processing is complete before waiting for emails
+    while (!isProcessingComplete) {
+      println("Processing still running... waiting to complete.")
+      Thread.sleep(60000) // Check every 1 min
+    }
+    println("Processing is complete.")
+
+    // Step 2: Wait until 4:05 PM AEST to send missed alerts
+    println("Waiting for 4:05 PM AEST to send individual missed alerts...")
+    waitForTargetTime(16, 5)
+    sendMissedAlerts()
+
+    // Step 3: Wait until 8:05 PM AEST to send the consolidated email
+    println("Waiting for 8:05 PM AEST to send consolidated email...")
+    waitForTargetTime(20, 5)
+    sendConsolidatedEmail()
+
+    // Step 4: Ensure job completes after sending all emails
+    println("All scheduled emails sent. Job execution complete.")
+  }
+
+  /** Waits dynamically until the target time (AEST) */
+  def waitForTargetTime(targetHour: Int, targetMin: Int): Boolean = {
+    val aestZone = TimeZone.getTimeZone("Australia/Sydney")
+    val calNow = Calendar.getInstance(aestZone)
+    val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+    val currentMin = calNow.get(Calendar.MINUTE)
+
+    if (currentHour == targetHour && currentMin >= targetMin) {
+      println(s"Target time $targetHour:$targetMin AEST reached. Proceeding with email...")
+      return true
+    }
 
     val calTarget = Calendar.getInstance(aestZone)
     calTarget.set(Calendar.HOUR_OF_DAY, targetHour)
@@ -8,24 +43,63 @@ def waitForDailyJob(targetHour: Int = 16, targetMin: Int = 0): Unit = {
     calTarget.set(Calendar.SECOND, 0)
     calTarget.set(Calendar.MILLISECOND, 0)
 
-    if (calTarget.getTimeInMillis <= now) {
-      calTarget.add(Calendar.DATE, 1) // Move to the next day
+    if (calTarget.getTimeInMillis < System.currentTimeMillis()) {
+      calTarget.add(Calendar.DATE, 1) // Move to next day if time already passed
     }
 
     val waitMillis = calTarget.getTimeInMillis - System.currentTimeMillis()
-    println(s"Waiting ${waitMillis / 1000 / 60} minutes for the 4:00 PM AEST job...")
+    println(s"Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+    Thread.sleep(waitMillis) // Sleep until the target time
+    true
+  }
 
-    if (waitMillis > 0) {
-      Thread.sleep(waitMillis) // Sleep until next execution
+  /** Checks if processing is complete */
+  def isProcessingComplete: Boolean = {
+    // Replace with actual logic to check if processing is done
+    val processingDone = true // Change dynamically based on processing status
+    processingDone
+  }
+
+  /** Sends individual missed alert emails */
+  def sendMissedAlerts(): Unit = {
+    println("Sending individual missed alerts...")
+    if (missedAlerts.nonEmpty) {
+      missedAlerts.foreach { alertCode =>
+        businessContactsMap.get(alertCode) match {
+          case Some((business, emailAddress)) =>
+            val subject = s"🚨 Missed Alert Notification: $alertCode"
+            val emailBody =
+              s"""
+                 |The alert <b>$alertCode</b> was scheduled for today but did not arrive by 4:00 PM AEST.
+                 |Could you please check and confirm if it is expected?
+                 |""".stripMargin
+            sendEmail(subject, emailBody, emailAddress)
+          case None =>
+            println(s"No email contact found for alert: $alertCode")
+        }
+      }
+    } else {
+      println("No missed alerts to send.")
     }
+  }
 
-    // Extra safety check
-    val finalCheck = Calendar.getInstance(aestZone)
-    if (finalCheck.get(Calendar.HOUR_OF_DAY) == targetHour &&
-        finalCheck.get(Calendar.MINUTE) >= targetMin) {
-      println("Running email job at 4 PM AEST...")
-      sendScheduledEmails()  // Call the email function
-      println("Email job completed. Waiting for tomorrow.")
+  /** Sends the 8:05 PM consolidated alert email */
+  def sendConsolidatedEmail(): Unit = {
+    println("Sending consolidated email...")
+    if (successAlerts.nonEmpty || failedAlerts.nonEmpty || missedAlerts.nonEmpty) {
+      val consolidatedBody =
+        s"""
+           |<h3>Daily Alert Summary</h3>
+           |<b>Success Alerts:</b> ${if (successAlerts.nonEmpty) successAlerts.mkString(", ") else "None"}
+           |<br>
+           |<b>Failed Alerts:</b> ${if (failedAlerts.nonEmpty) failedAlerts.mkString(", ") else "None"}
+           |<br>
+           |<b>Missed Alerts:</b> ${if (missedAlerts.nonEmpty) missedAlerts.mkString(", ") else "None"}
+           |""".stripMargin
+
+      sendEmail("📊 Daily Alert Summary", consolidatedBody, "cdao@gmail.com")
+    } else {
+      println("No alerts to report in the consolidated email.")
     }
   }
 }
