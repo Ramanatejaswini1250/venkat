@@ -1,0 +1,45 @@
+import java.util.{Calendar, TimeZone}
+
+def waitForTargetTime(): Boolean = {
+    val aestZone = TimeZone.getTimeZone("Australia/Sydney")
+    val calNow = Calendar.getInstance(aestZone)
+    val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+    val currentMin = calNow.get(Calendar.MINUTE)
+
+    // Allowed execution times: 4:05 PM and 8:05 PM
+    val validTimes = List((16, 5), (20, 5)) // 16:05 (4:05 PM) and 20:05 (8:05 PM)
+
+    // Find the next valid execution time
+    val nextRun = validTimes.find { case (hour, min) =>
+        currentHour < hour || (currentHour == hour && currentMin < min)
+    } match {
+        case Some((targetHour, targetMin)) =>
+            (targetHour, targetMin) // Next valid time today
+        case None =>
+            (16, 5) // If it's past 8:05 PM, wait for 4:05 PM the next day
+    }
+
+    val (targetHour, targetMin) = nextRun
+    val targetCal = Calendar.getInstance(aestZone)
+    targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
+    targetCal.set(Calendar.MINUTE, targetMin)
+    targetCal.set(Calendar.SECOND, 0)
+    targetCal.set(Calendar.MILLISECOND, 0)
+
+    // If waiting for the next day's 4:05 PM, add 1 day
+    if (currentHour > 20 || (currentHour == 20 && currentMin >= 5)) {
+        targetCal.add(Calendar.DATE, 1)
+    }
+
+    val nowMillis = calNow.getTimeInMillis
+    val targetMillis = targetCal.getTimeInMillis
+    val waitMillis = targetMillis - nowMillis
+
+    if (waitMillis > 0) {
+        println(s"Current time: $currentHour:$currentMin AEST. Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+        Thread.sleep(waitMillis)
+    }
+
+    println(s"Target time reached ($targetHour:$targetMin AEST). Proceeding with email...")
+    return true
+}
