@@ -1,0 +1,66 @@
+import java.util.{Calendar, TimeZone}
+
+def waitForTargetTime(): Option[(Int, Int)] = {
+    val aestZone = TimeZone.getTimeZone("Australia/Sydney")
+    val calNow = Calendar.getInstance(aestZone)
+    val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+    val currentMin = calNow.get(Calendar.MINUTE)
+
+    // Allowed execution times: 4:05 PM and 8:05 PM
+    val validTimes = List((16, 5), (20, 5)) // (Hour, Minute)
+
+    // Find the next execution time
+    val nextRun = validTimes.find { case (hour, min) =>
+        currentHour < hour || (currentHour == hour && currentMin < min)
+    } match {
+        case Some((targetHour, targetMin)) => (targetHour, targetMin) // Next execution today
+        case None => (16, 5) // If past 8:05 PM, next run is tomorrow at 4:05 PM
+    }
+
+    val (targetHour, targetMin) = nextRun
+    val targetCal = Calendar.getInstance(aestZone)
+    targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
+    targetCal.set(Calendar.MINUTE, targetMin)
+    targetCal.set(Calendar.SECOND, 0)
+    targetCal.set(Calendar.MILLISECOND, 0)
+
+    // If it's already past 8:05 PM, schedule for the next day
+    if (currentHour > 20 || (currentHour == 20 && currentMin >= 5)) {
+        targetCal.add(Calendar.DATE, 1)
+    }
+
+    val nowMillis = calNow.getTimeInMillis
+    val targetMillis = targetCal.getTimeInMillis
+    val waitMillis = targetMillis - nowMillis
+
+    if (waitMillis > 0) {
+        println(s"⏳ Current time: $currentHour:$currentMin AEST. Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+        Thread.sleep(waitMillis)
+    }
+
+    println(s"✅ Target time reached: $targetHour:$targetMin AEST")
+    Some((targetHour, targetMin))
+}
+
+// Function to send individual alert emails
+def sendIndividualEmails(): Unit = {
+    println("📩 Sending individual alert emails at 4:05 PM AEST...")
+    // Add logic to send individual emails
+}
+
+// Function to send consolidated email
+def sendConsolidatedEmail(): Unit = {
+    println("📊 Sending consolidated email at 8:05 PM AEST...")
+    // Add logic to send consolidated email
+}
+
+// Main execution logic
+waitForTargetTime() match {
+    case Some((16, 5)) => // If it's 4:05 PM, send individual emails
+        sendIndividualEmails()
+
+    case Some((20, 5)) => // If it's 8:05 PM, send the consolidated email
+        sendConsolidatedEmail()
+
+    case _ => println("⏭ Not a scheduled execution time, skipping...")
+}
