@@ -5,51 +5,51 @@ val calNow = Calendar.getInstance(aestZone)
 val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
 val currentMin = calNow.get(Calendar.MINUTE)
 
-def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
-    val now = System.currentTimeMillis()
-    val targetCal = Calendar.getInstance(aestZone)
-    targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
-    targetCal.set(Calendar.MINUTE, targetMin)
-    targetCal.set(Calendar.SECOND, 0)
-    targetCal.set(Calendar.MILLISECOND, 0)
-
-    val targetMillis = targetCal.getTimeInMillis
-
-    if (targetMillis > now) { // If current time is before target time, wait
-        val waitMillis = targetMillis - now
-        println(s"⏳ Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
-        Thread.sleep(waitMillis)
-    }
-
-    println(s"✅ Target time reached: $targetHour:$targetMin AEST")
+def sendMissedAlertsEmail(): Unit = {
+    println("📩 Sending missed alerts email at 4:05 PM...")
+    // Add logic to send missed alerts email
 }
 
-// Function to send individual alert emails
-def sendIndividualEmails(): Unit = {
-    println("📩 Sending individual alert emails at 4:05 PM...")
-    // Add logic to send individual emails
-}
-
-// Function to send consolidated email
 def sendConsolidatedEmail(): Unit = {
     println("📊 Sending consolidated email at 8:05 PM...")
     // Add logic to send consolidated email
 }
 
-// **Execution Logic**
-if (currentHour == 16 && currentMin < 5) {
-    waitForTargetTime(16, 5) // Wait until 4:05 PM if it's before
-    sendIndividualEmails()
-} else if (currentHour == 16 && currentMin >= 5) {
-    sendIndividualEmails() // If after 4:05 PM, process immediately
-} else if (currentHour == 20 && currentMin < 5) {
-    waitForTargetTime(20, 5) // Wait until 8:05 PM if it's before
-    sendConsolidatedEmail()
-} else if (currentHour == 20 && currentMin >= 5) {
-    sendConsolidatedEmail() // If after 8:05 PM, process immediately
-} else {
-    println("⏳ No scheduled task at this time. Exiting.")
+def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
+    val targetTimeMillis = Calendar.getInstance(aestZone).apply { c =>
+        c.set(Calendar.HOUR_OF_DAY, targetHour)
+        c.set(Calendar.MINUTE, targetMin)
+        c.set(Calendar.SECOND, 0)
+        c.set(Calendar.MILLISECOND, 0)
+    }.getTimeInMillis
+
+    val nowMillis = System.currentTimeMillis()
+
+    if (nowMillis < targetTimeMillis) {
+        val waitMillis = targetTimeMillis - nowMillis
+        println(s"⏳ Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+        Thread.sleep(waitMillis)
+    }
 }
 
-// **Exit script after execution**
-sys.exit(0)
+// **✅ Handle 4:05 PM missed alerts**
+if (currentHour == 16 && currentMin >= 5 && currentMin < 10) {
+    sendMissedAlertsEmail() // Process missed alerts immediately
+} else if (currentHour == 16 && currentMin < 5) {
+    waitForTargetTime(16, 5)
+    sendMissedAlertsEmail()
+}
+
+// **✅ Handle 8:05 PM consolidated email**
+else if (currentHour == 20 && currentMin >= 5 && currentMin < 10) {
+    sendConsolidatedEmail() // Send consolidated email immediately
+} else if (currentHour == 20 && currentMin < 5) {
+    waitForTargetTime(20, 5)
+    sendConsolidatedEmail()
+}
+
+// **✅ Run normal processing if not 4:05 PM or 8:05 PM**
+else {
+    println("⚡ Running other tasks as usual...")
+    // Add normal data processing logic here
+}
