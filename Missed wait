@@ -16,17 +16,17 @@ def sendConsolidatedEmail(): Unit = {
 }
 
 def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
-    val targetTimeMillis = Calendar.getInstance(aestZone).apply { c =>
-        c.set(Calendar.HOUR_OF_DAY, targetHour)
-        c.set(Calendar.MINUTE, targetMin)
-        c.set(Calendar.SECOND, 0)
-        c.set(Calendar.MILLISECOND, 0)
-    }.getTimeInMillis
+    val targetCal = Calendar.getInstance(aestZone)
+    targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
+    targetCal.set(Calendar.MINUTE, targetMin)
+    targetCal.set(Calendar.SECOND, 0)
+    targetCal.set(Calendar.MILLISECOND, 0)
 
     val nowMillis = System.currentTimeMillis()
+    val targetMillis = targetCal.getTimeInMillis
 
-    if (nowMillis < targetTimeMillis) {
-        val waitMillis = targetTimeMillis - nowMillis
+    if (nowMillis < targetMillis) {
+        val waitMillis = targetMillis - nowMillis
         println(s"⏳ Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
         Thread.sleep(waitMillis)
     }
