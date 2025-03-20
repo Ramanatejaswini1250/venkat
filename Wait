@@ -1,25 +1,56 @@
 import java.util.Calendar
 
-// Get current time in AEST
+def waitForTargetTime(targetHour: Int, targetMin: Int): Boolean = {
+  val calNow = Calendar.getInstance(aestZone)
+  val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+  val currentMin = calNow.get(Calendar.MINUTE)
+
+  if (currentHour > targetHour || (currentHour == targetHour && currentMin >= targetMin)) {
+    println(s"Target time $targetHour:$targetMin reached.")
+    return true
+  }
+
+  val now = System.currentTimeMillis()
+  val calTarget = Calendar.getInstance(aestZone)
+  calTarget.set(Calendar.HOUR_OF_DAY, targetHour)
+  calTarget.set(Calendar.MINUTE, targetMin)
+  calTarget.set(Calendar.SECOND, 0)
+  calTarget.set(Calendar.MILLISECOND, 0)
+
+  if (calTarget.getTimeInMillis < now) {
+    calTarget.add(Calendar.DATE, 1) // Move to the next day if time has passed
+  }
+
+  val waitMillis = calTarget.getTimeInMillis - now
+  println(s"Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+  Thread.sleep(waitMillis)
+
+  println(s"Target time reached.")
+  true
+}
+
+// Get current hour
 val calNow = Calendar.getInstance(aestZone)
 val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
 val currentMin = calNow.get(Calendar.MINUTE)
 
-// Logic for execution
+// Processing logic based on time
 if (currentHour == 16 && currentMin >= 5) { 
   // 4:05 PM - Process missed alerts
+  waitForTargetTime(16, 5)
   println("🔔 Processing missed alerts at 4:05 PM...")
   // Add missed alerts logic here
 
 } else if (currentHour == 20 && currentMin >= 5) { 
   // 8:05 PM - Send consolidated email
+  waitForTargetTime(20, 5)
   println("📧 Sending consolidated email at 8:05 PM...")
   // Add consolidated email logic here
 
 } else if (currentHour >= 7 && currentHour <= 23) { 
-  // Regular processing from 7 AM to 11 PM
+  // Between 7 AM and 11 PM - Regular processing
   println("⚡ Regular data processing (7 AM - 11 PM)...")
-  // Add regular data processing logic here
+  // Add data processing logic here
 
 } else {
   println("⏳ Outside processing hours. Skipping execution.")
