@@ -1,60 +1,26 @@
 import java.util.Calendar
 
-def waitForTargetTime(targetHour: Int, targetMin: Int): Boolean = {
-  val calNow = Calendar.getInstance(aestZone)
-  val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
-  val currentMin = calNow.get(Calendar.MINUTE)
+// Get current time in AEST
+val calNow = Calendar.getInstance(aestZone)
+val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+val currentMin = calNow.get(Calendar.MINUTE)
 
-  if (currentHour > targetHour || (currentHour == targetHour && currentMin >= targetMin)) {
-    println(s"Target time $targetHour:$targetMin reached.")
-    return true
-  }
+// Logic for execution
+if (currentHour == 16 && currentMin >= 5) { 
+  // 4:05 PM - Process missed alerts
+  println("🔔 Processing missed alerts at 4:05 PM...")
+  // Add missed alerts logic here
 
-  val now = System.currentTimeMillis()
-  val calTarget = Calendar.getInstance(aestZone)
-  calTarget.set(Calendar.HOUR_OF_DAY, targetHour)
-  calTarget.set(Calendar.MINUTE, targetMin)
-  calTarget.set(Calendar.SECOND, 0)
-  calTarget.set(Calendar.MILLISECOND, 0)
+} else if (currentHour == 20 && currentMin >= 5) { 
+  // 8:05 PM - Send consolidated email
+  println("📧 Sending consolidated email at 8:05 PM...")
+  // Add consolidated email logic here
 
-  if (calTarget.getTimeInMillis < now) {
-    calTarget.add(Calendar.DATE, 1) // Move to the next day if time has passed
-  }
+} else if (currentHour >= 7 && currentHour <= 23) { 
+  // Regular processing from 7 AM to 11 PM
+  println("⚡ Regular data processing (7 AM - 11 PM)...")
+  // Add regular data processing logic here
 
-  val waitMillis = calTarget.getTimeInMillis - now
-  println(s"Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
-  Thread.sleep(waitMillis)
-
-  println(s"Target time reached.")
-  true
-}
-
-// Get execution time dynamically (Example: from command-line args)
-val executionTime: (Int, Int) = {
-  val now = Calendar.getInstance(aestZone)
-  val hour = now.get(Calendar.HOUR_OF_DAY)
-  val min = now.get(Calendar.MINUTE)
-
-  // Example logic: Based on hour, decide what to process
-  if (hour == 16 && min >= 5) (16, 5) // 4:05 PM - Process missed alerts
-  else if (hour == 20 && min >= 5) (20, 5) // 8:05 PM - Send consolidated email
-  else (hour, min) // Otherwise, regular processing
-}
-
-// Wait for the target time
-waitForTargetTime(executionTime._1, executionTime._2)
-
-// Match-case execution logic
-executionTime match {
-  case (16, 5) =>
-    println("Processing missed alerts at 4:05 PM...")
-    // Add missed alerts logic here
-
-  case (20, 5) =>
-    println("Sending consolidated email at 8:05 PM...")
-    // Add consolidated email logic here
-
-  case _ =>
-    println("Regular Autosys processing...")
-    // Add regular processing logic here
+} else {
+  println("⏳ Outside processing hours. Skipping execution.")
 }
