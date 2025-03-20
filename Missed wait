@@ -1,72 +1,55 @@
-import org.apache.spark.sql.SparkSession
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.sql.Connection
+import java.util.{Calendar, TimeZone}
 
-object RampAutomationExecution {
-    def main(args: Array[String]): Unit = {
-        val spark = SparkSession.builder()
-            .appName("RampAutomationExecution")
-            .getOrCreate()
+val aestZone = TimeZone.getTimeZone("Australia/Sydney")
+val calNow = Calendar.getInstance(aestZone)
+val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+val currentMin = calNow.get(Calendar.MINUTE)
 
-        val conn: Connection = getDBConnection()  // Your database connection method
+def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
+    val now = System.currentTimeMillis()
+    val targetCal = Calendar.getInstance(aestZone)
+    targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
+    targetCal.set(Calendar.MINUTE, targetMin)
+    targetCal.set(Calendar.SECOND, 0)
+    targetCal.set(Calendar.MILLISECOND, 0)
 
-        // ✅ Determine whether it's a 4:05 PM run or 8:05 PM run
-        val now = LocalTime.now()
-        val missedAlertTime = LocalTime.of(16, 5) // 4:05 PM
-        val consolidatedEmailTime = LocalTime.of(20, 5) // 8:05 PM
+    val targetMillis = targetCal.getTimeInMillis
 
-        if (now.isBefore(missedAlertTime)) {
-            // ✅ If job completes before 4:05 PM, wait until 4:05 PM
-            println(s"Job completed at $now. Waiting until 16:05 to send missed alerts...")
-            waitUntil("16:05")
-        }
-
-        if (now.isAfter(missedAlertTime) && now.isBefore(consolidatedEmailTime)) {
-            // ✅ Run logic for 4:05 PM execution (Send missed alerts)
-            val missedAlerts = processMissedAlerts(spark, conn)
-            sendMissedAlerts(missedAlerts)
-            println(s"Sent missed alerts at 16:05. Exiting job...")
-        } else {
-            // ✅ Run logic for 8:05 PM execution (Send consolidated email)
-            val combinedSuccessAlerts = getSuccessAlerts(spark)
-            val combinedFailedAlerts = getFailedAlerts(spark)
-            val missedAlerts = getMissedAlerts(spark)
-            sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
-            println(s"Sent consolidated email at 20:05. Exiting job...")
-        }
-
-        // ✅ Close resources and exit properly
-        conn.close()
-        spark.stop()
-        System.exit(0)  // Ensures job stops properly
+    if (targetMillis > now) { // If current time is before target time, wait
+        val waitMillis = targetMillis - now
+        println(s"⏳ Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
+        Thread.sleep(waitMillis)
     }
 
-    // ✅ Wait until a specific time before proceeding
-    def waitUntil(targetTime: String): Unit = {
-        val formatter = DateTimeFormatter.ofPattern("HH:mm")
-        val target = LocalTime.parse(targetTime, formatter)
-        while (LocalTime.now().isBefore(target)) {
-            Thread.sleep(1000)  // Sleep for 1 second to avoid CPU overuse
-        }
-    }
-
-    // ✅ Process missed alerts and send individual emails
-    def sendMissedAlerts(missedAlerts: Seq[String]): Unit = {
-        if (missedAlerts.nonEmpty) {
-            missedAlerts.foreach { alertCode =>
-                val emailAddress = getEmailForAlert(alertCode)  // Fetch email address
-                if (emailAddress.nonEmpty) {
-                    val subject = s"🔴 Missed Alert Notification: $alertCode"
-                    val emailBody =
-                        s"""
-                           |The alert <b>$alertCode</b> was scheduled for today but did not arrive by 4:00 PM.
-                           |Could you please check and confirm if it is expected?
-                           |""".stripMargin
-                    sendEmail(emailAddress, subject, emailBody, "")
-                    println(s"Sent missed alert email to $emailAddress for alert code: $alertCode")
-                }
-            }
-        }
-    }
+    println(s"✅ Target time reached: $targetHour:$targetMin AEST")
 }
+
+// Function to send individual alert emails
+def sendIndividualEmails(): Unit = {
+    println("📩 Sending individual alert emails at 4:05 PM...")
+    // Add logic to send individual emails
+}
+
+// Function to send consolidated email
+def sendConsolidatedEmail(): Unit = {
+    println("📊 Sending consolidated email at 8:05 PM...")
+    // Add logic to send consolidated email
+}
+
+// **Execution Logic**
+if (currentHour == 16 && currentMin < 5) {
+    waitForTargetTime(16, 5) // Wait until 4:05 PM if it's before
+    sendIndividualEmails()
+} else if (currentHour == 16 && currentMin >= 5) {
+    sendIndividualEmails() // If after 4:05 PM, process immediately
+} else if (currentHour == 20 && currentMin < 5) {
+    waitForTargetTime(20, 5) // Wait until 8:05 PM if it's before
+    sendConsolidatedEmail()
+} else if (currentHour == 20 && currentMin >= 5) {
+    sendConsolidatedEmail() // If after 8:05 PM, process immediately
+} else {
+    println("⏳ No scheduled task at this time. Exiting.")
+}
+
+// **Exit script after execution**
+sys.exit(0)
