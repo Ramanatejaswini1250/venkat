@@ -33,27 +33,27 @@ expectedAlertsDF.show()
 
 
 
-import java.time.ZonedDateTime
-import org.apache.spark.sql.functions._
-
 // Convert check_datetime from IST to AEST
 val processedAlertsDF = alertsArchieveDF
   .withColumn("alert_date", to_date(col("date_to_load"))) // Extract date
   .withColumn("check_datetime", date_format(col("check_datetime"), "HH:mm:ss")) // Extract time
-  .withColumn("check_datetime_aest", 
-    from_utc_timestamp(col("check_datetime"), "Australia/Sydney")
-  )
+  .withColumn("check_datetime_aest", from_utc_timestamp(col("check_datetime"), "Australia/Sydney"))
   .withColumn("check_datetime_aest", date_format(col("check_datetime_aest"), "HH:mm:ss")) // Extract AEST time
   .filter(col("alert_date") === lit(todayDate)) // Compare with today's date
 
+// Join with df2 to get frequency
+val processedAlertsWithFrequencyDF = processedAlertsDF
+  .join(df2.select("alert_code", "frequency"), Seq("alert_code"), "left") // Left join to get frequency
+
 // Define cutoff times for different frequencies
-val processedBeforeCutoffDF = processedAlertsDF
+val processedBeforeCutoffDF = processedAlertsWithFrequencyDF
   .withColumn("cutoff_time",
     when(col("frequency") === "d", lit("13:05:00")) // Daily cutoff 1:05 PM
     .when(col("frequency") === "w", lit("16:05:00")) // Weekly cutoff 4:05 PM
     .otherwise(lit("16:05:00")) // Default (Monthly) cutoff 4:05 PM
   )
-  .filter(col("check_datetime_aest") < col("cutoff_time"))
+  .filter(col("check_datetime_aest") < col("cutoff_time")) // Filter alerts processed before cutoff
+
 
 // Extract processed alert codes before cutoff time
 val processedBeforeCutoff = processedBeforeCutoffDF
