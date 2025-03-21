@@ -1,3 +1,22 @@
+val expectedAlerts = if (currentHourAEST == 13) { // 1 PM AEST
+    df2.filter(col("frequency") === "d")
+} else if (currentHourAEST == 16) { // 4 PM AEST
+    df2.filter(col("frequency") === "w" && col("run_days_dates") === todayNumber)
+       .union(df2.filter(col("frequency") === "m" && col("run_days_dates") === todaydayMonth))
+} else {
+    spark.emptyDataFrame
+}
+
+val expectedAlertsDF = expectedAlerts
+    .select("alert_code")
+    .distinct()
+    .withColumn("alert_code", col("alert_code").cast(StringType))
+
+expectedAlertsDF.show()
+
+
+
+
 // Collect business contacts before processing starts
 val businessContactsMap = df
   .select("alert_code", "business", "email_address")
