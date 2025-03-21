@@ -1,3 +1,39 @@
+import java.time.{ZoneId, ZonedDateTime}
+import org.apache.spark.sql.functions._
+
+val now = ZonedDateTime.now(ZoneId.of("Australia/Sydney"))
+val currentHour = now.getHour
+
+// Define expected cutoff times
+val dailyCutoffHour = 13  // 1:00 PM AEST
+val weeklyCutoffHour = 16 // 4:00 PM AEST
+
+// Filter expected alerts with different cutoff times
+val expectedAlerts = df2
+  .filter(col("frequency") === "d" && currentHour >= dailyCutoffHour) // Daily alerts should arrive by 1 PM
+  .select("alert_code")
+  .distinct()
+  .union(
+    df2.filter(col("frequency") === "w" && col("run_days_dates") === todayNumber && currentHour >= weeklyCutoffHour) // Weekly alerts should arrive by 4 PM
+      .select("alert_code")
+      .distinct()
+  )
+  .union(
+    df2.filter(col("frequency") === "m" && col("run_days_dates") === todaydayMonth) // Monthly alerts remain same
+      .select("alert_code")
+      .distinct()
+  )
+  .distinct()
+
+val expectedAlertsDF = expectedAlerts.withColumn("alert_code", col("alert_code").cast(StringType))
+
+expectedAlertsDF.show()
+
+
+
+
+
+
 import java.util.{Calendar, TimeZone}
 
 val aestZone = TimeZone.getTimeZone("Australia/Sydney")
