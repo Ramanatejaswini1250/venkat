@@ -1,3 +1,9 @@
+import java.time.ZonedDateTime
+import java.time.ZoneId
+
+val currentHourAEST = ZonedDateTime.now(ZoneId.of("Australia/Sydney")).getHour
+
+
 val expectedAlerts = if (currentHourAEST == 13) { // 1 PM AEST
     df2.filter(col("frequency") === "d")
 } else if (currentHourAEST == 16) { // 4 PM AEST
