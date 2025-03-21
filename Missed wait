@@ -1,3 +1,32 @@
+val alertFrequency = processedAlertsWithFrequencyDF
+  .filter(col("alert_code") === lit(alertCode)) // Filter for the specific alert
+  .select("frequency") // Get the frequency column
+  .as[String] // Convert to String
+  .headOption.getOrElse("m") // Default to 'm' if not found
+
+
+val dynamicCutoffTime = alertFrequency match {
+  case "d" => "1:05 PM"  // Daily alerts cutoff
+  case "w" => "4:05 PM"  // Weekly alerts cutoff
+  case "m" => "4:05 PM"  // Monthly alerts cutoff
+  case _   => "4:05 PM"  // Default if unknown
+}
+
+val emailBody = s"""
+  |<html>
+  |<body>
+  |<p>Dear Team,</p>
+  |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive by the <b>$dynamicCutoffTime AEST</b> cutoff.</p>
+  |<p>Could you please check and confirm if this is expected?</p>
+  |<br>
+  |<p>Best Regards,</p>
+  |<p>Your Automation System</p>
+  |</body>
+  |</html>
+""".stripMargin
+
+
+
 import java.time.{ZoneId, ZonedDateTime}
 import org.apache.spark.sql.functions._
 
