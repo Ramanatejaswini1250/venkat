@@ -3,6 +3,53 @@ import java.time.LocalTime
 def sendMissedAlertEmails(): Unit = {
   val currentHour = LocalTime.now().getHour
 
+import java.time.LocalTime
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.SparkSession
+
+// Initialize Spark Session
+val spark = SparkSession.builder().appName("MissedAlertsProcessing").getOrCreate()
+import spark.implicits._
+
+// 🔹 Sample missed alerts DataFrame (Replace this with actual missedAlertsDF)
+val missedAlertsDF = Seq(
+  ("A1", "D"),  // Daily Alert
+  ("A2", "W"),  // Weekly Alert
+  ("A3", "M"),  // Monthly Alert
+  ("A4", "D"),  // Another Daily Alert
+  ("A5", "W")   // Another Weekly Alert
+).toDF("alert_code", "frequency") 
+
+// ✅ Filter Daily Alerts (D)
+val dailyAlertsDF = missedAlertsDF.filter(col("frequency") === "D")
+
+// ✅ Filter Weekly (W) and Monthly (M) Alerts
+val weeklyMonthlyAlertsDF = missedAlertsDF.filter(col("frequency").isin("W", "M"))
+
+// ✅ Function to send emails
+def sendMissedAlertEmails(alertsDF: org.apache.spark.sql.DataFrame, alertType: String): Unit = {
+  alertsDF.collect().foreach { row =>
+    val alertCode = row.getString(0)
+    val frequency = row.getString(1)
+    
+    val subject = s"🚨 Missed Alert Notification: $alertCode ($frequency)"
+    val emailBody = s"""
+      |The alert <b style="color:red;">$alertCode</b> (Frequency: $frequency) was expected but did not arrive.
+      |<p>Could you please check and confirm?</p>
+      """.stripMargin
+
+    // Replace with actual email-sending function
+    println(s"📧 Sending missed alert email for [$alertCode] with frequency [$frequency]")
+    // sendEmail(emailAddress, subject, emailBody, "")
+  }
+}
+
+// ✅ Get current hour dynamically
+val currentHour = LocalTime.now().getHour
+
+// ✅ Send emails based on time conditions
+if (currentHour == 13
+
   // Identify missed alerts based on frequency
   val missedDailyAlerts = missedAlerts.filter(alertCode => alertFrequencyMap.getOrElse(alertCode, "m") == "d")
   val missedOtherAlerts = missedAlerts.filter(alertCode => Set("w", "m").contains(alertFrequencyMap.getOrElse(alertCode, "m")))
