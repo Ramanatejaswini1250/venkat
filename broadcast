@@ -1,40 +1,56 @@
 import java.time.LocalTime
 
-// Get the current hour (24-hour format)
-val currentHour = LocalTime.now().getHour
+def sendMissedAlertEmails(): Unit = {
+  val currentHour = LocalTime.now().getHour
 
-// Function to send missed alert emails
-def sendMissedAlertEmails(alerts: Set[String], cutoffTime: String): Unit = {
-  if (alerts.nonEmpty) {
-    alerts.foreach { alertCode =>
+  // Identify missed alerts based on frequency
+  val missedDailyAlerts = missedAlerts.filter(alertCode => alertFrequencyMap.getOrElse(alertCode, "m") == "d")
+  val missedOtherAlerts = missedAlerts.filter(alertCode => Set("w", "m").contains(alertFrequencyMap.getOrElse(alertCode, "m")))
+
+  if (currentHour == 13 && missedDailyAlerts.nonEmpty) {
+    missedDailyAlerts.foreach { alertCode =>
       businessContactsMap.get(alertCode) match {
         case Some((business, emailAddress)) if emailAddress.nonEmpty =>
-          val subject = s"🔴 Missed Alert Notification: $alertCode"
+          val subject = s"🔴 Missed Daily Alert Notification: $alertCode"
+          val emailBody =
+            s"""
+            |<p>The daily alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive.</p>
+            |<p>Could you please check and confirm if this is expected?</p>
+            |<p>Business Unit: <b>$business</b></p>
+            |<p>Cutoff Time: <b>1:00 PM AEST</b></p>
+            """.stripMargin
+
+          sendEmail(emailAddress, subject, emailBody, "")
+          println(s"Sent missed daily alert email to $emailAddress for alert code: $alertCode")
+
+        case _ =>
+          println(s"Warning: No email found for alert code: $alertCode")
+      }
+    }
+  } else if (currentHour == 16 && missedOtherAlerts.nonEmpty) {
+    missedOtherAlerts.foreach { alertCode =>
+      businessContactsMap.get(alertCode) match {
+        case Some((business, emailAddress)) if emailAddress.nonEmpty =>
+          val subject = s"🔴 Missed Weekly/Monthly Alert Notification: $alertCode"
           val emailBody =
             s"""
             |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive.</p>
             |<p>Could you please check and confirm if this is expected?</p>
             |<p>Business Unit: <b>$business</b></p>
-            |<p>Cutoff Time: <b>$cutoffTime AEST</b></p>
+            |<p>Cutoff Time: <b>4:00 PM AEST</b></p>
             """.stripMargin
 
           sendEmail(emailAddress, subject, emailBody, "")
-          println(s"Sent missed alert email to $emailAddress for alert code: $alertCode")
-          
+          println(s"Sent missed weekly/monthly alert email to $emailAddress for alert code: $alertCode")
+
         case _ =>
           println(s"Warning: No email found for alert code: $alertCode")
       }
     }
+  } else {
+    println(s"No missed alerts to send at this hour: $currentHour AEST")
   }
 }
 
-// Identify missed alerts based on frequency
-val missedDailyAlerts = missedAlerts.filter(alertCode => alertFrequencyMap.getOrElse(alertCode, "m") == "d")
-val missedOtherAlerts = missedAlerts.filter(alertCode => Set("w", "m").contains(alertFrequencyMap.getOrElse(alertCode, "m")))
-
-// Send emails at the correct hour
-if (currentHour == 13) {
-  sendMissedAlertEmails(missedDailyAlerts, "1:00 PM")
-} else if (currentHour == 16) {
-  sendMissedAlertEmails(missedOtherAlerts, "4:00 PM")
-}
+// Call the function to check and send missed alerts
+sendMissedAlertEmails()
