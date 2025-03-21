@@ -2,6 +2,21 @@ import java.time.LocalTime
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.SparkSession
 
+
+spark-submit \
+  --master yarn \
+  --deploy-mode cluster \
+  --executor-memory 12g \
+  --driver-memory 16g \
+  --conf spark.driver.maxResultSize=8g \
+  --conf spark.sql.shuffle.partitions=400 \
+  --conf spark.sql.files.maxPartitionBytes=256MB \
+  --conf spark.default.parallelism=400 \
+  your_spark_script.py  # or .scala
+
+
+
+
 // Initialize Spark Session
 val spark = SparkSession.builder().appName("MissedAlertsProcessing").getOrCreate()
 import spark.implicits._
