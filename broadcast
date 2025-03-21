@@ -1,52 +1,40 @@
-import java.time.ZonedDateTime
-import java.time.ZoneId
+import java.time.LocalTime
 
-val currentHourAEST = ZonedDateTime.now(ZoneId.of("Australia/Sydney")).getHour
+// Get the current hour (24-hour format)
+val currentHour = LocalTime.now().getHour
 
+// Function to send missed alert emails
+def sendMissedAlertEmails(alerts: Set[String], cutoffTime: String): Unit = {
+  if (alerts.nonEmpty) {
+    alerts.foreach { alertCode =>
+      businessContactsMap.get(alertCode) match {
+        case Some((business, emailAddress)) if emailAddress.nonEmpty =>
+          val subject = s"🔴 Missed Alert Notification: $alertCode"
+          val emailBody =
+            s"""
+            |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive.</p>
+            |<p>Could you please check and confirm if this is expected?</p>
+            |<p>Business Unit: <b>$business</b></p>
+            |<p>Cutoff Time: <b>$cutoffTime AEST</b></p>
+            """.stripMargin
 
-val expectedAlerts = if (currentHourAEST == 13) { // 1 PM AEST
-    df2.filter(col("frequency") === "d")
-} else if (currentHourAEST == 16) { // 4 PM AEST
-    df2.filter(col("frequency") === "w" && col("run_days_dates") === todayNumber)
-       .union(df2.filter(col("frequency") === "m" && col("run_days_dates") === todaydayMonth))
-} else {
-    spark.emptyDataFrame
-}
-
-val expectedAlertsDF = expectedAlerts
-    .select("alert_code")
-    .distinct()
-    .withColumn("alert_code", col("alert_code").cast(StringType))
-
-expectedAlertsDF.show()
-
-
-
-
-// Collect business contacts before processing starts
-val businessContactsMap = df
-  .select("alert_code", "business", "email_address")
-  .distinct()
-  .collect()
-  .map(row => (row.getString(0), (row.getString(1), row.getString(2))))
-  .toMap // Convert to Map for quick lookup
-
-
-if (missedAlerts.nonEmpty) {
-  missedAlerts.foreach { alertCode =>
-    businessContactsMap.get(alertCode) match {
-      case Some((business, emailAddress)) =>
-        val subject = s"🔴 Missed Alert Notification: $alertCode"
-        val emailBody = s"""
-        |The alert <b>$alertCode</b> was scheduled for today but did not arrive by the 4:00 PM AEST cutoff.
-        |Could you please check and confirm if it is expected?
-        """.stripMargin
-
-        sendEmail(emailAddress, subject, emailBody, "T")
-        println(s"Sent missed alert email to $emailAddress for alert code: $alertCode")
-
-      case None =>
-        println(s"No business contact found for alert code: $alertCode")
+          sendEmail(emailAddress, subject, emailBody, "")
+          println(s"Sent missed alert email to $emailAddress for alert code: $alertCode")
+          
+        case _ =>
+          println(s"Warning: No email found for alert code: $alertCode")
+      }
     }
   }
+}
+
+// Identify missed alerts based on frequency
+val missedDailyAlerts = missedAlerts.filter(alertCode => alertFrequencyMap.getOrElse(alertCode, "m") == "d")
+val missedOtherAlerts = missedAlerts.filter(alertCode => Set("w", "m").contains(alertFrequencyMap.getOrElse(alertCode, "m")))
+
+// Send emails at the correct hour
+if (currentHour == 13) {
+  sendMissedAlertEmails(missedDailyAlerts, "1:00 PM")
+} else if (currentHour == 16) {
+  sendMissedAlertEmails(missedOtherAlerts, "4:00 PM")
 }
