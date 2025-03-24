@@ -1,24 +1,22 @@
 // Check if master tables exist
 if (masterTables.nonEmpty) {
-    val masterTable1 = masterTables.head
-    val masterTable2 = if (masterTables.length > 1) masterTables(1) else ""
-
     try {
         // Start transaction
         stmt_rss.getConnection.setAutoCommit(false)
 
-        // DELETE from MasterTable1 using alert_code
-        val deleteStmt1 = s"DELETE FROM $masterTable1 WHERE alert_code = '$alertCode';"
-        println(s"Executing: $deleteStmt1")
-        stmt_rss.execute(deleteStmt1)
+        masterTables.foreach { table =>
+            val deleteStmt = 
+                if (table == masterTables.head) {
+                    // DELETE from MasterTable1 using alert_code
+                    s"DELETE FROM $table WHERE alert_code = '$alertCode';"
+                } else {
+                    // DELETE from MasterTable2 using alert_id from MasterTable1
+                    s"DELETE FROM $table WHERE alert_id IN " +
+                    s"(SELECT alert_id FROM ${masterTables.head} WHERE alert_code = '$alertCode');"
+                }
 
-        // DELETE from MasterTable2 using alert_id from MasterTable1 (only if masterTable2 exists)
-        if (masterTable2.nonEmpty) {
-            val deleteStmt2 =
-                s"DELETE FROM $masterTable2 WHERE alert_id IN " +
-                s"(SELECT alert_id FROM $masterTable1 WHERE alert_code = '$alertCode');"
-            println(s"Executing: $deleteStmt2")
-            stmt_rss.execute(deleteStmt2)
+            println(s"Executing: $deleteStmt")
+            stmt_rss.execute(deleteStmt)
         }
 
         // Commit both delete operations before CSV validation starts
