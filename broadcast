@@ -1,14 +1,39 @@
-val minSize = math.min(MasterTable2DF.size, Master2CSVrows.size)
+// Check if master tables exist
+if (masterTables.nonEmpty) {
+    val masterTable1 = masterTables.head
+    val masterTable2 = if (masterTables.length > 1) masterTables(1) else ""
 
-for (i <- 0 until minSize) {  
-    if (MasterTable2DF(i) != Master2CSVrows(i)) {  
-        println(s"Mismatch found at row $i: Table: ${MasterTable2DF(i)} != CSV: ${Master2CSVrows(i)}")  
-        dataConsistent2 = false  
-    }  
-}  
+    try {
+        // Start transaction
+        stmt_rss.getConnection.setAutoCommit(false)
 
-// Handle extra rows if sizes are different
-if (MasterTable2DF.size != Master2CSVrows.size) {
-    println(s"Warning: Size mismatch - MasterTable2DF has ${MasterTable2DF.size} rows, but Master2CSVrows has ${Master2CSVrows.size} rows.")
-    dataConsistent2 = false
+        // DELETE from MasterTable1 using alert_code
+        val deleteStmt1 = s"DELETE FROM $masterTable1 WHERE alert_code = '$alertCode';"
+        println(s"Executing: $deleteStmt1")
+        stmt_rss.execute(deleteStmt1)
+
+        // DELETE from MasterTable2 using alert_id from MasterTable1 (only if masterTable2 exists)
+        if (masterTable2.nonEmpty) {
+            val deleteStmt2 =
+                s"DELETE FROM $masterTable2 WHERE alert_id IN " +
+                s"(SELECT alert_id FROM $masterTable1 WHERE alert_code = '$alertCode');"
+            println(s"Executing: $deleteStmt2")
+            stmt_rss.execute(deleteStmt2)
+        }
+
+        // Commit both delete operations before CSV validation starts
+        stmt_rss.getConnection.commit()
+        println("Deletion successful and committed.")
+
+    } catch {
+        case e: Exception =>
+            println(s"Error during deletion: ${e.getMessage}")
+            stmt_rss.getConnection.rollback() // Rollback in case of failure
+            throw e
+    } finally {
+        stmt_rss.getConnection.setAutoCommit(true) // Restore default commit behavior
+    }
 }
+
+// Proceed to CSV validation after deletions
+println("Starting data validation between Master Table 2 and exported Master File 2 CSV...")
