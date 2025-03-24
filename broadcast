@@ -1,3 +1,19 @@
+var firstAlertWritten1 = false
+MasterTable2DF.foreach { row =>
+    val cleanRow = row.toString.trim.replaceAll("^\"|\"$", "") // Remove extra quotes
+
+    if (!firstAlertWritten1) {
+        master_writer2.write(cleanRow)
+        master_writer2.newLine()
+        firstAlertWritten1 = true
+    } else {
+        master_writer2.write(cleanRow)
+        master_writer2.newLine()
+    }
+}
+
+
+
 // Define masterTable1 and masterTable2 globally within the function
 var masterTable1: String = ""
 var masterTable2: String = ""
