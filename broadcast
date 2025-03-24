@@ -1,29 +1,41 @@
+// Define masterTable1 and masterTable2 globally within the function
+var masterTable1: String = ""
+var masterTable2: String = ""
+
 try {
     stmt_rss.getConnection.setAutoCommit(false) // Start transaction
 
-    // Collect all alertCodes into a list
+    // Convert alertCodes into SQL list format: 'A001', 'A002'
     val alertCodeList = alertCodes.map(ac => s"'$ac'").mkString(", ")
 
-    masterTables.foreach { masterTable1 =>
-        val masterTable2Index = masterTables.indexOf(masterTable1) + 1
-        val masterTable2 = if (masterTable2Index < masterTables.length) masterTables(masterTable2Index) else ""
+    // Assign values to masterTable1 and masterTable2 (global scope)
+    if (masterTables.nonEmpty) {
+        masterTable1 = masterTables.head
+    }
+    if (masterTables.length > 1) {
+        masterTable2 = masterTables(1)
+    }
 
-        // Step 1: Delete from MasterTable2 first (if it exists)
-        if (masterTable2.nonEmpty) {
+    // Process master tables in pairs (MasterTable1, MasterTable2)
+    masterTables.sliding(2, 1).foreach {
+        case Seq(mt1, mt2) => // When both tables exist
             val deleteStmt2 = s"""
-                DELETE FROM $masterTable2 
+                DELETE FROM $mt2 
                 WHERE alert_id IN (
-                    SELECT alert_id FROM $masterTable1 WHERE alert_code IN ($alertCodeList)
+                    SELECT alert_id FROM $mt1 WHERE alert_code IN ($alertCodeList)
                 );
             """
             println(s"Executing: $deleteStmt2")
             stmt_rss.execute(deleteStmt2)
-        }
 
-        // Step 2: Delete from MasterTable1
-        val deleteStmt1 = s"DELETE FROM $masterTable1 WHERE alert_code IN ($alertCodeList);"
-        println(s"Executing: $deleteStmt1")
-        stmt_rss.execute(deleteStmt1)
+            val deleteStmt1 = s"DELETE FROM $mt1 WHERE alert_code IN ($alertCodeList);"
+            println(s"Executing: $deleteStmt1")
+            stmt_rss.execute(deleteStmt1)
+
+        case Seq(mt1) => // If only one table exists
+            val deleteStmt1 = s"DELETE FROM $mt1 WHERE alert_code IN ($alertCodeList);"
+            println(s"Executing: $deleteStmt1")
+            stmt_rss.execute(deleteStmt1)
     }
 
     // Commit transaction after processing all tables
@@ -37,3 +49,8 @@ try {
 } finally {
     stmt_rss.getConnection.setAutoCommit(true) // Restore default behavior
 }
+
+// Now, masterTable1 and masterTable2 are available for further use in runSqlScript
+println(s"Master Table 1: $masterTable1, Master Table 2: $masterTable2")
+
+// You can use masterTable1 and masterTable2 elsewhere in runSqlScript
