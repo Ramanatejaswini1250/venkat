@@ -1,37 +1,39 @@
-// Check if master tables exist
-if (masterTables.nonEmpty) {
-    try {
-        // Start transaction
-        stmt_rss.getConnection.setAutoCommit(false)
+try {
+    stmt_rss.getConnection.setAutoCommit(false) // Start transaction
 
-        masterTables.foreach { table =>
-            val deleteStmt = 
-                if (table == masterTables.head) {
-                    // DELETE from MasterTable1 using alert_code
-                    s"DELETE FROM $table WHERE alert_code = '$alertCode';"
-                } else {
-                    // DELETE from MasterTable2 using alert_id from MasterTable1
-                    s"DELETE FROM $table WHERE alert_id IN " +
-                    s"(SELECT alert_id FROM ${masterTables.head} WHERE alert_code = '$alertCode');"
-                }
+    // Collect all alertCodes into a list
+    val alertCodeList = alertCodes.map(ac => s"'$ac'").mkString(", ")
 
-            println(s"Executing: $deleteStmt")
-            stmt_rss.execute(deleteStmt)
+    masterTables.foreach { masterTable1 =>
+        val masterTable2Index = masterTables.indexOf(masterTable1) + 1
+        val masterTable2 = if (masterTable2Index < masterTables.length) masterTables(masterTable2Index) else ""
+
+        // Step 1: Delete from MasterTable2 first (if it exists)
+        if (masterTable2.nonEmpty) {
+            val deleteStmt2 = s"""
+                DELETE FROM $masterTable2 
+                WHERE alert_id IN (
+                    SELECT alert_id FROM $masterTable1 WHERE alert_code IN ($alertCodeList)
+                );
+            """
+            println(s"Executing: $deleteStmt2")
+            stmt_rss.execute(deleteStmt2)
         }
 
-        // Commit both delete operations before CSV validation starts
-        stmt_rss.getConnection.commit()
-        println("Deletion successful and committed.")
-
-    } catch {
-        case e: Exception =>
-            println(s"Error during deletion: ${e.getMessage}")
-            stmt_rss.getConnection.rollback() // Rollback in case of failure
-            throw e
-    } finally {
-        stmt_rss.getConnection.setAutoCommit(true) // Restore default commit behavior
+        // Step 2: Delete from MasterTable1
+        val deleteStmt1 = s"DELETE FROM $masterTable1 WHERE alert_code IN ($alertCodeList);"
+        println(s"Executing: $deleteStmt1")
+        stmt_rss.execute(deleteStmt1)
     }
-}
 
-// Proceed to CSV validation after deletions
-println("Starting data validation between Master Table 2 and exported Master File 2 CSV...")
+    // Commit transaction after processing all tables
+    stmt_rss.getConnection.commit()
+    println(s"Deletion committed for alertCodes: $alertCodeList")
+
+} catch {
+    case e: Exception =>
+        println(s"Error during deletion: ${e.getMessage}")
+        stmt_rss.getConnection.rollback()
+} finally {
+    stmt_rss.getConnection.setAutoCommit(true) // Restore default behavior
+}
