@@ -2,6 +2,50 @@ import java.time.LocalTime
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.SparkSession
 
+if (missedAlerts.nonEmpty) {
+  missedAlerts.foreach { alertCode =>
+    businessContactMap.get(alertCode) match {
+      case Some((business, emailAddress, frequency)) if frequencyFilter.contains(frequency) =>
+        
+        // Assign cutoff time dynamically based on frequency
+        val dynamicCutoffTime = frequency match {
+          case "d" => "13:00 AEST"  // 1:00 PM AEST for daily alerts
+          case "w" | "m" => "16:00 AEST"  // 4:00 PM AEST for weekly or monthly alerts
+          case _ => "Unknown Cutoff"
+        }
+
+        val subject = s"🚨 Missed Alert Notification: $alertCode (Frequency: $frequency)"
+        val emailBody =
+          s"""
+             |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive by the 
+             |<b style="color:green;">$dynamicCutoffTime</b>.</p>
+             |<p>Could you please check and confirm if it is expected?</p>
+             |""".stripMargin
+
+        println(s"Sending missed alert email to $emailAddress for alertCode: $alertCode (Cutoff: $dynamicCutoffTime)")
+        sendEmail(emailAddress, subject, emailBody, "")
+
+        // Insert missed alert record into DB
+        val insertMissedQuery = 
+          """INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info (Job_Id, alert_code) VALUES (?, ?)"""
+
+        try {
+          val insertMissedStatement = pconn.prepareStatement(insertMissedQuery)
+          insertMissedStatement.setString(1, missedJob_id) // Ensure missedJob_id is correctly initialized
+          insertMissedStatement.setString(2, alertCode)
+          insertMissedStatement.executeUpdate()
+          insertMissedStatement.close()
+
+          println(s"Inserted missed alert record for alertCode: $alertCode into Ramp_Control_BAU_Jobs_Info.")
+
+        } catch {
+          case e: Exception =>
+            println(s"Error inserting missed alert record for alertCode: $alertCode: ${e.getMessage}")
+        }
+    }
+  }
+}
+
 
 spark-submit \
   --master yarn \
