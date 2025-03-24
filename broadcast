@@ -1,109 +1,14 @@
-import java.time.LocalTime
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.SparkSession
+val minSize = math.min(MasterTable2DF.size, Master2CSVrows.size)
 
-if (missedAlerts.nonEmpty) {
-  missedAlerts.foreach { alertCode =>
-    businessContactMap.get(alertCode) match {
-      case Some((business, emailAddress, frequency)) if frequencyFilter.contains(frequency) =>
-        
-        // Assign cutoff time dynamically based on frequency
-        val dynamicCutoffTime = frequency match {
-          case "d" => "13:00 AEST"  // 1:00 PM AEST for daily alerts
-          case "w" | "m" => "16:00 AEST"  // 4:00 PM AEST for weekly or monthly alerts
-          case _ => "Unknown Cutoff"
-        }
+for (i <- 0 until minSize) {  
+    if (MasterTable2DF(i) != Master2CSVrows(i)) {  
+        println(s"Mismatch found at row $i: Table: ${MasterTable2DF(i)} != CSV: ${Master2CSVrows(i)}")  
+        dataConsistent2 = false  
+    }  
+}  
 
-        val subject = s"🚨 Missed Alert Notification: $alertCode (Frequency: $frequency)"
-        val emailBody =
-          s"""
-             |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive by the 
-             |<b style="color:green;">$dynamicCutoffTime</b>.</p>
-             |<p>Could you please check and confirm if it is expected?</p>
-             |""".stripMargin
-
-        println(s"Sending missed alert email to $emailAddress for alertCode: $alertCode (Cutoff: $dynamicCutoffTime)")
-        sendEmail(emailAddress, subject, emailBody, "")
-
-        // Insert missed alert record into DB
-        val insertMissedQuery = 
-          """INSERT INTO U_D_DSV_001_RIS_1.Ramp_Control_BAU_Jobs_Info (Job_Id, alert_code) VALUES (?, ?)"""
-
-        try {
-          val insertMissedStatement = pconn.prepareStatement(insertMissedQuery)
-          insertMissedStatement.setString(1, missedJob_id) // Ensure missedJob_id is correctly initialized
-          insertMissedStatement.setString(2, alertCode)
-          insertMissedStatement.executeUpdate()
-          insertMissedStatement.close()
-
-          println(s"Inserted missed alert record for alertCode: $alertCode into Ramp_Control_BAU_Jobs_Info.")
-
-        } catch {
-          case e: Exception =>
-            println(s"Error inserting missed alert record for alertCode: $alertCode: ${e.getMessage}")
-        }
-    }
-  }
-}
-
-
-spark-submit \
-  --master yarn \
-  --deploy-mode cluster \
-  --executor-memory 12g \
-  --driver-memory 16g \
-  --conf spark.driver.maxResultSize=8g \
-  --conf spark.sql.shuffle.partitions=400 \
-  --conf spark.sql.files.maxPartitionBytes=256MB \
-  --conf spark.default.parallelism=400 \
-  your_spark_script.py  # or .scala
-
-
-
-
-// Initialize Spark Session
-val spark = SparkSession.builder().appName("MissedAlertsProcessing").getOrCreate()
-import spark.implicits._
-
-// 🔹 Sample missed alerts DataFrame (Replace this with actual missedAlertsDF)
-val missedAlertsDF = Seq(
-  ("A1", "D"),  // Daily Alert
-  ("A2", "W"),  // Weekly Alert
-  ("A3", "M"),  // Monthly Alert
-  ("A4", "D"),  // Another Daily Alert
-  ("A5", "W")   // Another Weekly Alert
-).toDF("alert_code", "frequency") 
-
-// ✅ Filter Daily Alerts (D)
-val dailyAlertsDF = missedAlertsDF.filter(col("frequency") === "D")
-
-// ✅ Filter Weekly (W) and Monthly (M) Alerts
-val weeklyMonthlyAlertsDF = missedAlertsDF.filter(col("frequency").isin("W", "M"))
-
-// ✅ Function to send emails
-def sendMissedAlertEmails(alertsDF: org.apache.spark.sql.DataFrame, alertType: String): Unit = {
-  alertsDF.collect().foreach { row =>
-    val alertCode = row.getString(0)
-    val frequency = row.getString(1)
-    
-    val subject = s"🚨 Missed Alert Notification: $alertCode ($frequency)"
-    val emailBody = s"""
-      |The alert <b style="color:red;">$alertCode</b> (Frequency: $frequency) was expected but did not arrive.
-      |<p>Could you please check and confirm?</p>
-      """.stripMargin
-
-    // Replace with actual email-sending function
-    println(s"📧 Sending missed alert email for [$alertCode] with frequency [$frequency]")
-    // sendEmail(emailAddress, subject, emailBody, "")
-  }
-}
-
-// ✅ Get current hour dynamically
-val currentHour = LocalTime.now().getHour
-
-// ✅ Send emails based on time conditions
-if (currentHour == 13) {  // 1 PM: Send Daily Alerts
-  sendMissedAlertEmails(dailyAlertsDF, "Daily")
-} else if (currentHour == 16) { // 4 PM: Send Weekly/Monthly Alerts
-  sendMissedAlertEmails(weeklyMonthlyAlertsDF, "Weekly/Monthly")
+// Handle extra rows if sizes are different
+if (MasterTable2DF.size != Master2CSVrows.size) {
+    println(s"Warning: Size mismatch - MasterTable2DF has ${MasterTable2DF.size} rows, but Master2CSVrows has ${Master2CSVrows.size} rows.")
+    dataConsistent2 = false
 }
