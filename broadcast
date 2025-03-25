@@ -1,3 +1,44 @@
+val businessContactsMap: Map[String, (String, Array[String], String)] = df2
+  .select("alert_code", "business", "email_address", "frequency")
+  .collect()
+  .map(row => {
+    val alertCode = row.getString(0) // alert_code
+    val business = row.getString(1) // business
+    val emailAddress = row.getString(2).split(",").map(_.trim).filter(_.nonEmpty) // Convert to Array[String]
+    val frequency = row.getString(3) // frequency
+
+    alertCode -> (business, emailAddress, frequency)
+  }).toMap
+
+// Send individual missed alert to respective business by cutoff time
+if (missedAlerts.nonEmpty) {
+  missedAlerts.foreach { alertCode =>
+    businessContactsMap.get(alertCode).foreach { case (business, emailArray, frequency) =>
+      if (frequencyFilter.contains(frequency)) {
+        val emailAddress = emailArray.mkString(",") // Convert Array[String] to a single string
+
+        // Assign cutoff time dynamically based on frequency
+        val dynamicCutoffTime = frequency match {
+          case "D" => "13:00 AEST" // 1:00 PM AEST for daily alerts
+          case "W" => "16:00 AEST" // 4:00 PM AEST for weekly alerts
+          case "M" => "16:00 AEST" // 4:00 PM AEST for monthly alerts
+          case _   => "Unknown Cutoff"
+        }
+
+        // Construct subject
+        val subject = s"⚠️ Missed Alert Notification: $alertCode with Expected Frequency: $frequency"
+
+        // Your email processing logic here
+        println(s"Sending email to $emailAddress for missed alert: $alertCode at cutoff: $dynamicCutoffTime")
+      }
+    }
+  }
+}
+
+
+
+
+
 var firstAlertWritten1 = false
 MasterTable2DF.foreach { row =>
     val cleanRow = row.toString.trim.replaceAll("^\"|\"$", "") // Remove extra quotes
