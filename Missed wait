@@ -2,14 +2,15 @@
 val businessContactsMap: Map[String, (String, Array[String], String)] = df2
   .select("alert_code", "business", "email_address", "frequency")
   .collect()
-  .map(row => (
-    row.getString(0), // alert_code
-    row.getString(1), // business
-    row.getString(2).split(",").map(_.trim), // email_address as Array
-    row.getString(3)  // frequency
-  )).map { case (alertCode, business, emailAddresses, frequency) =>
+  .map(row => {
+    val alertCode = row.getString(0) // alert_code
+    val business = row.getString(1)  // business
+    val emailAddresses = row.getString(2).split(",").map(_.trim).filter(_.nonEmpty) // Split by comma & trim spaces
+    val frequency = row.getString(3) // frequency
+
     alertCode -> (business, emailAddresses, frequency)
-  }.toMap
+  }).toMap
+
 
 // Send individual missed alerts based on cutoff time dynamically
 if (missedAlerts.nonEmpty) {
