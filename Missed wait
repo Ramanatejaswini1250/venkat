@@ -1,3 +1,50 @@
+// Extract businessContactsMap dynamically from df2 using select
+val businessContactsMap: Map[String, (String, Array[String], String)] = df2
+  .select("alert_code", "business", "email_address", "frequency")
+  .collect()
+  .map(row => (
+    row.getString(0), // alert_code
+    row.getString(1), // business
+    row.getString(2).split(",").map(_.trim), // email_address as Array
+    row.getString(3)  // frequency
+  )).map { case (alertCode, business, emailAddresses, frequency) =>
+    alertCode -> (business, emailAddresses, frequency)
+  }.toMap
+
+// Send individual missed alerts based on cutoff time dynamically
+if (missedAlerts.nonEmpty) {
+  missedAlerts.foreach { alertCode =>
+    businessContactsMap.get(alertCode) match {
+      case Some((business, emailAddresses, frequency)) if frequencyFilter.contains(frequency) =>
+        
+        // Assign cutoff time dynamically
+        val dynamicCutoffTime = frequency match {
+          case "D" => "13:00 AEST"  // Daily
+          case "W" => "16:00 AEST"  // Weekly
+          case "M" => "16:00 AEST"  // Monthly
+          case _   => "Unknown Cutoff"
+        }
+
+        // Construct email subject and body
+        val subject = s"🔴 Missed Alert Notification: $alertCode with Expected Frequency: $frequency"
+        val emailBody = s"""
+          |The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive.
+          |<p>Could you please check and confirm if it is expected?</p>
+        """.stripMargin
+
+        // Send email to each recipient in the list
+        emailAddresses.foreach { email =>
+          sendEmail(email, subject, emailBody, "")
+        }
+
+      case None =>
+        println(s"Warning: Alert Code $alertCode not found in businessContactsMap")
+    }
+  }
+}
+
+
+
 val alertFrequency = processedAlertsWithFrequencyDF
   .filter(col("alert_code") === lit(alertCode)) // Filter for the specific alert
   .select("frequency") // Get the frequency column
