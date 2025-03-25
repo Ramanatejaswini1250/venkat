@@ -1,160 +1,39 @@
+import java.text.SimpleDateFormat
 import java.util.Calendar
 
-def getSqlFolderPath(frequency: String, bteqLocation: String, runDaysDates: Int): String = {
-  val calendar = Calendar.getInstance()
-  val currentDayNumber = calendar.get(Calendar.DAY_OF_WEEK) match {
-    case Calendar.MONDAY    => 1
-    case Calendar.TUESDAY   => 2
-    case Calendar.WEDNESDAY => 3
-    case Calendar.THURSDAY  => 4
-    case Calendar.FRIDAY    => 5
-    case Calendar.SATURDAY  => 6
-    case Calendar.SUNDAY    => 7
-  }
+def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
+  val dayOfWeek = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime).toUpperCase
 
-  if (currentDayNumber != runDaysDates) {
-    throw new Exception(s"Invalid run attempt: Expected day $runDaysDates but today is $currentDayNumber. Aborting execution.")
-  }
-
-  frequency.toLowerCase match {
-    case "d" => s"$bteqLocation/DAILY"
-    case "w" => runDaysDates match {
-      case 1 => s"$bteqLocation/MON"
-      case 2 => s"$bteqLocation/TUE"
-      case 3 => s"$bteqLocation/WED"
-      case 4 => s"$bteqLocation/THU"
-      case 5 => s"$bteqLocation/FRI"
-      case 6 => s"$bteqLocation/SAT"
-      case 7 => s"$bteqLocation/SUN"
-      case _ => throw new Exception(s"Unknown runDaysDates value: $runDaysDates")
+  val expectedFolder = frequency.toLowerCase match {
+    case "d" => "DAILY"
+    case "w" => dayOfWeek match {
+      case "MONDAY"    => "MON"
+      case "TUESDAY"   => "TUE"
+      case "WEDNESDAY" => "WED"
+      case "THURSDAY"  => "THU"
+      case "FRIDAY"    => "FRI"
+      case "SATURDAY"  => "SAT"
+      case "SUNDAY"    => "SUN"
+      case _           => throw new Exception(s"Invalid day: $dayOfWeek")
     }
-    case "m" => s"$bteqLocation/MONTHLY"
-    case "q" => s"$bteqLocation/QUARTERLY"
+    case "m" => "MONTHLY"
+    case "q" => "QUARTERLY"
     case _   => throw new Exception(s"Unknown frequency: $frequency")
   }
-}
 
+  val folderPath = s"$bteqLocation/$expectedFolder"
 
-
-// Extract businessContactsMap dynamically from df2 using select
-val businessContactsMap: Map[String, (String, Array[String], String)] = df2
-  .select("alert_code", "business", "email_address", "frequency")
-  .collect()
-  .map(row => {
-    val alertCode = row.getString(0) // alert_code
-    val business = row.getString(1)  // business
-    val emailAddresses = row.getString(2).split(",").map(_.trim).filter(_.nonEmpty) // Split by comma & trim spaces
-    val frequency = row.getString(3) // frequency
-
-    alertCode -> (business, emailAddresses, frequency)
-  }).toMap
-
-
-// Send individual missed alerts based on cutoff time dynamically
-if (missedAlerts.nonEmpty) {
-  missedAlerts.foreach { alertCode =>
-    businessContactsMap.get(alertCode) match {
-      case Some((business, emailAddresses, frequency)) if frequencyFilter.contains(frequency) =>
-        
-        // Assign cutoff time dynamically
-        val dynamicCutoffTime = frequency match {
-          case "D" => "13:00 AEST"  // Daily
-          case "W" => "16:00 AEST"  // Weekly
-          case "M" => "16:00 AEST"  // Monthly
-          case _   => "Unknown Cutoff"
-        }
-
-        // Construct email subject and body
-        val subject = s"🔴 Missed Alert Notification: $alertCode with Expected Frequency: $frequency"
-        val emailBody = s"""
-          |The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive.
-          |<p>Could you please check and confirm if it is expected?</p>
-        """.stripMargin
-
-        // Send email to each recipient in the list
-        emailAddresses.foreach { email =>
-          sendEmail(email, subject, emailBody, "")
-        }
-
-      case None =>
-        println(s"Warning: Alert Code $alertCode not found in businessContactsMap")
-    }
+  // STRICT CHECK: If trying to run Monday's files on Tuesday, stop execution
+  if (frequency.toLowerCase == "w" && !folderPath.contains(dayOfWeek.substring(0, 3).toUpperCase)) {
+    throw new Exception(s"ERROR: Cannot run $expectedFolder alerts today ($dayOfWeek). Expected: $expectedFolder folder.")
   }
+
+  folderPath
 }
 
 
 
-val alertFrequency = processedAlertsWithFrequencyDF
-  .filter(col("alert_code") === lit(alertCode)) // Filter for the specific alert
-  .select("frequency") // Get the frequency column
-  .as[String] // Convert to String
-  .headOption.getOrElse("m") // Default to 'm' if not found
 
-
-val dynamicCutoffTime = alertFrequency match {
-  case "d" => "1:05 PM"  // Daily alerts cutoff
-  case "w" => "4:05 PM"  // Weekly alerts cutoff
-  case "m" => "4:05 PM"  // Monthly alerts cutoff
-  case _   => "4:05 PM"  // Default if unknown
-}
-
-val emailBody = s"""
-  |<html>
-  |<body>
-  |<p>Dear Team,</p>
-  |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive by the <b>$dynamicCutoffTime AEST</b> cutoff.</p>
-  |<p>Could you please check and confirm if this is expected?</p>
-  |<br>
-  |<p>Best Regards,</p>
-  |<p>Your Automation System</p>
-  |</body>
-  |</html>
-""".stripMargin
-
-
-
-import java.time.{ZoneId, ZonedDateTime}
-import org.apache.spark.sql.functions._
-
-val now = ZonedDateTime.now(ZoneId.of("Australia/Sydney"))
-val currentHour = now.getHour
-
-// Define expected cutoff times
-val dailyCutoffHour = 13  // 1:00 PM AEST
-val weeklyCutoffHour = 16 // 4:00 PM AEST
-
-// Filter expected alerts with different cutoff times
-val expectedAlerts = df2
-  .filter(col("frequency") === "d" && currentHour >= dailyCutoffHour) // Daily alerts should arrive by 1 PM
-  .select("alert_code")
-  .distinct()
-  .union(
-    df2.filter(col("frequency") === "w" && col("run_days_dates") === todayNumber && currentHour >= weeklyCutoffHour) // Weekly alerts should arrive by 4 PM
-      .select("alert_code")
-      .distinct()
-  )
-  .union(
-    df2.filter(col("frequency") === "m" && col("run_days_dates") === todaydayMonth) // Monthly alerts remain same
-      .select("alert_code")
-      .distinct()
-  )
-  .distinct()
-
-val expectedAlertsDF = expectedAlerts.withColumn("alert_code", col("alert_code").cast(StringType))
-
-expectedAlertsDF.show()
-
-
-
-
-
-// Convert check_datetime from IST to AEST
-val processedAlertsDF = alertsArchieveDF
-  .withColumn("alert_date", to_date(col("date_to_load"))) // Extract date
-  .withColumn("check_datetime", date_format(col("check_datetime"), "HH:mm:ss")) // Extract time
-  .withColumn("check_datetime_aest", from_utc_timestamp(col("check_datetime"), "Australia/Sydney"))
-  .withColumn("check_datetime_aest", date_format(col("check_datetime_aest"), "HH:mm:ss")) // Extract AEST time
-  .filter(col("alert_date") === lit(todayDate)) // Compare with today's date
 
 // Join with df2 to get frequency
 val processedAlertsWithFrequencyDF = processedAlertsDF
