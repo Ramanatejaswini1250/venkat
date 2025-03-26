@@ -10,19 +10,29 @@ if (missedAlerts.nonEmpty) {
 
 businessContactsMap.get(alertCode) match {
   case Some((business, emailArray: AnyRef, frequency: String)) if frequencyFilter.contains(frequency) =>
+    import scala.collection.JavaConverters._
+
+businessContactsMap.get(alertCode) match {
+  case Some((business, emailArray: AnyRef, frequency: String)) if frequencyFilter.contains(frequency) =>
     val emails = emailArray match {
       case arr: Array[String] =>
         arr.mkString(",") // Directly join Scala array
       
-      case list: java.util.List[_] =>
-        list.toArray.collect { case s: String => s }.mkString(",") // Convert Java List to Array[String]
+      case list: java.util.List[_] if !list.isEmpty && list.get(0).isInstanceOf[String] =>
+        list.asScala.collect { case s: String => s }.mkString(",") // Convert Java List to Scala List, then join
       
       case str: String =>
-        str // Use directly if it's already a single String
+        str // If it's already a single String, use it directly
       
       case _ =>
         "" // Fallback for unexpected types
     }
+
+    val emailAddress = Option(emails).getOrElse("")
+    
+    // Proceed with email processing...
+}
+
 
     val emailAddress = Option(emails).getOrElse("")
     
