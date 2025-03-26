@@ -1,19 +1,24 @@
+import scala.jdk.CollectionConverters._ // Ensure Java-Scala conversion support
+
 if (missedAlerts.nonEmpty) {
   missedAlerts.foreach { alertCode =>
     businessContactsMap.get(alertCode) match {
       case Some((business: String, rawEmailArray: AnyRef, frequency: String)) 
         if frequencyFilter.contains(frequency) =>
 
-        // 🔹 Normalize `rawEmailArray` before conversion
-              val emailArray: Array[String] = rawEmailArray match {
-          case arr: Array[_] => arr.collect { case s: String => s } // Ensure Array[String]
-          case list: java.util.List[_] => list.toArray(Array.empty[String]) // Convert Java List to Array[String]
-          case single: String => Array(single) // Wrap single string in an array
-          case _ => Array.empty[String] // Fallback to an empty array
-        }
+        val emailArray: Array[String] = 
+      if (rawEmailArray.isInstanceOf[Array[_]]) 
+        rawEmailArray.asInstanceOf[Array[_]].collect { case s: String => s }
+      else if (rawEmailArray.isInstanceOf[java.util.List[_]]) 
+        rawEmailArray.asInstanceOf[java.util.List[_]].asScala.collect { case s: String => s }.toArray
+      else if (rawEmailArray.isInstanceOf[String]) 
+        Array(rawEmailArray.asInstanceOf[String])
+      else 
+        Array.empty[String] // Default case for unexpected types
 
-        // 🔹 Convert to comma-separated string
-        val emailAddress = emailArray.mkString(",")
+    // 🔹 Convert to comma-separated string
+    val emailAddress = emailArray.mkString(",")
+     
 
         // 🔹 Assign cutoff time dynamically based on frequency
         val dynamicCutoffTime = frequency match {
