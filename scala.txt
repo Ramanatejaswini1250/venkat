@@ -6,12 +6,12 @@ businessContactsMap.get(alertCode) match {
     val emailArray: Array[String] = 
       if (rawEmailArray == null) {
         Array.empty[String] // Handle null values safely
-      } else if (rawEmailArray.isInstanceOf[String]) {
+      } else if (rawEmailArray.getClass == classOf[String]) {
         Array(rawEmailArray.asInstanceOf[String]) // Convert single String to Array[String]
-      } else if (rawEmailArray.isInstanceOf[java.util.List[_]]) {
-        rawEmailArray.asInstanceOf[java.util.List[_]].asScala.collect { case s: String => s }.toArray
-      } else if (rawEmailArray.isInstanceOf[Array[_]]) {
-        rawEmailArray.asInstanceOf[Array[_]].collect { case s: String => s }
+      } else if (rawEmailArray.getClass == classOf[java.util.List[_]]) {
+        rawEmailArray.asInstanceOf[java.util.List[_]].asScala.toArray.map(_.toString)
+      } else if (rawEmailArray.getClass.isArray) {
+        rawEmailArray.asInstanceOf[Array[_]].map(_.toString)
       } else {
         Array.empty[String] // Handle unexpected types
       }
