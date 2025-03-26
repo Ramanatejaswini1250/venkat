@@ -6,21 +6,30 @@ if (missedAlerts.nonEmpty) {
       case Some((business: String, rawEmailArray: AnyRef, frequency: String)) 
         if frequencyFilter.contains(frequency) =>
 
-          val emails = emailArray match {
-      case arr if arr.getClass == classOf[Array[String]] =>
-        arr.asInstanceOf[Array[String]].mkString(",")
+         import scala.collection.JavaConversions._
+
+businessContactsMap.get(alertCode) match {
+  case Some((business, emailArray: AnyRef, frequency: String)) if frequencyFilter.contains(frequency) =>
+    val emails = emailArray match {
+      case arr: Array[String] =>
+        arr.mkString(",") // Directly join Scala array
       
-      case list: java.util.List[_] if list.isEmpty || list.get(0).isInstanceOf[String] =>
-        list.asScala.collect { case s: String => s }.mkString(",")
+      case list: java.util.List[_] =>
+        list.toArray.collect { case s: String => s }.mkString(",") // Convert Java List to Array[String]
       
-      case str: String => 
-        str // If it's already a single email string, use as is
+      case str: String =>
+        str // Use directly if it's already a single String
       
-      case _ => 
+      case _ =>
         "" // Fallback for unexpected types
     }
 
     val emailAddress = Option(emails).getOrElse("")
+    
+    // Continue with email processing...
+}
+
+
      
 
         // 🔹 Assign cutoff time dynamically based on frequency
