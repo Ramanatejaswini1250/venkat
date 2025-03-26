@@ -5,10 +5,11 @@ if (missedAlerts.nonEmpty) {
         if frequencyFilter.contains(frequency) =>
 
         // 🔹 Normalize `rawEmailArray` before conversion
-        val emailArray = rawEmailArray match {
-          case arr: Array[_] => arr.map(_.toString) // Convert any array to Array[String]
-          case list: java.util.List[_] => list.toArray.map(_.toString) // Convert Java List to Array[String]
-          case other => Array(other.toString) // Wrap single element as an array
+              val emailArray: Array[String] = rawEmailArray match {
+          case arr: Array[_] => arr.collect { case s: String => s } // Ensure Array[String]
+          case list: java.util.List[_] => list.toArray(Array.empty[String]) // Convert Java List to Array[String]
+          case single: String => Array(single) // Wrap single string in an array
+          case _ => Array.empty[String] // Fallback to an empty array
         }
 
         // 🔹 Convert to comma-separated string
