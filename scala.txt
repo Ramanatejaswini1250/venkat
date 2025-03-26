@@ -1,29 +1,34 @@
-import scala.jdk.CollectionConverters._  // For Java List conversion
+if (missedAlerts.nonEmpty) {
+  missedAlerts.foreach { alertCode =>
+    businessContactsMap.get(alertCode) match {
+      case Some((business: String, rawEmailArray: AnyRef, frequency: String)) 
+        if frequencyFilter.contains(frequency) =>
 
-val contactInfo = businessContactsMap.get(alertCode)
+        // 🔹 Normalize `rawEmailArray` before conversion
+        val emailArray = rawEmailArray match {
+          case arr: Array[_] => arr.map(_.toString) // Convert any array to Array[String]
+          case list: java.util.List[_] => list.toArray.map(_.toString) // Convert Java List to Array[String]
+          case other => Array(other.toString) // Wrap single element as an array
+        }
 
-// Normalize `emailArray` before pattern matching
-val normalizedInfo = contactInfo match {
-  case Some((business: String, rawEmailArray: Any, frequency: String)) =>
-    val emailArray: Array[String] = rawEmailArray match {
-      case arr: Array[String] => arr
-      case list: java.util.List[_] => list.asScala.toArray.map(_.toString)
-      case _ => Array.empty[String]
+        // 🔹 Convert to comma-separated string
+        val emailAddress = emailArray.mkString(",")
+
+        // 🔹 Assign cutoff time dynamically based on frequency
+        val dynamicCutoffTime = frequency match {
+          case "D" => "13:00 AEST" // 1:00 PM AEST for daily alerts
+          case "W" | "M" => "16:00 AEST" // 4:00 PM AEST for weekly/monthly alerts
+          case _ => "Unknown Cutoff"
+        }
+
+        // Further processing with emailAddress and dynamicCutoffTime
+        println(s"Emails: $emailAddress, Cutoff Time: $dynamicCutoffTime")
+
+      case _ => println(s"No valid contact info found for alertCode: $alertCode")
     }
-    Some((business, emailArray, frequency))
-
-  case _ => None
+  }
 }
 
-// Now, use pattern matching on the **already converted** values
-normalizedInfo match {
-  case Some((business, emailArray, frequency)) if frequencyFilter.contains(frequency) =>
-    val emailAddress = emailArray.mkString(",")
-    println(s"Emails: $emailAddress")
-
-  case _ =>
-    println(s"No valid contact info found for alertCode: $alertCode")
-}
 
 
 
