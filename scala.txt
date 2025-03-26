@@ -1,27 +1,30 @@
-import scala.jdk.CollectionConverters._  // Import for Java List conversion
+import scala.jdk.CollectionConverters._  // For Java List conversion
 
-businessContactsMap.get(alertCode) match {
-  case Some((business: String, emailArray: AnyRef, frequency: String)) 
-       if frequencyFilter.contains(frequency) =>
+val contactInfo = businessContactsMap.get(alertCode)
 
-   val emails = emailArray match {
-           case arr: Array[String] => arr  // Already correct type
-      case list: java.util.List[_] => list.asScala.toArray.map(_.toString) // Convert Java List
-      case arr if arr.getClass.isArray && arr.getClass.getComponentType == classOf[String] =>
-        arr.asInstanceOf[Array[String]]  // Convert raw Java array
-      case _ => Array.empty[String]  // Default to empty array
-
+// Normalize `emailArray` before pattern matching
+val normalizedInfo = contactInfo match {
+  case Some((business: String, rawEmailArray: Any, frequency: String)) =>
+    val emailArray: Array[String] = rawEmailArray match {
+      case arr: Array[String] => arr
+      case list: java.util.List[_] => list.asScala.toArray.map(_.toString)
+      case _ => Array.empty[String]
     }
+    Some((business, emailArray, frequency))
 
-
-    val emailAddress = Option(emails).getOrElse("")  
-
-  case Some(unexpected) =>
-    throw new MatchError(s"Unexpected data format: $unexpected")  // Strict failure
-
-  case None =>
-    throw new NoSuchElementException(s"No contact found for alertCode: $alertCode")
+  case _ => None
 }
+
+// Now, use pattern matching on the **already converted** values
+normalizedInfo match {
+  case Some((business, emailArray, frequency)) if frequencyFilter.contains(frequency) =>
+    val emailAddress = emailArray.mkString(",")
+    println(s"Emails: $emailAddress")
+
+  case _ =>
+    println(s"No valid contact info found for alertCode: $alertCode")
+}
+
 
 
 
