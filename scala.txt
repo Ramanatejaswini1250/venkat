@@ -2,15 +2,15 @@ businessContactsMap.get(alertCode) match {
   case Some((business: String, emailArray: AnyRef, frequency: String)) 
        if frequencyFilter.contains(frequency) =>
 
-    val emails = emailArray match {
-      case arr: Array[String] => arr.mkString(",")  // Already Scala array
+   val emails = emailArray match {
+      case arr: Array[String] => arr.mkString(",") // Already a Scala array
       case list: java.util.List[_] => 
-        list.toArray(new Array[String](list.size())).mkString(",")  // Convert Java List
-      case arr if arr.getClass.isArray => 
-        java.util.Arrays.asList(arr.asInstanceOf[Array[Object]]: _*)
-          .toArray(Array[String]()).mkString(",")  // Convert Java array
-      case _ => ""  // Fallback
+        list.toArray(Array.empty[String]).mkString(",") // Convert Java List to Array[String]
+      case arr if arr.getClass.isArray && arr.getClass.getComponentType == classOf[String] =>
+        arr.asInstanceOf[Array[String]].mkString(",") // Handle raw Java array
+      case _ => ""  // Fallback for unexpected types
     }
+
 
     val emailAddress = Option(emails).getOrElse("")  
 
