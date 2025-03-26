@@ -1,24 +1,42 @@
-import scala.collection.JavaConverters._
+def sendMissedAlertsEmail(frequencyFilter: Set[String]): Unit = {
+  val businessContactsMap: Map[String, (String, Array[String], String)] = df2
+    .select("alert_code", "business", "email_address", "frequency")
+    .collect()
+    .map(row => {
+      val alertCode = row.getString(0) // alert_code
+      val business = row.getString(1) // business
+      val emailArray = Option(row.getString(2)) // Handle null case
+        .map(_.split(",").map(_.trim).filter(_.nonEmpty))
+        .getOrElse(Array.empty[String]) // Default empty array if null
+      val frequency = row.getString(3) // frequency
+      (alertCode, (business, emailArray, frequency))
+    })
+    .toMap
 
-businessContactsMap.get(alertCode) match {
-  case Some((business, rawEmailArray, frequency: String)) if frequencyFilter.contains(frequency) =>
-    
-    val emailArray: Array[String] = 
-      if (rawEmailArray == null) {
-        Array.empty[String] // Handle null values safely
-      } else if (rawEmailArray.getClass == classOf[String]) {
-        Array(rawEmailArray.asInstanceOf[String]) // Convert single String to Array[String]
-      } else if (rawEmailArray.getClass == classOf[java.util.List[_]]) {
-        rawEmailArray.asInstanceOf[java.util.List[_]].asScala.toArray.map(_.toString)
-      } else if (rawEmailArray.getClass.isArray) {
-        rawEmailArray.asInstanceOf[Array[_]].map(_.toString)
-      } else {
-        Array.empty[String] // Handle unexpected types
+  // Send individual missed alert to respective Business by cutoff time
+  if (missedAlerts.nonEmpty) {
+    missedAlerts.foreach { alertCode =>
+      businessContactsMap.get(alertCode) match {
+        case Some((business, emailArray, frequency)) if emailArray.nonEmpty =>
+          val emailAddress = emailArray.mkString(", ") // Convert Array[String] to a single String
+          
+          // Assign cutoff time dynamically based on frequency
+          val dynamicCutoffTime = frequency match {
+            case "D" => "13:00 AEST" // 1:00 PM AEST for daily alerts
+            case "W" => "16:00 AEST" // 4:00 PM AEST for weekly alerts
+            case _   => "16:00 AEST" // Default cutoff time
+          }
+          
+          println(s"Sending missed alert email to: $emailAddress for business: $business with cutoff time: $dynamicCutoffTime")
+          
+          // Call email sending logic here
+
+        case Some((business, emailArray, frequency)) =>
+          println(s"No valid email found for alertCode: $alertCode and business: $business")
+
+        case None =>
+          println(s"No contact info found for alertCode: $alertCode")
       }
-
-    val emailAddress = emailArray.mkString(",")
-
-    // Debugging output
-    println(s"DEBUG: rawEmailArray = $rawEmailArray, Type: ${Option(rawEmailArray).map(_.getClass).getOrElse("null")}")
-    println(s"DEBUG: Final emailAddress = $emailAddress")
+    }
+  }
 }
