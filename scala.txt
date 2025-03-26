@@ -1,45 +1,62 @@
-CAST(LPAD(TO_CHAR(HEM_RELIANCE_VALUE, '9999999.99'), 10, ' ') AS VARCHAR(128))
+import org.apache.hadoop.fs._
+import org.apache.hadoop.conf.Configuration
 
+val conf = new Configuration()
+val fs = FileSystem.get(conf)
+val filePath = new Path("/tmp/ramp/Master_Table2.csv")
 
-def sendMissedAlertsEmail(frequencyFilter: Set[String]): Unit = {
-  val businessContactsMap: Map[String, (String, Array[String], String)] = df2
-    .select("alert_code", "business", "email_address", "frequency")
-    .collect()
-    .map(row => {
-      val alertCode = row.getString(0) // alert_code
-      val business = row.getString(1) // business
-      val emailArray = Option(row.getString(2)) // Handle null case
-        .map(_.split(",").map(_.trim).filter(_.nonEmpty))
-        .getOrElse(Array.empty[String]) // Default empty array if null
-      val frequency = row.getString(3) // frequency
-      (alertCode, (business, emailArray, frequency))
-    })
-    .toMap
+// Retry logic for lease recovery
+var retryCount = 0
+val maxRetries = 3
+var success = false
 
-  // Send individual missed alert to respective Business by cutoff time
-  if (missedAlerts.nonEmpty) {
-    missedAlerts.foreach { alertCode =>
-      businessContactsMap.get(alertCode) match {
-        case Some((business, emailArray, frequency)) if emailArray.nonEmpty =>
-          val emailAddress = emailArray.mkString(", ") // Convert Array[String] to a single String
-          
-          // Assign cutoff time dynamically based on frequency
-          val dynamicCutoffTime = frequency match {
-            case "D" => "13:00 AEST" // 1:00 PM AEST for daily alerts
-            case "W" => "16:00 AEST" // 4:00 PM AEST for weekly alerts
-            case _   => "16:00 AEST" // Default cutoff time
-          }
-          
-          println(s"Sending missed alert email to: $emailAddress for business: $business with cutoff time: $dynamicCutoffTime")
-          
-          // Call email sending logic here
+while (!success && retryCount < maxRetries) {
+    try {
+        // Ensure the file exists before writing
+        if (!fs.exists(filePath)) {
+            println(s"INFO: File $filePath does not exist. Creating new file...")
+            fs.create(filePath).close()
+        }
 
-        case Some((business, emailArray, frequency)) =>
-          println(s"No valid email found for alertCode: $alertCode and business: $business")
+        // Open file for appending
+        val out = fs.append(filePath)
+        val writer = new java.io.OutputStreamWriter(out, "UTF-8")
 
-        case None =>
-          println(s"No contact info found for alertCode: $alertCode")
-      }
+        writer.write("Some data to append...\n")
+        writer.flush()
+        writer.close()
+        out.close()
+
+        println("SUCCESS: Data appended successfully!")
+        success = true
+    } catch {
+        case e: Exception =>
+            println(s"ERROR: Append failed on attempt ${retryCount + 1}: ${e.getMessage}")
+            
+            if (e.getMessage.contains("lease holder")) {
+                println("INFO: Lease is held by another process. Attempting to recover...")
+                
+                // Run HDFS lease recovery
+                val recoverCommand = s"hdfs debug recoverLease $filePath"
+                val process = Runtime.getRuntime.exec(recoverCommand)
+                process.waitFor()
+
+                println("INFO: Lease recovery attempted. Retrying append...")
+            }
+            
+            retryCount += 1
+            Thread.sleep(3000) // Wait before retrying
     }
-  }
+}
+
+if (!success) {
+    println(s"FAILURE: Could not append to file $filePath after $maxRetries attempts.")
+}
+
+// ---- Proper Cleanup of Resources ----
+try {
+    if (fs != null) fs.close()
+    println("INFO: Closed HDFS file system connection successfully.")
+} catch {
+    case e: Exception => println(s"WARNING: Issue while closing HDFS connection: ${e.getMessage}")
 }
