@@ -1,20 +1,24 @@
 import scala.collection.JavaConverters._
 
-// Get the value from businessContactsMap
 businessContactsMap.get(alertCode) match {
-  case Some((business, rawEmailArray: Any, frequency: String)) if frequencyFilter.contains(frequency) =>
+  case Some((business, rawEmailArray, frequency: String)) if frequencyFilter.contains(frequency) =>
+    
+    val emailArray: Array[String] = 
+      if (rawEmailArray == null) {
+        Array.empty[String] // Handle null values safely
+      } else if (rawEmailArray.isInstanceOf[String]) {
+        Array(rawEmailArray.asInstanceOf[String]) // Convert single String to Array[String]
+      } else if (rawEmailArray.isInstanceOf[java.util.List[_]]) {
+        rawEmailArray.asInstanceOf[java.util.List[_]].asScala.collect { case s: String => s }.toArray
+      } else if (rawEmailArray.isInstanceOf[Array[_]]) {
+        rawEmailArray.asInstanceOf[Array[_]].collect { case s: String => s }
+      } else {
+        Array.empty[String] // Handle unexpected types
+      }
 
-  val emailArray: Array[String] = rawEmailArray match {
-      case str: String => Array(str) // Convert single String to Array[String]
-      case list: java.util.List[_] => list.asScala.collect { case s: String => s }.toArray // Convert Java List to Array[String]
-      case arr: Array[_] => arr.collect { case s: String => s } // Convert any array to Array[String]
-      case _ => Array.empty[String] // Handle unexpected types
-    }
-
-
-    // Convert Array to comma-separated string
     val emailAddress = emailArray.mkString(",")
 
-    // Debugging: Print final emailAddress
+    // Debugging output
+    println(s"DEBUG: rawEmailArray = $rawEmailArray, Type: ${Option(rawEmailArray).map(_.getClass).getOrElse("null")}")
     println(s"DEBUG: Final emailAddress = $emailAddress")
 }
