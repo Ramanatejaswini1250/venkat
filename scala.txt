@@ -1,4 +1,4 @@
-import scala.jdk.CollectionConverters._ // Ensure Java-Scala conversion support
+import scala.collection.JavaConverters._
 
 if (missedAlerts.nonEmpty) {
   missedAlerts.foreach { alertCode =>
