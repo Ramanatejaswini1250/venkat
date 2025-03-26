@@ -1,10 +1,26 @@
 businessContactsMap.get(alertCode) match {
-  case Some((business, emailArray: Any, frequency)) if frequencyFilter.contains(frequency) =>
+  case Some((business: String, emailArray: AnyRef, frequency: String)) 
+       if frequencyFilter.contains(frequency) =>
+    
+    // Convert Java array to Scala Array[String]
     val emails = emailArray match {
-      case arr: Array[String] => arr.mkString(",")
-      case _ => ""  // Fallback if type doesn't match
+      case arr: Array[String] => arr.mkString(",")  // Already Scala array
+      case arr: java.util.List[String] => arr.toArray.mkString(",")  // Java List case
+      case arr if arr.getClass.isArray => 
+        java.util.Arrays.asList(arr.asInstanceOf[Array[Object]]: _*)
+          .toArray(Array[String]()).mkString(",") // Convert Java array to Scala
+      case _ => ""  // Fallback
     }
-    val emailAddress = Option(emails).getOrElse("")
+
+    val emailAddress = Option(emails).getOrElse("")  
+
+  case Some(unexpected) =>
+    throw new MatchError(s"Unexpected data format: $unexpected")  // Strict failure
+
+  case None =>
+    throw new NoSuchElementException(s"No contact found for alertCode: $alertCode")
+}
+
 
 
 
