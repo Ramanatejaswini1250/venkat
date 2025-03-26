@@ -1,3 +1,14 @@
+businessContactsMap.get(alertCode) match {
+  case Some((business, emailArray: Any, frequency)) if frequencyFilter.contains(frequency) =>
+    val emails = emailArray match {
+      case arr: Array[String] => arr.mkString(",")
+      case _ => ""  // Fallback if type doesn't match
+    }
+    val emailAddress = Option(emails).getOrElse("")
+
+
+
+
 import java.util.{Calendar, TimeZone}
 import scala.concurrent.duration._
 import scala.util.Try
