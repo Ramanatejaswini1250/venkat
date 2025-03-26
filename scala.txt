@@ -12,21 +12,17 @@ businessContactsMap.get(alertCode) match {
   case Some((business, emailArray: AnyRef, frequency: String)) if frequencyFilter.contains(frequency) =>
     import scala.collection.JavaConverters._
 
-businessContactsMap.get(alertCode) match {
-  case Some((business, emailArray: AnyRef, frequency: String)) if frequencyFilter.contains(frequency) =>
-    val emails = emailArray match {
-      case arr: Array[String] =>
-        arr.mkString(",") // Directly join Scala array
-      
+ case arr: Array[String] => 
+        arr // Already an Array[String], use directly
+
       case list: java.util.List[_] if !list.isEmpty && list.get(0).isInstanceOf[String] =>
-        list.asScala.collect { case s: String => s }.mkString(",") // Convert Java List to Scala List, then join
-      
-      case str: String =>
-        str // If it's already a single String, use it directly
-      
+        list.asScala.collect { case s: String => s }.toArray // Convert Java List to Scala Array
+        
+      case str: String => 
+        Array(str) // Convert single String to Array
+        
       case _ =>
-        "" // Fallback for unexpected types
-    }
+        Array.empty[String] // Default case for unexpected types
 
     val emailAddress = Option(emails).getOrElse("")
     
