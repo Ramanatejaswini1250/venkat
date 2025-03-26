@@ -1,3 +1,6 @@
+CAST(LPAD(TO_CHAR(HEM_RELIANCE_VALUE, '9999999.99'), 10, ' ') AS VARCHAR(128))
+
+
 def sendMissedAlertsEmail(frequencyFilter: Set[String]): Unit = {
   val businessContactsMap: Map[String, (String, Array[String], String)] = df2
     .select("alert_code", "business", "email_address", "frequency")
