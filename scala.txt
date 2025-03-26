@@ -8,14 +8,10 @@ if (missedAlerts.nonEmpty) {
 
        // 🔹 Normalize rawEmailArray into Array[String]
     val emailArray: Array[String] = 
-      if (rawEmailArray.isInstanceOf[Array[_]]) 
-        rawEmailArray.asInstanceOf[Array[_]].collect { case s: String => s }
-      else if (rawEmailArray.isInstanceOf[java.util.List[_]]) 
-        rawEmailArray.asInstanceOf[java.util.List[_]].asScala.collect { case s: String => s }.toArray
-      else if (rawEmailArray.isInstanceOf[String]) 
-        Array(rawEmailArray.asInstanceOf[String])
-      else 
-        Array.empty[String] // Default case for unexpected types
+      case arr: Array[String] => arr  // Already correct type
+      case list: java.util.List[_] => list.asScala.collect { case s: String => s }.toArray
+      case str if str.getClass == classOf[String] => Array(str.asInstanceOf[String]) // Handle single string
+      case _ => Array.empty[String] // Default case for unexpected types
 
 
     // 🔹 Convert to comma-separated string
