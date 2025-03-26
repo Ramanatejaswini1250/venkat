@@ -1,18 +1,30 @@
-val rawEmailArray = businessContactsMap.get(alertCode).map(_._2).getOrElse("")
-println(s"DEBUG: Before match - rawEmailArray = $rawEmailArray, Type: ${rawEmailArray.getClass}")
+import scala.collection.JavaConverters._
 
-val emailArray: Array[String] = rawEmailArray match {
-  case arr: Array[_] =>
-    arr.collect { case s: String => s }
+// Get the value from businessContactsMap
+businessContactsMap.get(alertCode) match {
+  case Some((business, rawEmailArray: Any, frequency: String)) if frequencyFilter.contains(frequency) =>
 
-  case list if list.isInstanceOf[java.util.List[_]] =>
-    list.asInstanceOf[java.util.List[_]].asScala.collect { case s: String => s }.toArray
+    // Debugging: Print type of rawEmailArray
+    println(s"DEBUG: rawEmailArray = $rawEmailArray, Type: ${Option(rawEmailArray).map(_.getClass).getOrElse("null")}")
 
-  case str if str.isInstanceOf[String] =>
-    Array(str.asInstanceOf[String]) // ✅ Force cast to avoid type mismatch
+    // Normalize rawEmailArray before pattern matching
+    val normalizedEmailArray: Any = rawEmailArray match {
+      case null => Array.empty[String] // Handle null case
+      case str: String => Array(str) // Convert single String to Array[String]
+      case arr: Array[_] => arr // Keep arrays as-is
+      case list: java.util.List[_] => list.asScala.toArray // Convert Java List to Scala Array
+      case _ => Array.empty[String] // Default case
+    }
 
-  case _ =>
-    Array.empty[String]
+    // Final conversion to Array[String]
+    val emailArray: Array[String] = normalizedEmailArray match {
+      case arr: Array[_] => arr.collect { case s: String => s } // Collect only Strings
+      case _ => Array.empty[String]
+    }
+
+    // Convert Array to comma-separated string
+    val emailAddress = emailArray.mkString(",")
+
+    // Debugging: Print final emailAddress
+    println(s"DEBUG: Final emailAddress = $emailAddress")
 }
-
-val emailAddress = emailArray.mkString(",") // Convert to comma-separated String
