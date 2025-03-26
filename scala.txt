@@ -1,13 +1,22 @@
-val emailArray: Array[String] = rawEmailArray match {
-      case arr: Array[String] => 
-        arr // Already an Array[String], use directly
+import scala.collection.JavaConverters._
 
-      case list: java.util.List[_] if !list.isEmpty && list.get(0).isInstanceOf[String] =>
-        list.asScala.collect { case s: String => s }.toArray // Convert Java List to Scala Array
-        
-      case str: String => 
+businessContactsMap.get(alertCode) match {
+  case Some((business, rawEmailArray: Any, frequency: String)) if frequencyFilter.contains(frequency) =>
+    
+    val emailArray: Array[String] = rawEmailArray match {
+      case arr: Array[_] =>
+        arr.collect { case s: String => s } // Collect only Strings from Array
+
+      case list if list.isInstanceOf[java.util.List[_]] =>
+        list.asInstanceOf[java.util.List[_]].asScala.collect { case s: String => s }.toArray
+        // Explicit conversion of Java List to Scala List before collecting Strings
+
+      case str: String =>
         Array(str) // Convert single String to Array
-        
+
       case _ =>
-        Array.empty[String] // Default case for unexpected types
+        Array.empty[String] // Handle unexpected cases gracefully
     }
+
+    val emailAddress = emailArray.mkString(",") // Convert to comma-separated String
+}
