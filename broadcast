@@ -1,113 +1,27 @@
-val businessContactsMap: Map[String, (String, Array[String], String)] = df2
-  .select("alert_code", "business", "email_address", "frequency")
-  .collect()
-  .map(row => {
-    val alertCode = row.getString(0) // alert_code
-    val business = row.getString(1) // business
-    val emailAddress = row.getString(2).split(",").map(_.trim).filter(_.nonEmpty) // Convert to Array[String]
-    val frequency = row.getString(3) // frequency
+// Find the minimum size between MasterTable2DF and Master2CSVrows
+val rowsToCompare = math.min(MasterTable2DF.size, Master2CSVrows.size)
 
-    alertCode -> (business, emailAddress, frequency)
-  }).toMap
+var dataConsistent = true  // Track if all rows match
 
-// Send individual missed alert to respective business by cutoff time
-if (missedAlerts.nonEmpty) {
-  missedAlerts.foreach { alertCode =>
-    businessContactsMap.get(alertCode).foreach { case (business, emailArray, frequency) =>
-      if (frequencyFilter.contains(frequency)) {
-        val emailAddress = emailArray.mkString(",") // Convert Array[String] to a single string
-
-        // Assign cutoff time dynamically based on frequency
-        val dynamicCutoffTime = frequency match {
-          case "D" => "13:00 AEST" // 1:00 PM AEST for daily alerts
-          case "W" => "16:00 AEST" // 4:00 PM AEST for weekly alerts
-          case "M" => "16:00 AEST" // 4:00 PM AEST for monthly alerts
-          case _   => "Unknown Cutoff"
-        }
-
-        // Construct subject
-        val subject = s"⚠️ Missed Alert Notification: $alertCode with Expected Frequency: $frequency"
-
-        // Your email processing logic here
-        println(s"Sending email to $emailAddress for missed alert: $alertCode at cutoff: $dynamicCutoffTime")
-      }
-    }
-  }
-}
-
-
-
-
-
-var firstAlertWritten1 = false
-MasterTable2DF.foreach { row =>
-    val cleanRow = row.toString.trim.replaceAll("^\"|\"$", "") // Remove extra quotes
-
-    if (!firstAlertWritten1) {
-        master_writer2.write(cleanRow)
-        master_writer2.newLine()
-        firstAlertWritten1 = true
-    } else {
-        master_writer2.write(cleanRow)
-        master_writer2.newLine()
+for (i <- 0 until rowsToCompare) {
+    if (MasterTable2DF(i) != Master2CSVrows(i)) {
+        println(s"❌ Mismatch found at row $i:")
+        println(s"   MasterTable2DF: ${MasterTable2DF(i)}")
+        println(s"   Master2CSVrows: ${Master2CSVrows(i)}")
+        dataConsistent = false
     }
 }
 
-
-
-// Define masterTable1 and masterTable2 globally within the function
-var masterTable1: String = ""
-var masterTable2: String = ""
-
-try {
-    stmt_rss.getConnection.setAutoCommit(false) // Start transaction
-
-    // Convert alertCodes into SQL list format: 'A001', 'A002'
-    val alertCodeList = alertCodes.map(ac => s"'$ac'").mkString(", ")
-
-    // Assign values to masterTable1 and masterTable2 (global scope)
-    if (masterTables.nonEmpty) {
-        masterTable1 = masterTables.head
-    }
-    if (masterTables.length > 1) {
-        masterTable2 = masterTables(1)
-    }
-
-    // Process master tables in pairs (MasterTable1, MasterTable2)
-    masterTables.sliding(2, 1).foreach {
-        case Seq(mt1, mt2) => // When both tables exist
-            val deleteStmt2 = s"""
-                DELETE FROM $mt2 
-                WHERE alert_id IN (
-                    SELECT alert_id FROM $mt1 WHERE alert_code IN ($alertCodeList)
-                );
-            """
-            println(s"Executing: $deleteStmt2")
-            stmt_rss.execute(deleteStmt2)
-
-            val deleteStmt1 = s"DELETE FROM $mt1 WHERE alert_code IN ($alertCodeList);"
-            println(s"Executing: $deleteStmt1")
-            stmt_rss.execute(deleteStmt1)
-
-        case Seq(mt1) => // If only one table exists
-            val deleteStmt1 = s"DELETE FROM $mt1 WHERE alert_code IN ($alertCodeList);"
-            println(s"Executing: $deleteStmt1")
-            stmt_rss.execute(deleteStmt1)
-    }
-
-    // Commit transaction after processing all tables
-    stmt_rss.getConnection.commit()
-    println(s"Deletion committed for alertCodes: $alertCodeList")
-
-} catch {
-    case e: Exception =>
-        println(s"Error during deletion: ${e.getMessage}")
-        stmt_rss.getConnection.rollback()
-} finally {
-    stmt_rss.getConnection.setAutoCommit(true) // Restore default behavior
+// Check for extra rows in either dataset
+if (MasterTable2DF.size > Master2CSVrows.size) {
+    println(s"⚠️ WARNING: MasterTable2DF has extra ${MasterTable2DF.size - Master2CSVrows.size} rows.")
+} else if (MasterTable2DF.size < Master2CSVrows.size) {
+    println(s"⚠️ WARNING: Master2CSVrows has extra ${Master2CSVrows.size - MasterTable2DF.size} rows.")
 }
 
-// Now, masterTable1 and masterTable2 are available for further use in runSqlScript
-println(s"Master Table 1: $masterTable1, Master Table 2: $masterTable2")
-
-// You can use masterTable1 and masterTable2 elsewhere in runSqlScript
+// Final message on consistency
+if (dataConsistent && MasterTable2DF.size == Master2CSVrows.size) {
+    println("✅ Data is fully consistent between MasterTable2DF and Master2CSVrows.")
+} else {
+    println("❌ Data inconsistency detected! Please check the mismatched rows.")
+}
