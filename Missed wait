@@ -1,70 +1,36 @@
-import org.apache.spark.sql.DataFrame
+def sendMissedAlertsEmail(frequencyFilter: Set[String]): Unit = {
+  // Extract business contacts from df2 safely
+  val businessContactsMap: Map[String, (String, Array[String], String)] = df2
+    .select("alert_code", "business", "email_address", "frequency")
+    .distinct()
+    .collect()
+    .map { row =>
+      val alertCode = row.getString(0)
+      val business = row.getString(1)
 
-def sendMissedAlertsEmail(frequencyFilter: Set[String], df2: DataFrame): Unit = {
-  // Construct businessContactsMap with safe handling of possible null values
-  val businessContactsMap: Map[String, (String, Array[String], String)] =
-    df2.select("alert_code", "business", "email_address", "frequency")
-      .distinct()
-      .collect()
-      .map(row =>
-        (
-          row.getString(0), // alert_code
-          row.getString(1), // business
-          Option(row.getString(2)) // email_address (handling nulls safely)
-            .filter(_ != null)
-            .map(_.split(",").map(_.trim).filter(_.nonEmpty)) // Convert to array
-            .getOrElse(Array.empty[String]), // Default to empty array if null
-          row.getString(3) // frequency
-        )
-      )
-      .toMap
+      val emailAddresses = Option(row.getString(2)) match {
+        case Some(email) => email.split(",").map(_.trim).filter(_.nonEmpty)
+        case None        => Array.empty[String]
+      }
 
-  // Debugging: Print contents of the businessContactsMap
+      val frequency = Option(row.getString(3)).getOrElse("Unknown") // Default if null
+
+      (alertCode, (business, emailAddresses, frequency))
+    }
+    .toMap
+
+  // Debugging: Print businessContactsMap contents
   println("Debug: Business Contacts Map Contents:")
-  businessContactsMap.foreach { case (alertCode, value) =>
-    println(s"AlertCode: $alertCode -> $value")
+  businessContactsMap.foreach { case (alertCode, (business, emails, frequency)) =>
+    println(s"AlertCode: $alertCode, Business: $business, Emails: ${emails.mkString(",")}, Frequency: $frequency")
   }
 
-  // Send individual missed alerts to respective businesses
+  // Process missed alerts
   if (missedAlerts.nonEmpty) {
     missedAlerts.foreach { alertCode =>
       businessContactsMap.get(alertCode) match {
-        case Some((business, emailAddresses, frequency)) if frequencyFilter.contains(frequency) =>
-          val emailAddress = emailAddresses.mkString(", ") // Convert Array to String if needed
+        case Some((business, emailAddresses, frequency)) =>
+          if (frequencyFilter.contains(frequency.trim.toUpperCase)) {
+            val emailList = emailAddresses.mkString(",") // Convert Array to String
 
-          // Assign cutoff time dynamically based on frequency
-          val dynamicCutoffTime = frequency.trim.toUpperCase match {
-            case "D" => "13:00 AEST / 1:00 PM AEST for daily alerts"
-            case "W" => "16:00 AEST / 4:00 PM AEST for weekly alerts"
-            case "M" => "16:00 AEST / 4:00 PM AEST for monthly alerts"
-            case _   => "Unknown Cutoff"
-          }
-
-          val subject = s"⚠️ Missed Alert Notification: $alertCode with Expected Frequency: $frequency"
-          val emailBody =
-            s"""
-            |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive by the cutoff time.</p>
-            |<p>Expected Cutoff Time: <b>$dynamicCutoffTime</b></p>
-            |<p>Could you please check and confirm if it is expected?</p>
-            """.stripMargin
-
-          // Send email
-          sendEmail(emailAddress, subject, emailBody, "")
-          println(s"Sent missed alert email to $emailAddress for alert code: $alertCode")
-
-        case Some(unexpected) =>
-          println(s"Unexpected data format for alertCode $alertCode: $unexpected")
-
-        case None =>
-          println(s"No business contact found for alert code: $alertCode")
-      }
-    }
-  }
-
-  println("Completed sending individual missed alerts.")
-}
-
-// Dummy function to simulate email sending
-def sendEmail(to: String, subject: String, body: String, cc: String): Unit = {
-  println(s"Sending email to: $to | Subject: $subject")
-}
+            // Assign cutoff time dynamically
