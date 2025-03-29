@@ -1,117 +1,70 @@
-import java.text.SimpleDateFormat
-import java.util.Calendar
+import org.apache.spark.sql.DataFrame
 
-def getSqlFolderPath(frequency: String, bteqLocation: String): String = {
-  val dayOfWeek = new SimpleDateFormat("EEEE").format(Calendar.getInstance().getTime).toUpperCase
+def sendMissedAlertsEmail(frequencyFilter: Set[String], df2: DataFrame): Unit = {
+  // Construct businessContactsMap with safe handling of possible null values
+  val businessContactsMap: Map[String, (String, Array[String], String)] =
+    df2.select("alert_code", "business", "email_address", "frequency")
+      .distinct()
+      .collect()
+      .map(row =>
+        (
+          row.getString(0), // alert_code
+          row.getString(1), // business
+          Option(row.getString(2)) // email_address (handling nulls safely)
+            .filter(_ != null)
+            .map(_.split(",").map(_.trim).filter(_.nonEmpty)) // Convert to array
+            .getOrElse(Array.empty[String]), // Default to empty array if null
+          row.getString(3) // frequency
+        )
+      )
+      .toMap
 
-  val expectedFolder = frequency.toLowerCase match {
-    case "d" => "DAILY"
-    case "w" => dayOfWeek match {
-      case "MONDAY"    => "MON"
-      case "TUESDAY"   => "TUE"
-      case "WEDNESDAY" => "WED"
-      case "THURSDAY"  => "THU"
-      case "FRIDAY"    => "FRI"
-      case "SATURDAY"  => "SAT"
-      case "SUNDAY"    => "SUN"
-      case _           => throw new Exception(s"Invalid day: $dayOfWeek")
-    }
-    case "m" => "MONTHLY"
-    case "q" => "QUARTERLY"
-    case _   => throw new Exception(s"Unknown frequency: $frequency")
+  // Debugging: Print contents of the businessContactsMap
+  println("Debug: Business Contacts Map Contents:")
+  businessContactsMap.foreach { case (alertCode, value) =>
+    println(s"AlertCode: $alertCode -> $value")
   }
 
-  val folderPath = s"$bteqLocation/$expectedFolder"
+  // Send individual missed alerts to respective businesses
+  if (missedAlerts.nonEmpty) {
+    missedAlerts.foreach { alertCode =>
+      businessContactsMap.get(alertCode) match {
+        case Some((business, emailAddresses, frequency)) if frequencyFilter.contains(frequency) =>
+          val emailAddress = emailAddresses.mkString(", ") // Convert Array to String if needed
 
-  // STRICT CHECK: If trying to run Monday's files on Tuesday, stop execution
-  if (frequency.toLowerCase == "w" && !folderPath.contains(dayOfWeek.substring(0, 3).toUpperCase)) {
-    throw new Exception(s"ERROR: Cannot run $expectedFolder alerts today ($dayOfWeek). Expected: $expectedFolder folder.")
+          // Assign cutoff time dynamically based on frequency
+          val dynamicCutoffTime = frequency.trim.toUpperCase match {
+            case "D" => "13:00 AEST / 1:00 PM AEST for daily alerts"
+            case "W" => "16:00 AEST / 4:00 PM AEST for weekly alerts"
+            case "M" => "16:00 AEST / 4:00 PM AEST for monthly alerts"
+            case _   => "Unknown Cutoff"
+          }
+
+          val subject = s"⚠️ Missed Alert Notification: $alertCode with Expected Frequency: $frequency"
+          val emailBody =
+            s"""
+            |<p>The alert <b style="color:red;">$alertCode</b> was scheduled for today but did not arrive by the cutoff time.</p>
+            |<p>Expected Cutoff Time: <b>$dynamicCutoffTime</b></p>
+            |<p>Could you please check and confirm if it is expected?</p>
+            """.stripMargin
+
+          // Send email
+          sendEmail(emailAddress, subject, emailBody, "")
+          println(s"Sent missed alert email to $emailAddress for alert code: $alertCode")
+
+        case Some(unexpected) =>
+          println(s"Unexpected data format for alertCode $alertCode: $unexpected")
+
+        case None =>
+          println(s"No business contact found for alert code: $alertCode")
+      }
+    }
   }
 
-  folderPath
+  println("Completed sending individual missed alerts.")
 }
 
-
-
-
-
-// Join with df2 to get frequency
-val processedAlertsWithFrequencyDF = processedAlertsDF
-  .join(df2.select("alert_code", "frequency"), Seq("alert_code"), "left") // Left join to get frequency
-
-// Define cutoff times for different frequencies
-val processedBeforeCutoffDF = processedAlertsWithFrequencyDF
-  .withColumn("cutoff_time",
-    when(col("frequency") === "d", lit("13:05:00")) // Daily cutoff 1:05 PM
-    .when(col("frequency") === "w", lit("16:05:00")) // Weekly cutoff 4:05 PM
-    .otherwise(lit("16:05:00")) // Default (Monthly) cutoff 4:05 PM
-  )
-  .filter(col("check_datetime_aest") < col("cutoff_time")) // Filter alerts processed before cutoff
-
-
-// Extract processed alert codes before cutoff time
-val processedBeforeCutoff = processedBeforeCutoffDF
-  .select("alert_code")
-  .map(_.getString(0))
-  .toSet
-
-val combinedReceivedAlerts = receivedAcc.value.toSet ++ processedBeforeCutoff ++ alertsWithIssues
-
-
-
-
-import java.util.{Calendar, TimeZone}
-
-val aestZone = TimeZone.getTimeZone("Australia/Sydney")
-val calNow = Calendar.getInstance(aestZone)
-val currentHour = calNow.get(Calendar.HOUR_OF_DAY)
-val currentMin = calNow.get(Calendar.MINUTE)
-
-def sendMissedAlertsEmail(): Unit = {
-    println("📩 Sending missed alerts email at 4:05 PM...")
-    // Add logic to send missed alerts email
-}
-
-def sendConsolidatedEmail(): Unit = {
-    println("📊 Sending consolidated email at 8:05 PM...")
-    // Add logic to send consolidated email
-}
-
-def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
-    val targetCal = Calendar.getInstance(aestZone)
-    targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
-    targetCal.set(Calendar.MINUTE, targetMin)
-    targetCal.set(Calendar.SECOND, 0)
-    targetCal.set(Calendar.MILLISECOND, 0)
-
-    val nowMillis = System.currentTimeMillis()
-    val targetMillis = targetCal.getTimeInMillis
-
-    if (nowMillis < targetMillis) {
-        val waitMillis = targetMillis - nowMillis
-        println(s"⏳ Waiting for ${(waitMillis / 1000)} seconds until $targetHour:$targetMin AEST...")
-        Thread.sleep(waitMillis)
-    }
-}
-
-// **✅ Handle 4:05 PM missed alerts**
-if (currentHour == 16 && currentMin >= 5 && currentMin < 10) {
-    sendMissedAlertsEmail() // Process missed alerts immediately
-} else if (currentHour == 16 && currentMin < 5) {
-    waitForTargetTime(16, 5)
-    sendMissedAlertsEmail()
-}
-
-// **✅ Handle 8:05 PM consolidated email**
-else if (currentHour == 20 && currentMin >= 5 && currentMin < 10) {
-    sendConsolidatedEmail() // Send consolidated email immediately
-} else if (currentHour == 20 && currentMin < 5) {
-    waitForTargetTime(20, 5)
-    sendConsolidatedEmail()
-}
-
-// **✅ Run normal processing if not 4:05 PM or 8:05 PM**
-else {
-    println("⚡ Running other tasks as usual...")
-    // Add normal data processing logic here
+// Dummy function to simulate email sending
+def sendEmail(to: String, subject: String, body: String, cc: String): Unit = {
+  println(s"Sending email to: $to | Subject: $subject")
 }
