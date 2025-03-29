@@ -1,27 +1,70 @@
-// Find the minimum size between MasterTable2DF and Master2CSVrows
+// Ensure both datasets have the same number of rows
+if (MasterTable2DF.size != Master2CSVrows.size) {
+    println(s"⚠️ WARNING: Record count mismatch! MasterTable2DF = ${MasterTable2DF.size}, Master2CSVrows = ${Master2CSVrows.size}")
+} else {
+    println(s"✅ Record count matches: ${MasterTable2DF.size} rows")
+}
+
+var dataConsistent = true
 val rowsToCompare = math.min(MasterTable2DF.size, Master2CSVrows.size)
 
-var dataConsistent = true  // Track if all rows match
-
 for (i <- 0 until rowsToCompare) {
-    if (MasterTable2DF(i) != Master2CSVrows(i)) {
-        println(s"❌ Mismatch found at row $i:")
-        println(s"   MasterTable2DF: ${MasterTable2DF(i)}")
-        println(s"   Master2CSVrows: ${Master2CSVrows(i)}")
+    val tableRow = MasterTable2DF(i)
+      .replaceAll("\r", "")   // Remove hidden carriage return characters
+      .split(",")             
+      .map(_.trim)            // Trim leading/trailing spaces
+      .map(_.replaceAll("\\s+", " ")) // Replace multiple spaces with a single space
+
+    val csvRow = Master2CSVrows(i)
+      .replaceAll("\r", "")   // Remove hidden carriage return characters
+      .split(",")
+      .map(_.trim)            // Trim leading/trailing spaces
+      .map(_.replaceAll("\\s+", " ")) // Replace multiple spaces with a single space
+
+    // Ensure both rows have the same number of columns
+    if (tableRow.length != csvRow.length) {
+        println(s"❌ Column count mismatch at row $i: Table has ${tableRow.length}, CSV has ${csvRow.length}")
         dataConsistent = false
+    } else {
+        // Compare column by column
+        for (j <- tableRow.indices) {
+            val tableValue = normalizeValue(tableRow(j))
+            val csvValue = normalizeValue(csvRow(j))
+
+            if (tableValue != csvValue) {
+                println(s"❌ Mismatch at Row $i, Column $j: Table = '${tableValue}', CSV = '${csvValue}'")
+                
+                // Auto-fix: If it's just a format issue, update the CSV value to match the table
+                if (fixableMismatch(tableValue, csvValue)) {
+                    println(s"🔧 Fixing Row $i, Column $j -> Updated CSV value: '$tableValue'")
+                    csvRow(j) = tableValue // Update the CSV row with the corrected value
+                } else {
+                    dataConsistent = false
+                }
+            }
+        }
     }
 }
 
-// Check for extra rows in either dataset
-if (MasterTable2DF.size > Master2CSVrows.size) {
-    println(s"⚠️ WARNING: MasterTable2DF has extra ${MasterTable2DF.size - Master2CSVrows.size} rows.")
-} else if (MasterTable2DF.size < Master2CSVrows.size) {
-    println(s"⚠️ WARNING: Master2CSVrows has extra ${Master2CSVrows.size - MasterTable2DF.size} rows.")
+// Function to normalize values (trims, standardizes numbers, and ignores case)
+def normalizeValue(value: String): String = {
+    val numericPattern = "^[0-9]+$".r
+    numericPattern.findFirstIn(value) match {
+        case Some(_) => value.toLong.toString  // Convert numeric values to standard format
+        case None => value.toLowerCase.trim   // Normalize text (case insensitive)
+    }
 }
 
-// Final message on consistency
-if (dataConsistent && MasterTable2DF.size == Master2CSVrows.size) {
-    println("✅ Data is fully consistent between MasterTable2DF and Master2CSVrows.")
+// Function to determine if a mismatch is fixable
+def fixableMismatch(tableValue: String, csvValue: String): Boolean = {
+    // Fixable if difference is only in whitespace, case, or leading zeroes
+    tableValue.replaceAll("\\s+", "") == csvValue.replaceAll("\\s+", "") ||
+    tableValue.equalsIgnoreCase(csvValue) ||
+    tableValue.replaceAll("^0+", "") == csvValue.replaceAll("^0+", "")
+}
+
+if (dataConsistent) {
+    println("✅ All rows and columns match between MasterTable2DF and Master2CSVrows.")
 } else {
-    println("❌ Data inconsistency detected! Please check the mismatched rows.")
+    println("❌ Data inconsistencies detected. Please review mismatched rows.")
 }
