@@ -4,6 +4,7 @@ import java.util.concurrent.TimeUnit
 // Define AEST Time Zone
 val aestZone = TimeZone.getTimeZone("Australia/Sydney")
 
+// Function to wait until target time
 def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
   val targetCal = Calendar.getInstance(aestZone)
   targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
@@ -36,20 +37,35 @@ def refreshTime(): Unit = {
   currentMin = updatedCal.get(Calendar.MINUTE)
 }
 
-// Check if before or after a minute threshold
+// Helper functions for readability
 def isBefore(minutes: Int) = currentMin < minutes
 def isAfter(minutes: Int) = currentMin >= minutes
 
-// If job completed early (e.g., at 19:01), wait until 19:05 before proceeding
-if (currentHour == 19 && isBefore(5)) {
-  waitForTargetTime(19, 5)
-  refreshTime() // Refresh current time after waiting
+// 🚀 Handle Individual Missed Alerts (4:05 PM AEST)
+if (currentHour == 20) {
+  if (isBefore(10)) {
+    sendMissedAlertsEmail(Set("D")) // Process Daily missed alerts
+  } else if (isAfter(5)) {
+    waitForTargetTime(20, 5)
+    sendMissedAlertsEmail(Set("D"))
+  }
+
+  if (isBefore(10)) {
+    sendMissedAlertsEmail(Set("W", "M")) // Process Weekly & Monthly missed alerts
+  } else if (isAfter(5)) {
+    waitForTargetTime(20, 5)
+    sendMissedAlertsEmail(Set("W", "M"))
+  }
 }
 
-// Now re-check the time and process the emails
-if (currentHour == 19 && isAfter(5)) {
-  sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
-  println("[INFO] Sent Consolidated Email at 19:05 PM")
-} else {
-  println("[INFO] Not a cutoff time for Consolidated or Individual emails.")
+// 🚀 Handle Consolidated Emails (8:05 PM AEST)
+if (currentHour == 21) {
+  if (isBefore(10)) {
+    sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+  } else if (isAfter(5)) {
+    waitForTargetTime(21, 5)
+    sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+  } else {
+    println("[INFO] Not a cutoff time for Consolidated or Individual emails.")
+  }
 }
