@@ -1,24 +1,55 @@
-def processAlerts(currentHour: Int, currentMin: Int): Unit = {
-  val isBefore10Min = currentMin < 10
-  val isAfter5Min = currentMin >= 5
+import java.util.{Calendar, TimeZone}
+import java.util.concurrent.TimeUnit
 
-  if (currentHour == 19 && isBefore10Min) {
-    sendMissedAlertsEmail(Set("D")) // Daily missed alerts
-  } else if (currentHour == 19 && isAfter5Min) {
-    waitForTargetTime(19, 5)
-    sendMissedAlertsEmail(Set("D"))
-  } else if (currentHour == 19 && isBefore10Min) {
-    sendMissedAlertsEmail(Set("W", "M")) // Weekly & Monthly missed alerts
-  } else if (currentHour == 19 && isAfter5Min) {
-    waitForTargetTime(19, 5)
-    sendMissedAlertsEmail(Set("W", "M"))
-  } else if (currentHour == 19 && isBefore10Min) {
-    sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
-  } else if (currentHour == 19 && isAfter5Min) {
-    waitForTargetTime(19, 5)
-    sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
-    println("[INFO] Sent Consolidated Email at 8:05 PM")
-  } else {
-    println("[INFO] Not a cutoff time for Consolidated or Individual emails")
+// Define AEST Time Zone
+val aestZone = TimeZone.getTimeZone("Australia/Sydney")
+
+def waitForTargetTime(targetHour: Int, targetMin: Int): Unit = {
+  val targetCal = Calendar.getInstance(aestZone)
+  targetCal.set(Calendar.HOUR_OF_DAY, targetHour)
+  targetCal.set(Calendar.MINUTE, targetMin)
+  targetCal.set(Calendar.SECOND, 0)
+  targetCal.set(Calendar.MILLISECOND, 0)
+
+  val nowMillis = System.currentTimeMillis()
+  val targetMillis = targetCal.getTimeInMillis()
+
+  if (nowMillis < targetMillis) {
+    val waitMillis = targetMillis - nowMillis
+    println(s"[INFO] Waiting for ${waitMillis / 1000} seconds until $targetHour:$targetMin AEST...")
+    
+    TimeUnit.MILLISECONDS.sleep(waitMillis) // Reliable sleep mechanism
+    
+    println(s"[INFO] Reached target time: $targetHour:$targetMin AEST. Proceeding...")
   }
+}
+
+// Get current time
+val calNow = Calendar.getInstance(aestZone)
+var currentHour = calNow.get(Calendar.HOUR_OF_DAY)
+var currentMin = calNow.get(Calendar.MINUTE)
+
+// Refresh time just before making the decision
+def refreshTime(): Unit = {
+  val updatedCal = Calendar.getInstance(aestZone)
+  currentHour = updatedCal.get(Calendar.HOUR_OF_DAY)
+  currentMin = updatedCal.get(Calendar.MINUTE)
+}
+
+// Check if before or after a minute threshold
+def isBefore(minutes: Int) = currentMin < minutes
+def isAfter(minutes: Int) = currentMin >= minutes
+
+// If job completed early (e.g., at 19:01), wait until 19:05 before proceeding
+if (currentHour == 19 && isBefore(5)) {
+  waitForTargetTime(19, 5)
+  refreshTime() // Refresh current time after waiting
+}
+
+// Now re-check the time and process the emails
+if (currentHour == 19 && isAfter(5)) {
+  sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+  println("[INFO] Sent Consolidated Email at 19:05 PM")
+} else {
+  println("[INFO] Not a cutoff time for Consolidated or Individual emails.")
 }
