@@ -1,36 +1,76 @@
-def sendMissedAlertsEmail(frequencyFilter: Set[String]): Unit = {
-  // Extract business contacts from df2 safely
-  val businessContactsMap: Map[String, (String, Array[String], String)] = df2
-    .select("alert_code", "business", "email_address", "frequency")
-    .distinct()
-    .collect()
-    .map { row =>
-      val alertCode = row.getString(0)
-      val business = row.getString(1)
+import org.apache.spark.sql.SparkSession
 
-      val emailAddresses = Option(row.getString(2)) match {
-        case Some(email) => email.split(",").map(_.trim).filter(_.nonEmpty)
-        case None        => Array.empty[String]
+object RampAutomationExecution {
+  
+  def sendMissedAlertsEmail(frequencyFilter: Set[String])(implicit spark: SparkSession): Unit = {
+    import spark.implicits._
+
+    // Load DataFrame (df2 should be preloaded in your context)
+    val df2 = spark.table("your_table_name") // Change this to your actual source
+
+    // Create a Map for quick lookup without collecting excessive data to the driver
+    val businessContactsMap = df2
+      .selectExpr("alert_code", "business", "email_address", "frequency")
+      .distinct()
+      .rdd
+      .map(row => (row.getString(0), (row.getString(1), row.getString(2), row.getString(3))))
+      .collectAsMap() // Efficient lookup
+
+    // Debugging: Check if map is populated correctly
+    println(s"[DEBUG] businessContactsMap size: ${businessContactsMap.size}")
+
+    // Sample missedAlerts List (Replace with actual data)
+    val missedAlerts = Seq("ALERT1", "ALERT2") // Replace with real missed alerts
+
+    // Validate if there are alerts to process
+    if (missedAlerts.nonEmpty) {
+      println(s"[DEBUG] Processing ${missedAlerts.size} missed alerts")
+
+      missedAlerts.foreach { alertCode =>
+        println(s"[DEBUG] Checking alertCode: $alertCode")
+
+        businessContactsMap.get(alertCode) match {
+          case Some((business, emailAddresses, frequency)) =>
+            val normalizedFrequency = frequency.trim.toUpperCase
+
+            println(s"[DEBUG] Matched alertCode: $alertCode, Business: $business, Frequency: $normalizedFrequency")
+
+            if (frequencyFilter.contains(normalizedFrequency)) {
+              // Process Email List safely
+              val emailList = Option(emailAddresses)
+                .map(_.split(",").map(_.trim).mkString(", "))
+                .getOrElse("No Email")
+
+              // Assign dynamic cutoff time based on frequency
+              val cutoffTimes = Map("D" -> "13:00 AEST", "W" -> "16:00 AEST", "M" -> "16:00 AEST")
+              val dynamicCutoffTime = cutoffTimes.getOrElse(normalizedFrequency, "Unknown Cutoff")
+
+              // Final debug message
+              println(s"[ALERT] Sending email to: $emailList for alertCode: $alertCode, Cutoff: $dynamicCutoffTime")
+            } else {
+              println(s"[DEBUG] Skipping alertCode: $alertCode due to unmatched frequency")
+            }
+
+          case None =>
+            println(s"[WARN] AlertCode $alertCode not found in businessContactsMap")
+        }
       }
-
-      val frequency = Option(row.getString(3)).getOrElse("Unknown") // Default if null
-
-      (alertCode, (business, emailAddresses, frequency))
+    } else {
+      println("[INFO] No missed alerts to process")
     }
-    .toMap
-
-  // Debugging: Print businessContactsMap contents
-  println("Debug: Business Contacts Map Contents:")
-  businessContactsMap.foreach { case (alertCode, (business, emails, frequency)) =>
-    println(s"AlertCode: $alertCode, Business: $business, Emails: ${emails.mkString(",")}, Frequency: $frequency")
   }
 
-  // Process missed alerts
-  if (missedAlerts.nonEmpty) {
-    missedAlerts.foreach { alertCode =>
-      businessContactsMap.get(alertCode) match {
-        case Some((business, emailAddresses, frequency)) =>
-          if (frequencyFilter.contains(frequency.trim.toUpperCase)) {
-            val emailList = emailAddresses.mkString(",") // Convert Array to String
+  def main(args: Array[String]): Unit = {
+    implicit val spark: SparkSession = SparkSession.builder()
+      .appName("RampAutomationExecution")
+      .master("local[*]") // Change master settings as per your cluster
+      .getOrCreate()
 
-            // Assign cutoff time dynamically
+    // Define allowed frequency filters
+    val frequencyFilter = Set("D", "W", "M") // Daily, Weekly, Monthly
+
+    sendMissedAlertsEmail(frequencyFilter)
+
+    spark.stop()
+  }
+}
