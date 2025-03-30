@@ -3,12 +3,18 @@ def processAlerts(currentHour: Int, currentMin: Int): Unit = {
   val isAfter5Min = currentMin >= 5
 
   if (currentHour == 19 && isBefore10Min) {
-    waitForTargetTime(19, 5) // Ensure we wait if running too early
-    sendMissedAlertsEmail(Set("D")) // Process Daily missed alerts
-  } else if (currentHour == 19 && isBefore10Min) {
+    sendMissedAlertsEmail(Set("D")) // Daily missed alerts
+  } else if (currentHour == 19 && isAfter5Min) {
     waitForTargetTime(19, 5)
-    sendMissedAlertsEmail(Set("W", "M")) // Weekly & Monthly alerts
+    sendMissedAlertsEmail(Set("D"))
   } else if (currentHour == 19 && isBefore10Min) {
+    sendMissedAlertsEmail(Set("W", "M")) // Weekly & Monthly missed alerts
+  } else if (currentHour == 19 && isAfter5Min) {
+    waitForTargetTime(19, 5)
+    sendMissedAlertsEmail(Set("W", "M"))
+  } else if (currentHour == 19 && isBefore10Min) {
+    sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
+  } else if (currentHour == 19 && isAfter5Min) {
     waitForTargetTime(19, 5)
     sendConsolidatedEmail(combinedSuccessAlerts, combinedFailedAlerts, missedAlerts)
     println("[INFO] Sent Consolidated Email at 8:05 PM")
