@@ -1,37 +1,14 @@
-val Master2CSvrows = new ListBuffer[String]()
-val inputStream2 = fs.open(new Path(csvFormatPath2))
-val Master2_br = new BufferedReader(new InputStreamReader(inputStream2, "UTF-8"))
+val MasterTable2DF = new ListBuffer[String]()
 
-// Read the first row as header
-val master2_read_header = Master2_br.readLine()
-println(s"master2_read_header: $master2_read_header")
+while (masterTable2_format.next()) {
+    // Safely extract column values, replacing nulls with an empty string
+    val col1 = Option(masterTable2_format.getString(1)).getOrElse("")
+    val col2 = Option(masterTable2_format.getString(2)).getOrElse("")
+    val col3 = Option(masterTable2_format.getString(3)).getOrElse("")
+    val col4 = Option(masterTable2_format.getString(4)).getOrElse("")
 
-val headerColumns = master2_read_header.split(",").map(_.trim).toList
-val alertIdIndex = headerColumns.indexWhere(_.equalsIgnoreCase("ALERT_ID"))
+    val Master2transformedRow = 
+        s"$col1,$col2,${if (col3.contains(".")) "\"" + col3 + "\"" else col3},$col4"
 
-if (alertIdIndex == -1) {
-    throw new Exception("ERROR: 'ALERT_ID' column not found in MasterTable2!")
+    MasterTable2DF += Master2transformedRow
 }
-
-// Read all rows into Master2CSvrows
-var line2 = Master2_br.readLine()
-while (line2 != null) {
-    Master2CSvrows += line2
-    line2 = Master2_br.readLine()
-}
-
-// Now extract expected alert IDs from Master2CSvrows
-val expectedAlertIds = Master2CSvrows.map(_.split(",")(alertIdIndex).trim).toSet
-
-// Process the rows again based on expectedAlertIds
-val filteredRows = Master2CSvrows.filter { line =>
-    val rowValues = line.split(",")
-    if (alertIdIndex < rowValues.length) {
-        val alertIdValue = rowValues(alertIdIndex).trim
-        expectedAlertIds.contains(alertIdValue)
-    } else {
-        false
-    }
-}
-
-// Now filteredRows contains only the rows that match expectedAlertIds
