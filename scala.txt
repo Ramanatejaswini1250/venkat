@@ -1,28 +1,20 @@
-
-val expectedAlertIds = MasterTable2DF.map(_.split(",")(0)).toSet
-
-
-val expectedAlertId = MasterTable2DF.headOption.map(_("alert_id")).getOrElse("")
-
-
-val headerColumns = master2_read_header.split(",")  // Assuming CSV is comma-separated
-val alertIdIndex = headerColumns.indexOf("alert_id") // Find index of 'alert_id'
-
-val expectedAlertId = masterTable2DF.select("alert_id").first().getString(0)
-
+// Find 'ALERT_ID' column index dynamically
+val headerColumns = MasterTable2DF.headOption.map(_.split(","))  // Get header row
+val alertIdIndex = headerColumns.map(_.indexWhere(_.equalsIgnoreCase("ALERT_ID"))).getOrElse(-1)
 
 if (alertIdIndex == -1) {
-    println("ERROR: 'alert_id' column not found in Master2 file!")
-} else {
-    println(s"'alert_id' found at index: $alertIdIndex")
+    throw new Exception("ERROR: 'ALERT_ID' column not found in MasterTable2DF!")
 }
 
-var line2 = Master2_br.readLine()
+// Extract multiple ALERT_IDs from MasterTable2DF
+val expectedAlertIds = MasterTable2DF.tail.map(_.split(",")(alertIdIndex).trim).toSet
+
+// Read and compare data
 while (line2 != null) {
-    val rowValues = line2.split(",") // Split row into columns
+    val rowValues = line2.split(",")
     if (alertIdIndex < rowValues.length) {
-        val alertIdValue = rowValues(alertIdIndex).trim // Get alert_id value
-        if (alertIdValue == expectedAlertId) { // Compare with expected value
+        val alertIdValue = rowValues(alertIdIndex).trim
+        if (expectedAlertIds.contains(alertIdValue)) {
             Master2CSVrows += line2
         }
     }
