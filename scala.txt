@@ -3,6 +3,31 @@ df2.filter(
   col("RUN_DAYS_DATES").rlike(s"(^|,)${todayNumber}($|,)")
 )
 
+import org.apache.spark.sql.functions._
+
+val expectedAlerts = df2
+  .filter(col("FREQUENCY") === "D")
+  .select("alert_code")
+  .distinct()
+  .union(
+    df2.filter(
+      col("FREQUENCY") === "W" &&
+      col("RUN_DAYS_DATES").rlike(concat(lit("(^|,)"), col("todayNumber").cast("string"), lit("($|,)")))
+    )
+    .select("alert_code")
+    .distinct()
+  )
+  .union(
+    df2.filter(col("FREQUENCY") === "M" && col("RUN_DAYS_DATES") === todaydayMonth)
+      .select("alert_code")
+      .distinct()
+  )
+  .distinct()
+
+val expectedAlertsDF = expectedAlerts.withColumn("alert_code", col("alert_code").cast("string"))
+expectedAlertsDF.show()
+
+
 
 
 import org.apache.hadoop.fs._
