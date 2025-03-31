@@ -1,6 +1,9 @@
 val headerColumns = master2_read_header.split(",")  // Assuming CSV is comma-separated
 val alertIdIndex = headerColumns.indexOf("alert_id") // Find index of 'alert_id'
 
+val expectedAlertId = masterTable2DF.select("alert_id").first().getString(0)
+
+
 if (alertIdIndex == -1) {
     println("ERROR: 'alert_id' column not found in Master2 file!")
 } else {
