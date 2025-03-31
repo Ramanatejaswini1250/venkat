@@ -1,94 +1,20 @@
-df2.filter(
-  col("FREQUENCY") === "W" && 
-  col("RUN_DAYS_DATES").rlike(s"(^|,)${todayNumber}($|,)")
-)
+val headerColumns = master2_read_header.split(",")  // Assuming CSV is comma-separated
+val alertIdIndex = headerColumns.indexOf("alert_id") // Find index of 'alert_id'
 
-import org.apache.spark.sql.functions._
+if (alertIdIndex == -1) {
+    println("ERROR: 'alert_id' column not found in Master2 file!")
+} else {
+    println(s"'alert_id' found at index: $alertIdIndex")
+}
 
-val expectedAlerts = df2
-  .filter(col("FREQUENCY") === "D")
-  .select("alert_code")
-  .distinct()
-  .union(
-    df2.filter(
-      col("FREQUENCY") === "W" &&
-      col("RUN_DAYS_DATES").rlike(concat(lit("(^|,)"), col("todayNumber").cast("string"), lit("($|,)")))
-    )
-    .select("alert_code")
-    .distinct()
-  )
-  .union(
-    df2.filter(col("FREQUENCY") === "M" && col("RUN_DAYS_DATES") === todaydayMonth)
-      .select("alert_code")
-      .distinct()
-  )
-  .distinct()
-
-val expectedAlertsDF = expectedAlerts.withColumn("alert_code", col("alert_code").cast("string"))
-expectedAlertsDF.show()
-
-
-
-
-import org.apache.hadoop.fs._
-import org.apache.hadoop.conf.Configuration
-
-val conf = new Configuration()
-val fs = FileSystem.get(conf)
-val filePath = new Path("/tmp/ramp/Master_Table2.csv")
-
-// Retry logic for lease recovery
-var retryCount = 0
-val maxRetries = 3
-var success = false
-
-while (!success && retryCount < maxRetries) {
-    try {
-        // Ensure the file exists before writing
-        if (!fs.exists(filePath)) {
-            println(s"INFO: File $filePath does not exist. Creating new file...")
-            fs.create(filePath).close()
+var line2 = Master2_br.readLine()
+while (line2 != null) {
+    val rowValues = line2.split(",") // Split row into columns
+    if (alertIdIndex < rowValues.length) {
+        val alertIdValue = rowValues(alertIdIndex).trim // Get alert_id value
+        if (alertIdValue == expectedAlertId) { // Compare with expected value
+            Master2CSVrows += line2
         }
-
-        // Open file for appending
-        val out = fs.append(filePath)
-        val writer = new java.io.OutputStreamWriter(out, "UTF-8")
-
-        writer.write("Some data to append...\n")
-        writer.flush()
-        writer.close()
-        out.close()
-
-        println("SUCCESS: Data appended successfully!")
-        success = true
-    } catch {
-        case e: Exception =>
-            println(s"ERROR: Append failed on attempt ${retryCount + 1}: ${e.getMessage}")
-            
-            if (e.getMessage.contains("lease holder")) {
-                println("INFO: Lease is held by another process. Attempting to recover...")
-                
-                // Run HDFS lease recovery
-                val recoverCommand = s"hdfs debug recoverLease $filePath"
-                val process = Runtime.getRuntime.exec(recoverCommand)
-                process.waitFor()
-
-                println("INFO: Lease recovery attempted. Retrying append...")
-            }
-            
-            retryCount += 1
-            Thread.sleep(3000) // Wait before retrying
     }
-}
-
-if (!success) {
-    println(s"FAILURE: Could not append to file $filePath after $maxRetries attempts.")
-}
-
-// ---- Proper Cleanup of Resources ----
-try {
-    if (fs != null) fs.close()
-    println("INFO: Closed HDFS file system connection successfully.")
-} catch {
-    case e: Exception => println(s"WARNING: Issue while closing HDFS connection: ${e.getMessage}")
+    line2 = Master2_br.readLine()
 }
