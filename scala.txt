@@ -1,22 +1,31 @@
-// Find 'ALERT_ID' column index dynamically
-val headerColumns = MasterTable2DF.headOption.map(_.split(","))  // Get header row
-val alertIdIndex = headerColumns.map(_.indexWhere(_.equalsIgnoreCase("ALERT_ID"))).getOrElse(-1)
+val Master2CSvrows = new ListBuffer[String]()
+val inputStream2 = fs.open(new Path(csvFormatPath2))
+val Master2_br = new BufferedReader(new InputStreamReader(inputStream2, "UTF-8"))
+
+// Read the first row as header
+val master2_read_header = Master2_br.readLine()
+println(s"master2_read_header: $master2_read_header")
+
+val headerColumns = master2_read_header.split(",").map(_.trim).toList
+val alertIdIndex = headerColumns.indexWhere(_.equalsIgnoreCase("ALERT_ID"))
 
 if (alertIdIndex == -1) {
-    throw new Exception("ERROR: 'ALERT_ID' column not found in MasterTable2DF!")
+    throw new Exception("ERROR: 'ALERT_ID' column not found in MasterTable2!")
 }
 
-// Extract multiple ALERT_IDs from MasterTable2DF
 val expectedAlertIds = MasterTable2DF.tail.map(_.split(",")(alertIdIndex).trim).toSet
 
-// Read and compare data
+var line2 = Master2_br.readLine()
 while (line2 != null) {
     val rowValues = line2.split(",")
+    
     if (alertIdIndex < rowValues.length) {
-        val alertIdValue = rowValues(alertIdIndex).trim
+        val alertIdValue = Option(rowValues(alertIdIndex)).map(_.trim).getOrElse("")
+        
         if (expectedAlertIds.contains(alertIdValue)) {
-            Master2CSVrows += line2
+            Master2CSvrows += line2
         }
     }
-    line2 = Master2_br.readLine()
+    
+    line2 = Master2_br.readLine() // Move this inside the loop
 }
