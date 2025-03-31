@@ -1,3 +1,7 @@
+
+val expectedAlertIds = MasterTable2DF.map(_.split(",")(0)).toSet
+
+
 val expectedAlertId = MasterTable2DF.headOption.map(_("alert_id")).getOrElse("")
 
 
