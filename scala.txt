@@ -1,3 +1,6 @@
+val expectedAlertId = MasterTable2DF.headOption.map(_("alert_id")).getOrElse("")
+
+
 val headerColumns = master2_read_header.split(",")  // Assuming CSV is comma-separated
 val alertIdIndex = headerColumns.indexOf("alert_id") // Find index of 'alert_id'
 
