@@ -13,19 +13,25 @@ if (alertIdIndex == -1) {
     throw new Exception("ERROR: 'ALERT_ID' column not found in MasterTable2!")
 }
 
-val expectedAlertIds = MasterTable2DF.tail.map(_.split(",")(alertIdIndex).trim).toSet
-
+// Read all rows into Master2CSvrows
 var line2 = Master2_br.readLine()
 while (line2 != null) {
-    val rowValues = line2.split(",")
-    
-    if (alertIdIndex < rowValues.length) {
-        val alertIdValue = Option(rowValues(alertIdIndex)).map(_.trim).getOrElse("")
-        
-        if (expectedAlertIds.contains(alertIdValue)) {
-            Master2CSvrows += line2
-        }
-    }
-    
-    line2 = Master2_br.readLine() // Move this inside the loop
+    Master2CSvrows += line2
+    line2 = Master2_br.readLine()
 }
+
+// Now extract expected alert IDs from Master2CSvrows
+val expectedAlertIds = Master2CSvrows.map(_.split(",")(alertIdIndex).trim).toSet
+
+// Process the rows again based on expectedAlertIds
+val filteredRows = Master2CSvrows.filter { line =>
+    val rowValues = line.split(",")
+    if (alertIdIndex < rowValues.length) {
+        val alertIdValue = rowValues(alertIdIndex).trim
+        expectedAlertIds.contains(alertIdValue)
+    } else {
+        false
+    }
+}
+
+// Now filteredRows contains only the rows that match expectedAlertIds
