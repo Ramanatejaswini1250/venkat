@@ -1,15 +1,41 @@
-println(s"Master2CSVrows: ${Master2CSVrows.mkString("\n")}")
-println(s"expectedAlertIds: ${expectedAlertIds.mkString(", ")}")
+import scala.io.Source
+import scala.collection.mutable.ListBuffer
 
+// Initialize buffer to store CSV rows
+val Master2CSVrows = ListBuffer[String]()
+
+// Read the file (replace with actual file path)
+val filePath = "path/to/your/file.csv"
+val Master2_br = Source.fromFile(filePath)
+
+// Read all lines first
+for (line <- Master2_br.getLines()) {
+  Master2CSVrows += line
+}
+
+// Close the buffer reader
+Master2_br.close()
+
+// Debugging: Print the contents after reading
+println(s"Master2CSVrows:\n${Master2CSVrows.mkString("\n")}")
+
+// Ensure Master2CSVrows has data before extracting expectedAlertIds
 val expectedAlertIds = 
   if (Master2CSVrows.isEmpty || Master2CSVrows.tail.isEmpty) Set.empty[String]
   else Master2CSVrows.tail.map(_.split(",")(alertIdIndex).trim).toSet
 
-var line2 = Master2_br.readLine()
-while (line2 != null) {
-  val values = line2.split(",").map(_.trim)
-  if (values.length > alertIdIndex && expectedAlertIds.contains(values(alertIdIndex))) {
-    Master2CSVrows += line2
-  }
-  line2 = Master2_br.readLine()
+println(s"expectedAlertIds: ${expectedAlertIds.mkString(", ")}")
+
+// Ensure expectedAlertIds is correctly populated
+if (expectedAlertIds.isEmpty) {
+  println("WARNING: expectedAlertIds is empty, check input file")
 }
+
+// Process the CSV again to filter valid rows
+val filteredRows = Master2CSVrows.tail.filter { line =>
+  val values = line.split(",").map(_.trim)
+  values.length > alertIdIndex && expectedAlertIds.contains(values(alertIdIndex))
+}
+
+// Print final filtered rows
+println(s"Filtered Rows:\n${filteredRows.mkString("\n")}")
