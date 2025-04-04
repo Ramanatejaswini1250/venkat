@@ -1,6 +1,10 @@
 println(s"Master2CSVrows: ${Master2CSVrows.mkString("\n")}")
 println(s"expectedAlertIds: ${expectedAlertIds.mkString(", ")}")
 
+val expectedAlertIds = 
+  if (Master2CSVrows.isEmpty || Master2CSVrows.tail.isEmpty) Set.empty[String]
+  else Master2CSVrows.tail.map(_.split(",")(alertIdIndex).trim).toSet
+
 var line2 = Master2_br.readLine()
 while (line2 != null) {
   val values = line2.split(",").map(_.trim)
