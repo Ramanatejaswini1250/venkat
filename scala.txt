@@ -1,14 +1,38 @@
-val MasterTable2DF = new ListBuffer[String]()
+// Ensure ALERT_ID column exists
+val alertIdIndex = headerColumns.indexWhere(_.equalsIgnoreCase("ALERT_ID"))
 
-while (masterTable2_format.next()) {
-    // Safely extract column values, replacing nulls with an empty string
-    val col1 = Option(masterTable2_format.getString(1)).getOrElse("")
-    val col2 = Option(masterTable2_format.getString(2)).getOrElse("")
-    val col3 = Option(masterTable2_format.getString(3)).getOrElse("")
-    val col4 = Option(masterTable2_format.getString(4)).getOrElse("")
+if (alertIdIndex == -1) {
+    throw new Exception("ERROR: 'ALERT_ID' column not found in MasterTable2!")
+}
 
-    val Master2transformedRow = 
-        s"$col1,$col2,${if (col3.contains(".")) "\"" + col3 + "\"" else col3},$col4"
+// Read and filter rows based on ALERT_ID
+var line2 = Master2_br.readLine()
+while (line2 != null) {
+    val columns = line2.split(",").map(_.trim) // Split and trim columns
 
-    MasterTable2DF += Master2transformedRow
+    if (columns.length > alertIdIndex) { // Ensure index exists
+        val alertId = columns(alertIdIndex)
+
+        if (expectedAlertIds.contains(alertId)) { // Match with expected ALERT_IDs
+            Master2CSVrows += line2
+        }
+    }
+    line2 = Master2_br.readLine()
+}
+
+// Extract expected ALERT_IDs
+val expectedAlertIds = Master2CSVrows.tail.map(_.split(",")(alertIdIndex).trim).toSet
+
+Master2_br.close()
+inputStream2.close()
+
+// Compare table and CSV row by row
+val masterFile2CSVcount = MasterTable2DF.size
+var dataConsistent2 = true
+
+for (i <- 0 until masterFile2CSVcount) {
+    if (MasterTable2DF(i) != Master2CSVrows(i)) {
+        println(s"Mismatch found at row $i: Table = ${MasterTable2DF(i)}, CSV = ${Master2CSVrows(i)}")
+        dataConsistent2 = false
+    }
 }
