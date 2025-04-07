@@ -1,62 +1,49 @@
-DELETE FROM your_table
-WHERE alert_id IN (
-  SELECT alert_id FROM your_table 
-  WHERE alert_code = 'RA00541'
-  QUALIFY ROW_NUMBER() OVER (ORDER BY alert_id) <= 1000
-);
+import java.time.LocalDate
+import java.sql.{DriverManager, ResultSet}
 
+val today = LocalDate.now()
+val lastWeek = today.minusDays(7)
+val lastMonth = today.minusDays(30)
 
---conf spark.executor.extraJavaOptions="-Doracle.jdbc.ReadTimeout=600000"
---conf spark.driver.extraJavaOptions="-Doracle.jdbc.ReadTimeout=600000"
+df.foreachPartition { partition =>
+  val connection = DriverManager.getConnection(jdbcUrl, user, password)
 
+  try {
+    partition.foreach { row =>
+      val tableName = row.getAs[String]("sourcetable_name")
+      val filterColumn = row.getAs[String]("filter_column")
+      val frequency = row.getAs[String]("frequency")
 
-I recently appeared for the AWS Certified Data Engineer – Associate exam but was informed that my results were invalidated due to suspected testing irregularities. I truly value the integrity of the AWS Certification process and would like to share my side of the situation.
-During my exam, I may have completed the questions more quickly than expected, which I now understand may have triggered suspicion. I want to assure you that my intention was never to violate the exam policies. While I had reviewed multiple study materials — including practice exams available online — I now understand the importance of using only AWS-approved resources and official training platforms.
-I sincerely apologize if any of my preparation or behavior during the exam gave the wrong impression. I am committed to preparing more thoroughly and ethically for a future attempt, following all AWS guidelines and best practices.
-I kindly request your consideration in allowing me to retake the exam. I am eager to demonstrate my genuine knowledge and commitment to AWS certification standards.
-Please let me know the next steps or any additional details you may require from my end.
-Thank you for your time and understanding.
+      // Dynamically calculate date_to_load based on frequency
+      val dateToLoad = frequency match {
+        case "D" => today.toString
+        case "W" => lastWeek.toString
+        case "M" => lastMonth.toString
+        case _ =>
+          println(s"Unsupported frequency: $frequency. Skipping.")
+          return
+      }
 
+      val countQuery =
+        s"""
+           |SELECT COUNT(*) AS record_count
+           |FROM $tableName
+           |WHERE $filterColumn = '$dateToLoad'
+         """.stripMargin
 
+      val statement = connection.createStatement()
+      val resultSet = statement.executeQuery(countQuery)
 
-import scala.io.Source
-import scala.collection.mutable.ListBuffer
+      while (resultSet.next()) {
+        val count = resultSet.getLong("record_count")
+        println(s"Table: $tableName | Frequency: $frequency | Date: $dateToLoad | Count: $count")
+        // Add further processing as needed
+      }
 
-// Initialize buffer to store CSV rows
-val Master2CSVrows = ListBuffer[String]()
-
-// Read the file (replace with actual file path)
-val filePath = "path/to/your/file.csv"
-val Master2_br = Source.fromFile(filePath)
-
-// Read all lines first
-for (line <- Master2_br.getLines()) {
-  Master2CSVrows += line
+      resultSet.close()
+      statement.close()
+    }
+  } finally {
+    connection.close()
+  }
 }
-
-// Close the buffer reader
-Master2_br.close()
-
-// Debugging: Print the contents after reading
-println(s"Master2CSVrows:\n${Master2CSVrows.mkString("\n")}")
-
-// Ensure Master2CSVrows has data before extracting expectedAlertIds
-val expectedAlertIds = 
-  if (Master2CSVrows.isEmpty || Master2CSVrows.tail.isEmpty) Set.empty[String]
-  else Master2CSVrows.tail.map(_.split(",")(alertIdIndex).trim).toSet
-
-println(s"expectedAlertIds: ${expectedAlertIds.mkString(", ")}")
-
-// Ensure expectedAlertIds is correctly populated
-if (expectedAlertIds.isEmpty) {
-  println("WARNING: expectedAlertIds is empty, check input file")
-}
-
-// Process the CSV again to filter valid rows
-val filteredRows = Master2CSVrows.tail.filter { line =>
-  val values = line.split(",").map(_.trim)
-  values.length > alertIdIndex && expectedAlertIds.contains(values(alertIdIndex))
-}
-
-// Print final filtered rows
-println(s"Filtered Rows:\n${filteredRows.mkString("\n")}")
