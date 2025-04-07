@@ -5,6 +5,11 @@ WHERE alert_id IN (
   QUALIFY ROW_NUMBER() OVER (ORDER BY alert_id) <= 1000
 );
 
+
+--conf spark.executor.extraJavaOptions="-Doracle.jdbc.ReadTimeout=600000"
+--conf spark.driver.extraJavaOptions="-Doracle.jdbc.ReadTimeout=600000"
+
+
 I recently appeared for the AWS Certified Data Engineer – Associate exam but was informed that my results were invalidated due to suspected testing irregularities. I truly value the integrity of the AWS Certification process and would like to share my side of the situation.
 During my exam, I may have completed the questions more quickly than expected, which I now understand may have triggered suspicion. I want to assure you that my intention was never to violate the exam policies. While I had reviewed multiple study materials — including practice exams available online — I now understand the importance of using only AWS-approved resources and official training platforms.
 I sincerely apologize if any of my preparation or behavior during the exam gave the wrong impression. I am committed to preparing more thoroughly and ethically for a future attempt, following all AWS guidelines and best practices.
