@@ -1,17 +1,16 @@
-val dateToLoad: String = frequency match {
-  case "D" => currentDate.toString
-  case "W" => date_to_load_week.toString
-  case "M" => date_to_load_month.toString
-  case _ =>
-    throw new IllegalArgumentException(s"Unsupported frequency: $frequency")
+val (startDate, endDate) = frequency match {
+  case "D" => (currentDate, currentDate)
+  case "W" => (currentDate.minusDays(7), currentDate)
+  case "M" => (currentDate.minusDays(30), currentDate)
+  case _   => throw new IllegalArgumentException(s"Unsupported frequency: $frequency")
 }
 val jdbcQuery =
   s"""
      |SELECT CAST(COUNT(*) AS BIGINT) AS cnt
      |FROM $sourceTableName
-     |WHERE CAST($filterColumn AS VARCHAR(50)) = '$dateToLoad'
+     |WHERE CAST($filterColumn AS DATE)
+     |BETWEEN DATE '$startDate' AND DATE '$endDate'
      |""".stripMargin
-
 
 
 
