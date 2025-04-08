@@ -1,3 +1,14 @@
+val validationErrors = receivedAcc.filterNot(successAcc.contains)
+
+if (validationErrors.isEmpty) {
+  println("Archiving data from RAMP_ALERT_LOAD to RAMP_ALERT_LOAD_ARCHIEVE...")
+  stmt.executeQuery(archiveQuery)
+  stmt.executeQuery(archiveDeleteQuery)
+} else {
+  println(s"Archiving skipped due to validation failures: $validationErrors")
+}
+
+
 val (startDate, endDate) = frequency match {
   case "D" => (currentDate, currentDate)
   case "W" => (currentDate.minusDays(7), currentDate)
