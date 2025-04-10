@@ -1,6 +1,22 @@
 val validLines = lines
   .drop(4)
   .map(removeInLineComments)
+  .filterNot { line =>
+    val cleanLine = line.trim.toUpperCase
+    cleanLine.startsWith(".RUN FILE") ||
+    List(
+      ".IF ERRORCODE <> 0 THEN .GOTO ERROR;",
+      ".LOGOFF",
+      ".QUIT 0"
+    ).exists(pattern => cleanLine.contains(pattern))
+  }
+  .filter(_.nonEmpty)
+
+
+
+val validLines = lines
+  .drop(4)
+  .map(removeInLineComments)
   .filterNot(
     line =>
       List(
