@@ -1,3 +1,19 @@
+
+val master2SourceCountValidationQuery = s"""
+    select count(distinct alert_id) as alert_count 
+    from $masterTable2 
+    where alert_id in (
+        select alert_id 
+        from (
+            select alert_id, row_number() over (order by alert_id) as rn 
+            from $masterTable1 
+            where alert_code = '$alertCode'
+        ) where rn <= 4
+    )
+"""
+
+
+
 val validationErrors = receivedAcc.filterNot(successAcc.contains)
 
 if (validationErrors.isEmpty) {
