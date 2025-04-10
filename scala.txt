@@ -1,3 +1,16 @@
+val validLines = lines
+  .drop(4)
+  .map(removeInLineComments)
+  .filterNot { line =>
+    val cleanLine = line.trim.toUpperCase
+    cleanLine.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;") ||
+    cleanLine.startsWith(".RUN FILE") ||
+    cleanLine == ".LOGOFF" ||
+    cleanLine == ".QUIT 0"
+  }
+  .filter(_.nonEmpty)
+
+
 
 val master2SourceCountValidationQuery = s"""
     select count(distinct alert_id) as alert_count 
