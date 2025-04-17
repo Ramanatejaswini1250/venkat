@@ -1,138 +1,23 @@
-val validLines = lines
-  .drop(4)
-  .map(removeInLineComments)
-  .filterNot { line =>
-    val cleanLine = line.trim.toUpperCase
-    cleanLine.startsWith(".RUN FILE") ||
-    List(
-      ".IF ERRORCODE <> 0 THEN .GOTO ERROR;",
-      ".LOGOFF",
-      ".QUIT 0"
-    ).exists(pattern => cleanLine.contains(pattern))
+class TupleSetAccumulator extends AccumulatorV2[(String, Int), Set[(String, Int)]] {
+  private var _set: Set[(String, Int)] = Set.empty
+
+  override def isZero: Boolean = _set.isEmpty
+
+  override def copy(): AccumulatorV2[(String, Int), Set[(String, Int)]] = {
+    val newAcc = new TupleSetAccumulator()
+    newAcc._set = this._set
+    newAcc
   }
-  .filter(_.nonEmpty)
 
+  override def reset(): Unit = _set = Set.empty
 
-
-val validLines = lines
-  .drop(4)
-  .map(removeInLineComments)
-  .filterNot(
-    line =>
-      List(
-        ".IF ERRORCODE <> 0 THEN .GOTO ERROR;",
-        ".RUN FILE",
-        ".LOGOFF",
-        ".QUIT 0"
-      ).exists(pattern => line.trim.toUpperCase.contains(pattern))
-  )
-  .filter(_.nonEmpty)
-
-
-
-
-val validLines = lines
-  .drop(4)
-  .map(removeInLineComments)
-  .filterNot { line =>
-    val cleanLine = line.trim.toUpperCase
-    cleanLine.contains(".IF ERRORCODE <> 0 THEN .GOTO ERROR;") ||
-    cleanLine.startsWith(".RUN FILE") ||
-    cleanLine == ".LOGOFF" ||
-    cleanLine == ".QUIT 0"
+  override def add(v: (String, Int)): Unit = {
+    _set += v
   }
-  .filter(_.nonEmpty)
 
-
-
-val master2SourceCountValidationQuery = s"""
-    select count(distinct alert_id) as alert_count 
-    from $masterTable2 
-    where alert_id in (
-        select alert_id 
-        from (
-            select alert_id, row_number() over (order by alert_id) as rn 
-            from $masterTable1 
-            where alert_code = '$alertCode'
-        ) where rn <= 4
-    )
-"""
-
-
-
-val validationErrors = receivedAcc.filterNot(successAcc.contains)
-
-if (validationErrors.isEmpty) {
-  println("Archiving data from RAMP_ALERT_LOAD to RAMP_ALERT_LOAD_ARCHIEVE...")
-  stmt.executeQuery(archiveQuery)
-  stmt.executeQuery(archiveDeleteQuery)
-} else {
-  println(s"Archiving skipped due to validation failures: $validationErrors")
-}
-
-
-val (startDate, endDate) = frequency match {
-  case "D" => (currentDate, currentDate)
-  case "W" => (currentDate.minusDays(7), currentDate)
-  case "M" => (currentDate.minusDays(30), currentDate)
-  case _   => throw new IllegalArgumentException(s"Unsupported frequency: $frequency")
-}
-val jdbcQuery =
-  s"""
-     |SELECT CAST(COUNT(*) AS BIGINT) AS cnt
-     |FROM $sourceTableName
-     |WHERE CAST($filterColumn AS DATE)
-     |BETWEEN DATE '$startDate' AND DATE '$endDate'
-     |""".stripMargin
-
-
-
-import java.time.LocalDate
-import java.sql.{DriverManager, ResultSet}
-
-val today = LocalDate.now()
-val lastWeek = today.minusDays(7)
-val lastMonth = today.minusDays(30)
-
-df.foreachPartition { partition =>
-  val connection = DriverManager.getConnection(jdbcUrl, user, password)
-
-  try {
-    partition.foreach { row =>
-      val tableName = row.getAs[String]("sourcetable_name")
-      val filterColumn = row.getAs[String]("filter_column")
-      val frequency = row.getAs[String]("frequency")
-
-      // Dynamically calculate date_to_load based on frequency
-      val dateToLoad = frequency match {
-        case "D" => today.toString
-        case "W" => lastWeek.toString
-        case "M" => lastMonth.toString
-        case _ =>
-          println(s"Unsupported frequency: $frequency. Skipping.")
-          return
-      }
-
-      val countQuery =
-        s"""
-           |SELECT COUNT(*) AS record_count
-           |FROM $tableName
-           |WHERE $filterColumn = '$dateToLoad'
-         """.stripMargin
-
-      val statement = connection.createStatement()
-      val resultSet = statement.executeQuery(countQuery)
-
-      while (resultSet.next()) {
-        val count = resultSet.getLong("record_count")
-        println(s"Table: $tableName | Frequency: $frequency | Date: $dateToLoad | Count: $count")
-        // Add further processing as needed
-      }
-
-      resultSet.close()
-      statement.close()
-    }
-  } finally {
-    connection.close()
+  override def merge(other: AccumulatorV2[(String, Int), Set[(String, Int)]]): Unit = {
+    _set ++= other.value
   }
+
+  override def value: Set[(String, Int)] = _set
 }
