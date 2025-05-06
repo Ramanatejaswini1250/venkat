@@ -1,17 +1,23 @@
 val scn_count_query =
   s"""
-     |SELECT COUNT(*) AS cnt
+     |SELECT alert_code, COUNT(*) AS cnt
      |FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_TEST
      |WHERE alert_id NOT IN (
      |  SELECT alert_id FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_BACKUP_TEST
      |)
+     |GROUP BY alert_code
   """.stripMargin
+
 
 val rs = stmt.executeQuery(scn_count_query)
 
-var scn_count = 0
-if (rs.next()) {
-  scn_count = rs.getInt("cnt")
+var scn_count: Map[String, Int] = Map()
+
+while (rs.next()) {
+  val alertCode = rs.getString("alert_code")
+  val count = rs.getInt("cnt")
+  scn_count += (alertCode -> count)
 }
 
-println(s"SCN count for this run: $scn_count")
+println("SCN Count per alert_code:")
+scn_count.foreach { case (code, cnt) => println(s"$code -> $cnt") }
