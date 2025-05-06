@@ -1,4 +1,5 @@
 val scn_count_query =
+
   s"""
      |SELECT COUNT(*) AS cnt
      |FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_TEST
