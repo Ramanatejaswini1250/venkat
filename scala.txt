@@ -21,3 +21,12 @@ while (rs.next()) {
 
 println("SCN Count per alert_code:")
 scn_count.foreach { case (code, cnt) => println(s"$code -> $cnt") }
+
+
+scn_count.foreach { case (alertCode, scnCnt) =>
+  val archivedCnt = archived_count.getOrElse(alertCode, 0)
+  successAcc.add((alertCode, masterFile1CSVcount, scnCnt, archivedCnt))
+}
+
+
+
