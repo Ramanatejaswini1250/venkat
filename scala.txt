@@ -1,59 +1,17 @@
-def sendConsolidatedEmail(
-  successAlerts: Set[(String, Int)],
-  failedAlerts: Map[String, String],
-  missedAlerts: Set[String]
-): Unit = {
-  val emailBodyHtml =
-    s"""
-       |<html>
-       |<body>
-       |<div class="container">
-       |  <p>Please find below the consolidated alert report for <strong>${LocalDate.now()}</strong>:</p>
-       |
-       |  <h2>Success Alerts</h2>
-       |  <table>
-       |    <tr class="success-header"><th>Alert Code</th><th>DT_Count</th></tr>
-       |    ${
-            if (successAlerts.isEmpty)
-              "<tr><td colspan='2'>No successful alerts</td></tr>"
-            else
-              successAlerts.map { case (code, dtCount) =>
-                s"<tr class='success'><td>$code</td><td>$dtCount</td></tr>"
-              }.mkString("\n")
-          }
-       |  </table>
-       |
-       |  <h2>Failed Alerts</h2>
-       |  <table>
-       |    <tr class="failed-header"><th>Alert Code</th><th>Reason</th></tr>
-       |    ${
-            if (failedAlerts.isEmpty)
-              "<tr><td colspan='2'>No failed alerts</td></tr>"
-            else
-              failedAlerts.map { case (code, reason) =>
-                s"<tr class='failed'><td>$code</td><td>$reason</td></tr>"
-              }.mkString("\n")
-          }
-       |  </table>
-       |
-       |  <h2>Missed Alerts</h2>
-       |  <table>
-       |    <tr><th>Alert Code</th></tr>
-       |    ${
-            if (missedAlerts.isEmpty)
-              "<tr><td>No missed alerts</td></tr>"
-            else
-              missedAlerts.map(code => s"<tr><td>$code</td></tr>").mkString("\n")
-          }
-       |  </table>
-       |</div>
-       |</body>
-       |</html>
-       |""".stripMargin
+val scn_count_query =
+  s"""
+     |SELECT COUNT(*) AS cnt
+     |FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_TEST
+     |WHERE alert_id NOT IN (
+     |  SELECT alert_id FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_BACKUP_TEST
+     |)
+  """.stripMargin
 
-  try {
-    sendEmail("rbsriskalertsprogram@cba.com.au", "Ramp Automation Alert Summary", "", emailBodyHtml)
-  } catch {
-    case e: Exception => println(s"Failed to send success email: ${e.getMessage}")
-  }
+val rs = stmt.executeQuery(scn_count_query)
+
+var scn_count = 0
+if (rs.next()) {
+  scn_count = rs.getInt("cnt")
 }
+
+println(s"SCN count for this run: $scn_count")
