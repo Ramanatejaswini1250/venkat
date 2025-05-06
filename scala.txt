@@ -1,28 +1,21 @@
-val scn_count_query =
+val archived_count_query =
   s"""
-     |SELECT alert_code, COUNT(*) AS cnt
-     |FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_TEST
-     |WHERE alert_id NOT IN (
-     |  SELECT alert_id FROM U_D_DSV_001_RIS_1.RAMP_TRGT_1_SCN_BACKUP_TEST
-     |)
+     |SELECT alert_code, COUNT(*) AS archived_cnt
+     |FROM alert_load_archive
      |GROUP BY alert_code
   """.stripMargin
 
 
-val rs = stmt.executeQuery(scn_count_query)
+val rs_arch = stmt.executeQuery(archived_count_query)
 
-var scn_count: Map[String, Int] = Map()
+var archived_count: Map[String, Int] = Map()
 
-while (rs.next()) {
-  val alertCode = rs.getString("alert_code")
-  val count = rs.getInt("cnt")
-  scn_count += (alertCode -> count)
+
+while (rs_arch.next()) {
+  val alertCode = rs_arch.getString("alert_code")
+  val count = rs_arch.getInt("archived_cnt")
+  archived_count += (alertCode -> count)
 }
-
-println("SCN Count per alert_code:")
-scn_count.foreach { case (code, cnt) => println(s"$code -> $cnt") }
-
-
 scn_count.foreach { case (alertCode, scnCnt) =>
   val archivedCnt = archived_count.getOrElse(alertCode, 0)
   successAcc.add((alertCode, masterFile1CSVcount, scnCnt, archivedCnt))
