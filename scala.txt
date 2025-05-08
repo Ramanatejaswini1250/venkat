@@ -1,21 +1,6 @@
-import org.apache.spark.sql.functions.upper
+SELECT alert_code, COUNT(*) AS archived_cnt
+FROM U_D_DSV_001_RIS_1.Ramp_Alert_Load_Archieve
+WHERE check_datetime >= CURRENT_TIMESTAMP - INTERVAL '5' MINUTE
+GROUP BY alert_code;
 
-// Convert ALERT_CODE to upper case in both df1 and df2 before joining
-val df1Upper = df1.withColumn("ALERT_CODE", upper(df1("ALERT_CODE")))
-val df2Upper = df2.withColumn("ALERT_CODE", upper(df2("ALERT_CODE")))
 
-// Perform the left anti join
-val unexpectedAlertsDF = df1Upper.join(df2Upper, Seq("ALERT_CODE"), "left_anti")
-val unexpectedAlerts = unexpectedAlertsDF.collect()
-
-if (unexpectedAlerts.nonEmpty) {
-  val unexpectedAlertCodes = unexpectedAlerts.map(_.getAs[String]("ALERT_CODE")).mkString(", ").toUpperCase
-  val subject = s"Unexpected Alert Notification: $unexpectedAlertCodes"
-  val emailBody =
-    s"""
-       |The alert <b>$unexpectedAlertCodes</b> are in alert_load but missing in etl_info
-       |Could you please check and confirm when the Alert is expected?
-       |""".stripMargin
-
-  sendEmail("rbsriskalertsprogram@cba.com.au", subject, emailBody, "")
-}
