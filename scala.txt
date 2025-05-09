@@ -1,6 +1,5 @@
 SELECT alert_code, COUNT(*) AS archived_cnt
 FROM U_D_DSV_001_RIS_1.Ramp_Alert_Load_Archieve
-WHERE check_datetime >= CURRENT_TIMESTAMP - INTERVAL '5' MINUTE
+WHERE check_datetime >= CAST(CURRENT_TIMESTAMP AS DATE)
+  AND EXTRACT(HOUR FROM check_datetime) = EXTRACT(HOUR FROM CURRENT_TIMESTAMP)
 GROUP BY alert_code;
-
-
