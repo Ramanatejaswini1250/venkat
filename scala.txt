@@ -1,5 +1,10 @@
-SELECT alert_code, COUNT(*) AS archived_cnt
-FROM U_D_DSV_001_RIS_1.Ramp_Alert_Load_Archieve
-WHERE check_datetime >= CAST(CURRENT_TIMESTAMP AS DATE)
-  AND EXTRACT(HOUR FROM check_datetime) = EXTRACT(HOUR FROM CURRENT_TIMESTAMP)
-GROUP BY alert_code;
+WITH ranked_alerts AS (
+  SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY alert_code ORDER BY check_datetime DESC) AS rn
+  FROM Ramp_Alert_Load_Archieve
+  WHERE check_datetime >= CURRENT_DATE()
+    AND HOUR(check_datetime) = HOUR(current_timestamp())
+)
+SELECT alert_code, scn_code, date_to_load, dt_count, check_datetime
+FROM ranked_alerts
+WHERE rn = 1;
