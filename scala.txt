@@ -1,3 +1,9 @@
+val masterCsvCount = scala.collection.mutable.Map[String, Int]()
+
+// when processing each alert:
+masterCsvCount(alertCode) = csvRowCount
+
+
 WITH ranked_alerts AS (
   SELECT *,
          ROW_NUMBER() OVER (PARTITION BY alert_code ORDER BY check_datetime DESC) AS rn
